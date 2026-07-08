@@ -66,11 +66,48 @@ async function getJuanAiFixtures(days = 0) {
 Real HTTP call — works from anywhere, no shared browser or localStorage
 needed.
 
+## ⚠️ Real-money safety — read this before accepting real stakes
+
+Not every match's odds come from a real bookmaker. JuanAi tries real market
+odds first (SharpAPI, then odds-api.io), and only falls back to an
+AI-generated *estimate* when neither provider has priced that match — which
+is common for smaller leagues (lower divisions, youth/reserve teams,
+regional cups) that major sportsbooks simply don't cover on their free
+tiers.
+
+**An AI-generated odds estimate is a probability guess, not a real market
+price.** There's no real liquidity, no real bookmaker risk management, and
+no guarantee of accuracy behind it. If BetaKE accepts real-money stakes
+against an AI-estimated price, JuanAi's 6% margin only protects you if the
+AI's underlying probability is roughly correct — for a match no real
+bookmaker will price, that can't be verified.
+
+**Before accepting a real-money bet on any match, check:**
+```js
+if (match.aiOdds && match.aiOdds.isRealMarketOdds === true) {
+  // Safe — a real bookmaker (SharpAPI/odds-api.io) actually priced this match
+} else {
+  // AI estimate only — do NOT accept real-money stakes on this match
+}
+```
+
+Or simpler: pass `?realOddsOnly=1` on the `/api/fixtures` call and JuanAi
+will only return matches that are actually safe to bet real money on:
+
+```js
+const resp = await fetch(`${JUANAI_URL}/api/fixtures?key=${API_KEY}&days=${days}&realOddsOnly=1`);
+```
+
+Every match in that response is guaranteed to have real bookmaker odds
+behind it. AI-only matches simply won't appear — nothing further to check
+on BetaKE's side.
+
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/fixtures?key=...&days=0` | API key | What BetaKE calls |
+| GET | `/api/fixtures?key=...&days=0&realOddsOnly=1` | API key | Same, but ONLY matches with real bookmaker odds — safe for real-money betting |
 | GET | `/api/status` | none | Background job visibility (match counts, last update) |
 | GET | `/api/health` | none | Uptime check |
 | GET | `/internal/fixtures-view?days=0` | none* | JuanAi's own UI reads current state |
