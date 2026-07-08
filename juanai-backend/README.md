@@ -1,0 +1,129 @@
+# JuanAi Backend
+
+Real HTTP API + fully automatic background analysis engine. No demo data,
+no manual clicking, no `localStorage`-only mode.
+
+## What this does
+
+- **Real fixtures only.** Pulls actual matches from football-data.org
+  server-side (`footballData.js`). No CORS issue here — that only affects
+  browsers, not servers. If the fetch fails, it logs an error; it never
+  substitutes fake fixtures.
+- **Automatic AI analysis, no clicks.** `scheduler.js` runs in the
+  background from the moment the server starts:
+  - Refreshes fixtures for today + tomorrow every 15 minutes.
+  - Analyzes any match missing odds, and re-analyzes odds older than 3
+    hours, automatically — nothing needs a button press.
+  - Paced to stay under football-data.org's free-tier limit (10 req/min)
+    and to avoid hammering the AI providers.
+- **Every AI-generated odd is labeled as such**, in the API response
+  (`disclaimer` field) and in the UI (explicit "AI-Generated Estimate —
+  Not Real Market Odds" badge). These are AI predictions, never real
+  bookmaker prices — don't present them otherwise to end users.
+- **Real API keys**, checked server-side, so external servers like BetaKE
+  can actually call in over HTTP.
+
+## Setup (Termux)
+
+```bash
+cd juanai-final
+cp .env.example .env
+# edit .env: set GEMINI_KEY and/or GROQ_KEY (at least one required),
+# FDORG_KEY is pre-filled but replace with your own if you have one
+npm install
+node server.js
+```
+
+You'll see background job logs like:
+```
+[scheduler] Starting background auto-refresh + auto-analysis (no manual clicks needed)
+[scheduler] Refreshed 8 real fixtures for days=0 (2026-07-05)
+[scheduler] Analyzed match 12345 (Arsenal vs Chelsea) for days=0
+```
+
+Open `http://localhost:3000` to view JuanAi — fixtures and odds will
+populate automatically within the first ~30 seconds to a couple minutes,
+depending on how many matches are scheduled.
+
+## Generate an API key for BetaKE
+
+In JuanAi's API Keys panel: name it, click Generate. Copy the `jsk_...` key.
+
+## Call it from BetaKE
+
+```js
+const JUANAI_URL = 'http://localhost:3000'; // or your deployed Render URL
+const API_KEY = 'jsk_xxxxxxxxxxxxxxxx';
+
+async function getJuanAiFixtures(days = 0) {
+  const resp = await fetch(`${JUANAI_URL}/api/fixtures?key=${API_KEY}&days=${days}`);
+  if (!resp.ok) throw new Error('JuanAi API error: ' + resp.status);
+  const data = await resp.json();
+  return data.matches || [];
+}
+```
+
+Real HTTP call — works from anywhere, no shared browser or localStorage
+needed.
+
+## Endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/fixtures?key=...&days=0` | API key | What BetaKE calls |
+| GET | `/api/status` | none | Background job visibility (match counts, last update) |
+| GET | `/api/health` | none | Uptime check |
+| GET | `/internal/fixtures-view?days=0` | none* | JuanAi's own UI reads current state |
+| POST | `/internal/analyze-now` | none* | Force re-analysis of one match on demand |
+| POST | `/internal/apikeys` | none* | Generate a new API key |
+| GET | `/internal/apikeys` | none* | List keys |
+| DELETE | `/internal/apikeys/:id` | none* | Revoke a key |
+
+\* `/internal/*` routes are meant for JuanAi's own admin UI only. Before
+deploying publicly, put these behind a login check or bind them to
+`localhost`, or anyone with your JuanAi URL could generate/revoke keys.
+
+## Data storage
+
+JSON file at `data/fixtures.json` and `data/apikeys.json` — no native
+modules, so `npm install` works cleanly on Termux. Fine for one JuanAi
+instance; swap for a real database later if you need concurrent writes,
+backups, or querying at scale — `db.js` is the only file that would need
+to change.
+
+## Tuning the background engine
+
+All in `scheduler.js`:
+- `FIXTURE_REFRESH_INTERVAL_MS` — how often to pull fresh fixtures (default 15 min)
+- `ANALYSIS_LOOP_INTERVAL_MS` — how often to check for matches needing analysis (default 90s)
+- `ANALYSIS_MAX_AGE_MS` — re-analyze odds older than this (default 3h)
+- `DAY_BUCKETS` — which day offsets to track (default: today through 7 days out, matching the frontend's dropdown)
+
+## Deploying to Render
+
+1. Push this folder to its own GitHub repo.
+2. New Render Web Service, point at that repo.
+3. Set environment variables in Render's dashboard (Settings, Environment):
+   `GEMINI_KEY`, `GROQ_KEY`, `FDORG_KEY`, `MONGO_URI` — do NOT commit `.env` to GitHub.
+4. Render builds with `npm install`, starts with `npm start` automatically.
+5. In `public/index.html`, `JUANAI_BACKEND_URL` is already set to
+   `window.location.origin`, so it automatically points at whatever domain
+   served the page — no manual edit needed before deploying.
+6. Give BetaKE that same Render URL plus an API key generated from the panel.
+
+**MONGO_URI is required for API keys to survive restarts.** Render's free
+tier has an ephemeral filesystem — any local file (including the old
+`data/apikeys.json`) is wiped every time the service restarts, redeploys, or
+spins down from inactivity (which free services do automatically). Without
+`MONGO_URI` set, API keys still work, but only until the next restart, then
+they're gone and you'll need to regenerate them. Set up a free MongoDB Atlas
+cluster (M0 tier, $0/mo), whitelist `0.0.0.0/0` under Network Access since
+Render doesn't give you a fixed IP on the free tier, and paste the connection
+string as `MONGO_URI`. The API Keys panel in the UI shows a warning banner if
+this isn't connected.
+
+**Free-tier note:** Render's free web services spin down when idle and take
+~30-60s to wake on the next request. If BetaKE calls JuanAi's API while it's
+asleep, that first call will be slow. Consider a periodic health-check ping
+(e.g. a free uptime monitor hitting `/api/health` every 10 min) to keep it
+warm, or add a timeout and retry on BetaKE's side.
