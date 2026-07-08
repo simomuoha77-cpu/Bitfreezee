@@ -237,6 +237,11 @@ Re-price the odds to reflect the CURRENT game state:
 - BTTS should reflect whether both teams have already scored, or how likely the team with 0 goals is to score in the time remaining.
 - Confidence should generally be HIGHER than pre-match confidence once there's real in-game evidence (a scoreline), not lower.
 
+HARD BOUNDS — these are non-negotiable, since violating them produces mathematically invalid or meaningless odds:
+- NO odds value may ever be below 1.01. Real bookmaker odds are NEVER below 1.00 — an odd below 1.00 would mean guaranteed profit with zero risk, which no bookmaker ever offers, no matter how certain an outcome looks (red cards, late collapses, and injuries always keep some residual uncertainty). Even a near-certain outcome (e.g. a 3-0 lead in the 88th minute) should floor at roughly 1.01-1.03, not below.
+- NO odds value should realistically exceed about 60-80 for any market, even a near-impossible comeback — extremely long prices still need to look like a real quoted number, not an arbitrary huge one.
+- "valueBet" must name a market that is GENUINELY uncertain enough to represent value — never name a value bet on a market you've just priced as a near-certainty (e.g. don't say "Value Bet: Away Win" if you've also priced Away Win at 1.02, since there's no meaningful value in a bet that short). If every market is already a near-certainty given the scoreline, set valueBet to "None" rather than inventing a value bet that doesn't make sense.
+
 Return ONLY this JSON (no other text, no markdown):
 {"homeWin":1.85,"draw":3.40,"awayWin":4.20,"over25":1.72,"under25":2.10,"btts":1.68,"bttsNo":2.15,"dc_home_draw":1.22,"dc_home_away":1.30,"dc_draw_away":1.95,"prediction":"Home Win","confidence":68,"risk":"Medium","valueBet":"Over 2.5 Goals","xgHome":1.8,"xgAway":0.9,"analysis":"Brief 1-2 sentence analysis referencing the current score/minute and why the odds moved"}`;
 }
@@ -322,7 +327,17 @@ function parseAiOdds(text) {
     const obj = JSON.parse(clean.substring(start, end + 1));
     if (!obj.homeWin || !obj.draw || !obj.awayWin) return null;
     ['homeWin', 'draw', 'awayWin', 'over25', 'under25', 'btts', 'bttsNo', 'dc_home_draw', 'dc_home_away', 'dc_draw_away']
-      .forEach(k => { obj[k] = parseFloat(obj[k]) || null; });
+      .forEach(k => {
+        let v = parseFloat(obj[k]) || null;
+        // Hard deterministic clamp — this is enforced in code, not left to
+        // prompt instructions alone, because we saw the AI produce a real
+        // 0.99 odd in production (mathematically invalid: any odd below
+        // 1.00 implies guaranteed profit with zero risk, which no real
+        // bookmaker ever offers, no matter how certain an outcome looks).
+        // 1.01 floor, 80 ceiling — both sides of unrealistic.
+        if (v !== null) v = Math.min(80, Math.max(1.01, v));
+        obj[k] = v;
+      });
     obj.confidence = parseInt(obj.confidence) || 60;
     return obj;
   } catch (e) { return null; }

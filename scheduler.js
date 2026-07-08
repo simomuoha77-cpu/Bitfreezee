@@ -20,6 +20,7 @@ const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed mat
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
 const ANALYSIS_PACE_MS = 8000;                        // gap between individual match analyses (each now costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
+const EXPIRY_CHECK_INTERVAL_MS = 5 * 60 * 1000;      // how often to delete matches older than 3h — this is the actual fix for matches getting stuck live/pending forever
 const DAY_BUCKETS = [0, 1, 2, 3, 4, 5, 6, 7]; // today through 7 days out — matches the frontend's dropdown range
 
 let running = false;
@@ -242,6 +243,20 @@ function start() {
     analysisPass();
     setInterval(analysisPass, ANALYSIS_LOOP_INTERVAL_MS);
   }, 10 * 1000);
+
+  // Expiry job: deletes any match whose kickoff was more than 3 hours ago,
+  // regardless of what status any source reports — this is what actually
+  // stops a match from being stuck showing as live/pending forever if
+  // odds-api.io never marks it "settled" in our data. Runs every 5 min;
+  // cheap since it's a single deleteMany with no external API calls.
+  setInterval(async function(){
+    try {
+      const deleted = await db.expireOldMatches();
+      if (deleted > 0) console.log('[scheduler] Expired ' + deleted + ' match(es) older than 3 hours — removed from database entirely');
+    } catch (e) {
+      console.error('[scheduler] expireOldMatches failed: ' + e.message);
+    }
+  }, EXPIRY_CHECK_INTERVAL_MS);
 }
 
 module.exports = { start: start };

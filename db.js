@@ -333,11 +333,52 @@ async function clearMatchOdds(matchId, days) {
   }
 }
 
+// Deletes any match whose kickoff was long enough ago that it is certainly
+// over by now, REGARDLESS of what status any data source reports for it.
+// This is the real fix for matches getting stuck showing as live/pending
+// forever: odds-api.io doesn't have a true "in progress" status (only
+// pending/settled/cancelled — confirmed via direct testing), and if a
+// match ages out of odds-api.io's own /events feed before ever being
+// marked "settled", nothing else would ever touch it again — it would just
+// sit in the database with its last-known status permanently. A football
+// match plus stoppage/extra time essentially never exceeds ~3 hours, so
+// anything older than that is deleted outright — not just hidden — freeing
+// the space and guaranteeing it can never show as live/pending again.
+async function expireOldMatches() {
+  await ensureMongo();
+  const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // matches that kicked off more than 3 hours ago
+
+  if (usingFallback) {
+    let deletedCount = 0;
+    Object.keys(fixturesFallback).forEach(days => {
+      const bucket = fixturesFallback[days];
+      if (!bucket) return;
+      const before = bucket.matches.length;
+      bucket.matches = bucket.matches.filter(m => !m.utcDate || m.utcDate >= cutoff);
+      deletedCount += before - bucket.matches.length;
+    });
+    return deletedCount;
+  }
+
+  try {
+    // match.utcDate is stored inside the nested `match` object, so this
+    // queries on that nested field directly.
+    const result = await fixturesCollection.deleteMany({
+      'match.utcDate': { $lt: cutoff, $ne: null }
+    });
+    return result.deletedCount || 0;
+  } catch (e) {
+    console.error('[db] expireOldMatches failed: ' + e.message);
+    return 0;
+  }
+}
+
 module.exports = {
   saveFixtures,
   getFixtures,
   upsertMatchOdds,
   clearMatchOdds,
+  expireOldMatches,
   getApiKeys,
   addApiKey,
   isValidApiKey,

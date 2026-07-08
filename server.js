@@ -68,8 +68,16 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   // results (e.g. for a "recent results" feature).
   const includeFinished = req.query.includeFinished === '1';
   const realOddsOnly = req.query.realOddsOnly === '1';
+  const STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // matches with a kickoff older than this are certainly over — same 3h cutoff as db.js's expireOldMatches background job, applied here too as a real-time safety net for the brief window before that job's next run
   const matches = bucket.matches.filter(m => {
     if (!includeFinished && m.status === 'FINISHED') return false;
+    // Real-time staleness check — a match whose kickoff was more than 3h
+    // ago is certainly over regardless of what status our data shows for
+    // it. This catches the exact gap that let matches appear "stuck live"
+    // in production: odds-api.io doesn't reliably report when a match
+    // ends, so without this, a stale match could keep showing here until
+    // the periodic cleanup job (every 5 min) gets to it.
+    if (!includeFinished && m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
     // TBD vs TBD matches (knockout rounds not yet decided) have nothing
     // real to bet on and shouldn't be exposed to external sites at all.
     const home = m.homeTeam && m.homeTeam.name;

@@ -2390,7 +2390,16 @@ async function loadFixtures(silent){
     }
 
     fbMatches = matches;
-    var visibleMatches = fbShowFinished ? matches : matches.filter(function(m){ return m.status !== 'FINISHED'; });
+    var STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // same 3h cutoff as the backend's real-time safety filter and background expiry job
+    var visibleMatches = fbShowFinished ? matches : matches.filter(function(m){
+      if(m.status === 'FINISHED') return false;
+      // Catches a match stuck showing live/pending because odds-api.io
+      // never reported it as settled — same real-time safety net as the
+      // backend API applies, so JuanAi's own admin view doesn't show stuck
+      // matches either.
+      if(m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
+      return true;
+    });
     renderFixtures(visibleMatches);
     updateFbStats(matches); // stats still reflect the full day's fixtures, not just what's currently visible
     renderFinishedToggle(matches);
