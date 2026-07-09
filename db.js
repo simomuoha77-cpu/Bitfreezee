@@ -18,6 +18,7 @@
 // concurrent writes clobbering each other's unrelated changes.
 
 const { MongoClient } = require('mongodb');
+const footballData = require('./footballData');
 
 const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
@@ -150,15 +151,27 @@ async function getFixtures(days) {
   try {
     const docs = await fixturesCollection.find({ days: String(days) }).toArray();
     if (!docs.length) return null;
-    const matches = docs.map(d => Object.assign({}, d.match, d.aiOdds ? {
-      aiOdds: d.aiOdds,
-      aiPrediction: d.aiPrediction,
-      aiConfidence: d.aiConfidence,
-      aiAnalysis: d.aiAnalysis,
-      aiXG: d.aiXG,
-      aiValueBet: d.aiValueBet,
-      aiAnalyzedAt: d.aiAnalyzedAt
-    } : {}));
+    const matches = docs.map(d => {
+      let m = Object.assign({}, d.match, d.aiOdds ? {
+        aiOdds: d.aiOdds,
+        aiPrediction: d.aiPrediction,
+        aiConfidence: d.aiConfidence,
+        aiAnalysis: d.aiAnalysis,
+        aiXG: d.aiXG,
+        aiValueBet: d.aiValueBet,
+        aiAnalyzedAt: d.aiAnalyzedAt
+      } : {});
+      // Recalculate the estimated live minute at READ time, not just at the
+      // last save — this keeps it advancing in near-real-time (checked on
+      // every API/UI request) instead of only updating every 2 minutes
+      // when the fixture refresh job happens to run. Only applies to
+      // odds-api.io-sourced matches still IN_PLAY; football-data.org's
+      // minute is already a real value from the source, left untouched.
+      if (m.minuteIsEstimated && m.status === 'IN_PLAY' && m.utcDate) {
+        m.minute = footballData.estimateMatchMinute(m.utcDate);
+      }
+      return m;
+    });
     const updatedAt = docs.reduce((latest, d) => d.updatedAt > latest ? d.updatedAt : latest, docs[0].updatedAt);
     const fetchedAt = Math.max(...docs.map(d => d.fetchedAt || 0));
     return { matches, fetchedAt, updatedAt };
