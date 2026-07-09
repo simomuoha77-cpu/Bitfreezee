@@ -20,7 +20,7 @@ const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed mat
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
 const ANALYSIS_PACE_MS = 8000;                        // gap between individual match analyses (each now costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
-const EXPIRY_CHECK_INTERVAL_MS = 5 * 60 * 1000;      // how often to delete matches older than 3h — this is the actual fix for matches getting stuck live/pending forever
+const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;      // how often to delete FINISHED matches immediately + anything stuck past the 3h cutoff — shortened from 5min so finished matches disappear from the app/API promptly
 const DAY_BUCKETS = [0, 1, 2, 3, 4, 5, 6, 7]; // today through 7 days out — matches the frontend's dropdown range
 
 let running = false;

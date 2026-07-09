@@ -346,7 +346,7 @@ async function clearMatchOdds(matchId, days) {
 // the space and guaranteeing it can never show as live/pending again.
 async function expireOldMatches() {
   await ensureMongo();
-  const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // matches that kicked off more than 3 hours ago
+  const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // matches that kicked off more than 3 hours ago, regardless of reported status
 
   if (usingFallback) {
     let deletedCount = 0;
@@ -354,17 +354,26 @@ async function expireOldMatches() {
       const bucket = fixturesFallback[days];
       if (!bucket) return;
       const before = bucket.matches.length;
-      bucket.matches = bucket.matches.filter(m => !m.utcDate || m.utcDate >= cutoff);
+      // Two deletion conditions: (1) explicitly FINISHED — delete
+      // immediately, no need to wait for the time cutoff since we already
+      // KNOW it's over; (2) time-based cutoff as a catch-all for matches
+      // odds-api.io never marks "settled" at all.
+      bucket.matches = bucket.matches.filter(m => m.status !== 'FINISHED' && (!m.utcDate || m.utcDate >= cutoff));
       deletedCount += before - bucket.matches.length;
     });
     return deletedCount;
   }
 
   try {
-    // match.utcDate is stored inside the nested `match` object, so this
-    // queries on that nested field directly.
+    // match.utcDate and match.status are both stored inside the nested
+    // `match` object. Delete anything explicitly FINISHED immediately, OR
+    // anything older than the time cutoff regardless of status (the
+    // catch-all for matches odds-api.io never marks "settled").
     const result = await fixturesCollection.deleteMany({
-      'match.utcDate': { $lt: cutoff, $ne: null }
+      $or: [
+        { 'match.status': 'FINISHED' },
+        { 'match.utcDate': { $lt: cutoff, $ne: null } }
+      ]
     });
     return result.deletedCount || 0;
   } catch (e) {
