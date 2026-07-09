@@ -15,7 +15,7 @@ const footballData = require('./footballData');
 const ai = require('./ai');
 
 const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixture lists every 15 min — nothing there is live/about-to-finish, so this doesn't need to be fast
-const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes every 60s (tightened from 2min) — this controls how quickly a match flips from SCHEDULED to IN_PLAY once it actually kicks off. Still comfortably within football-data.org's 10 req/min budget (just today's single bucket, not all 8), and odds-api.io's shared cached /events response means this doesn't cost extra calls there either.
+const TODAY_REFRESH_INTERVAL_MS = 2 * 60 * 1000;      // but TODAY's bucket refreshes every 2 min — this is the one that actually matters for live/finished status accuracy. Matches appearing to "start late" or "still show live after ending" was a direct symptom of only checking every 15 min; 2 min keeps that lag small without meaningfully increasing football-data.org's request volume (only day=0 gets the faster cadence, days 1-7 stay at 15 min)
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book

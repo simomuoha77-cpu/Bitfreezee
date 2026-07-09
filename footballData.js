@@ -142,40 +142,6 @@ function isTrackedLeague(leagueName) {
   return ODDSAPIIO_LEAGUE_ALLOWLIST.some(kw => n.includes(kw));
 }
 
-// Estimates the current match minute from kickoff time, accounting for a
-// realistic half-time break — this fixes a real bug where a match showed
-// "111'" (impossible; regulation is ~90 min + stoppage), because the naive
-// version just used raw wall-clock time since kickoff with no adjustment
-// for the ~15 min half-time pause. odds-api.io doesn't give us a true match
-// clock (confirmed via testing: only pending/settled/cancelled status, no
-// live minute field), so this is necessarily an ESTIMATE — flagged with a
-// "~" prefix wherever displayed — but it should track the real minute much
-// more closely than raw elapsed time did.
-function estimateMatchMinute(kickoffIso) {
-  if (!kickoffIso) return null;
-  const elapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
-  if (elapsedMin < 0) return null; // hasn't kicked off yet
-
-  const HALF_TIME_BREAK_MIN = 15;
-  const FIRST_HALF_MIN = 45;
-  const SECOND_HALF_MIN = 45;
-  const MAX_STOPPAGE_PER_HALF = 8; // generous allowance for stoppage time
-
-  if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF) {
-    // Still in the first half (or its stoppage time) — no adjustment needed.
-    return elapsedMin;
-  }
-  if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF + HALF_TIME_BREAK_MIN) {
-    // In the half-time window itself — show 45' (HT) rather than a
-    // second-half minute that hasn't started yet.
-    return FIRST_HALF_MIN;
-  }
-  // Second half: subtract the half-time break from elapsed wall-clock time.
-  const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - HALF_TIME_BREAK_MIN;
-  const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
-  return FIRST_HALF_MIN + cappedSecondHalf;
-}
-
 function convertOddsApiIoEvent(e) {
   // Maps odds-api.io's event shape onto football-data.org's match shape,
   // so the rest of the pipeline (scheduler.js, ai.js, the frontend) can
@@ -190,22 +156,14 @@ function convertOddsApiIoEvent(e) {
   // already passed but isn't "settled" yet is presumably in progress; we
   // treat that as IN_PLAY so the frontend's live badge and the scheduler's
   // faster live-repricing cadence both apply correctly.
-  let estimatedMinute = null;
   if (status === 'SCHEDULED' && e.date && new Date(e.date).getTime() < Date.now()) {
     status = 'IN_PLAY';
-    estimatedMinute = estimateMatchMinute(e.date);
   }
 
   return {
     id: 'oaio_' + e.id,
     utcDate: e.date,
     status,
-    // Set directly on the match object — NOT just computed client-side in
-    // the frontend — so it flows through the database and out through
-    // /api/fixtures automatically. This is what makes it visible to
-    // external sites like BetaKE, not just JuanAi's own UI.
-    minute: estimatedMinute,
-    minuteIsEstimated: estimatedMinute !== null, // transparency flag: this is NOT a real match clock, see note above
     homeTeam: { name: e.home },
     awayTeam: { name: e.away },
     competition: { name: e.league && e.league.name || 'Unknown League' },
@@ -365,4 +323,4 @@ function getKeyPoolStatus() {
   };
 }
 
-module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute };
+module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus };
