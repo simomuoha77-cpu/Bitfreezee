@@ -21,7 +21,7 @@ const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
 const ANALYSIS_PACE_MS = 8000;                        // gap between individual match analyses (each now costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
 const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;      // how often to delete FINISHED matches immediately + anything stuck past the 3h cutoff — shortened from 5min so finished matches disappear from the app/API promptly
-const DAY_BUCKETS = [0, 1, 2, 3, 4, 5, 6, 7]; // today through 7 days out — matches the frontend's dropdown range
+const DAY_BUCKETS = [0, 1, 2]; // today, tomorrow, day after — reduced from 8 days. With real AI capacity tested at ~4 matches/min sustainable (11 keys across Gemini+Groq, each recovering every 1-2 min), 8 days of even a league-narrowed fixture list produced 1,376+ pending matches — a backlog that would take 5+ hours to clear even in ideal conditions, meaning almost everything sat AI-pending indefinitely. 3 days keeps total volume small enough to realistically stay fully analyzed rather than perpetually behind. If you want more lookahead later, the AI capacity needs to grow first (more genuinely separate accounts, or a paid tier) — otherwise more days just means a bigger permanent backlog, not more useful coverage.
 
 let running = false;
 let lastFixtureRefresh = {}; // days -> timestamp

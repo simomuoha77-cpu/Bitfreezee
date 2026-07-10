@@ -381,11 +381,16 @@ async function expireOldMatches() {
     // match.utcDate and match.status are both stored inside the nested
     // `match` object. Delete anything explicitly FINISHED immediately, OR
     // anything older than the time cutoff regardless of status (the
-    // catch-all for matches odds-api.io never marks "settled").
+    // catch-all for matches odds-api.io never marks "settled"), OR anything
+    // sitting in a day-bucket that's no longer refreshed at all (days 3-7,
+    // orphaned when DAY_BUCKETS shrank to [0,1,2] to keep analysis volume
+    // sustainable — this data would otherwise sit forever with no bucket
+    // ever touching it again).
     const result = await fixturesCollection.deleteMany({
       $or: [
         { 'match.status': 'FINISHED' },
-        { 'match.utcDate': { $lt: cutoff, $ne: null } }
+        { 'match.utcDate': { $lt: cutoff, $ne: null } },
+        { days: { $in: ['3', '4', '5', '6', '7'] } }
       ]
     });
     return result.deletedCount || 0;
