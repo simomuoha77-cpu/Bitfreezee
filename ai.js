@@ -121,17 +121,44 @@ async function aiOnce(systemPrompt, userPrompt, maxTokens) {
   if (!GEMINI_KEYS.length && !GROQ_KEYS.length) {
     throw new Error('No AI engine configured — set GEMINI_KEY and/or GROQ_KEY in your .env file (see .env.example). At least one is required to generate odds.');
   }
+
+  // CRITICAL FIX: check whether ANY key across BOTH providers is actually
+  // available BEFORE attempting any calls. The old code always tried every
+  // Gemini model, then every Groq model, on every single match — meaning
+  // one match's analysis could burn up to 4 real API calls (2 Gemini
+  // models + 2 Groq models) even when the entire pool was already known to
+  // be exhausted from the previous match's attempt a few seconds earlier.
+  // With 6 matches/pass, that meant up to 24 real API calls every 90s, not
+  // 6 — a 4x under-count that was the actual cause of the pool never
+  // recovering despite reduced match-level pacing. Now we fail fast with
+  // zero wasted calls once we already know nothing is available.
+  const now = Date.now();
+  const geminiAvailable = geminiKeyState.some(s => now >= s.blockedUntil);
+  const groqAvailable = groqKeyState.some(s => now >= s.blockedUntil);
+  if (!geminiAvailable && !groqAvailable) {
+    throw new Error('All AI engines failed: entire key pool (Gemini + Groq) currently blocked/cooling down — skipping without wasting further calls');
+  }
+
   const errors = [];
-  if (GEMINI_KEYS.length) {
+  if (GEMINI_KEYS.length && geminiAvailable) {
     for (const model of GEMINI_MODELS) {
       try { return await callGemini(model, systemPrompt, userPrompt, maxTokens); }
-      catch (e) { errors.push(`gemini:${model}: ${e.message}`); }
+      catch (e) {
+        errors.push(`gemini:${model}: ${e.message}`);
+        // If that call just exhausted the last available Gemini key, stop
+        // trying further Gemini models immediately rather than burning
+        // another call against a now-guaranteed-blocked key.
+        if (!geminiKeyState.some(s => Date.now() >= s.blockedUntil)) break;
+      }
     }
   }
-  if (GROQ_KEYS.length) {
+  if (GROQ_KEYS.length && groqAvailable) {
     for (const model of GROQ_MODELS) {
       try { return await callGroq(model, systemPrompt, userPrompt, maxTokens); }
-      catch (e) { errors.push(`groq:${model}: ${e.message}`); }
+      catch (e) {
+        errors.push(`groq:${model}: ${e.message}`);
+        if (!groqKeyState.some(s => Date.now() >= s.blockedUntil)) break;
+      }
     }
   }
   throw new Error('All AI engines failed: ' + errors.join(' | '));
