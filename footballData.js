@@ -127,18 +127,30 @@ const realOdds = require('./realOdds');
 // Matches against the league NAME odds-api.io provides (case-insensitive
 // substring match) — edit this list to add/remove leagues as needed.
 const ODDSAPIIO_LEAGUE_ALLOWLIST = [
-  'premier league', 'la liga', 'serie a', 'bundesliga', 'ligue 1',
+  'england - premier league', 'england premier league', // specific match — plain "premier league" was matching regional/youth leagues worldwide (e.g. "Australia - U23 Victoria Premier League 1")
+  'la liga', 'serie a', 'bundesliga', 'ligue 1',
   'champions league', 'europa league', 'conference league',
   'mls', 'eredivisie', 'primeira liga', 'scottish premiership',
   'super lig', 'england - championship', 'england championship', // specific to England's 2nd tier — plain "championship" was matching unrelated leagues worldwide (e.g. "Myanmar Championship, Women")
   'copa libertadores', 'copa sudamericana', 'copa do brasil',
   'brasileirao', 'liga mx', 'saudi pro league',
-  'world cup', 'euro', 'nations league', 'copa america', 'afcon'
+  'fifa world cup', 'uefa euro', 'uefa nations league', 'copa america', 'afcon' // "world cup"/"euro"/"nations league" alone were too broad (e.g. matched U19/U20/U23 youth tournaments, women's qualifiers) — anchored to the specific senior men's tournament names
+];
+
+// Additional exclusion list: substrings that, if present ANYWHERE in the
+// league name, disqualify a match regardless of allowlist matches above.
+// This catches youth/reserve/lower-tier competitions that might otherwise
+// slip through an allowlist keyword coincidentally appearing in their name.
+const ODDSAPIIO_LEAGUE_EXCLUSIONS = [
+  'u23', 'u20', 'u19', 'u18', 'u17', ' u16', 'youth', 'reserve', 'reserves',
+  'academy', 'junior', 'women', // women's football is a legitimate real market in some leagues, but our current real-odds providers don't reliably price it — excluding here keeps AI-only volume down; revisit if a provider adds real coverage
+  'amateur', 'regional'
 ];
 
 function isTrackedLeague(leagueName) {
   if (!leagueName) return false;
   const n = leagueName.toLowerCase();
+  if (ODDSAPIIO_LEAGUE_EXCLUSIONS.some(kw => n.includes(kw))) return false;
   return ODDSAPIIO_LEAGUE_ALLOWLIST.some(kw => n.includes(kw));
 }
 
