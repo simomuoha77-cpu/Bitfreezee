@@ -17,6 +17,12 @@
   --grad:linear-gradient(135deg,#6366f1,#10d9a0);
   --sh:0 8px 32px rgba(0,0,0,0.5);--sh2:0 2px 8px rgba(0,0,0,0.3);
   --tr:0.16s cubic-bezier(0.4,0,0.2,1);
+  /* Casino room — its own accent so it reads as a distinct space from the
+     sportsbook/analysis screens, while staying in the same dark shell.
+     Violet-to-gold instead of indigo-to-teal: warmer, more "table felt and
+     brass trim" than the data-dashboard feel everywhere else in the app. */
+  --cas-a:#8b5cf6;--cas-b:#f5b942;--cas-grad:linear-gradient(135deg,#8b5cf6,#f5b942);
+  --cas-felt:#150f24;--cas-felt2:#1c1433;--cas-win:#f5b942;--cas-lose:#f87171;
 }
 html.light{
   --bg:#f0f2f8;--bg2:#fff;--bg3:#e8ecf5;--bgh:#dde3f0;--bga:#d0d8ee;--sur:#fff;
@@ -140,6 +146,52 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
 .main-tab-btn{background:none;border:none;color:var(--t2);cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;font-family:'Inter',sans-serif;transition:.16s;display:flex;align-items:center;gap:5px}
 .main-tab-btn:hover{background:var(--bgh);color:var(--t1)}
 .main-tab-btn.active{background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.2)}
+
+/* ─── CASINO ROOM ──────────────────────────────────────────────────────── */
+.casino-hdr{padding:14px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.casino-hdr .ctitle{font-weight:800;font-size:15px;flex:1;background:var(--cas-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.casino-note{font-size:11px;color:var(--tm);padding:8px 18px;background:var(--bg3);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:6px}
+.casino-grid{display:grid;grid-template-columns:1fr;gap:20px;padding:20px;max-width:640px;margin:0 auto}
+@media(min-width:900px){.casino-grid{grid-template-columns:1fr 1fr;max-width:1100px}}
+.cgame-card{background:radial-gradient(ellipse at top,var(--cas-felt2),var(--cas-felt));border:1px solid var(--bdl);border-radius:18px;padding:18px;box-shadow:var(--sh)}
+.cgame-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.cgame-hdr h3{font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;color:var(--t1)}
+.cgame-balance{font-size:12px;font-weight:700;color:var(--cas-b);background:rgba(245,185,66,.1);border:1px solid rgba(245,185,66,.25);padding:4px 10px;border-radius:20px}
+
+/* Crash game */
+.crash-stage{position:relative;height:220px;background:var(--cas-felt);border-radius:14px;overflow:hidden;border:1px solid var(--bdl);margin-bottom:14px}
+.crash-canvas{width:100%;height:100%;display:block}
+.crash-mult{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--t1);text-shadow:0 2px 20px rgba(139,92,246,.6);pointer-events:none;transition:color .15s}
+.crash-mult.busted{color:var(--cas-lose)}
+.crash-mult.cashed{color:var(--ok)}
+.crash-status{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--tm);text-transform:uppercase}
+.crash-controls{display:flex;gap:8px;align-items:center}
+.crash-bet-input{width:90px;padding:10px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;font-weight:700;outline:none;text-align:center}
+.crash-bet-input:focus{border-color:var(--cas-a)}
+.crash-btn{flex:1;padding:12px;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:13px;font-weight:800;cursor:pointer;transition:var(--tr);letter-spacing:.2px}
+.crash-btn.play{background:var(--cas-grad);color:#1a0f2e}
+.crash-btn.play:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.crash-btn.cashout{background:var(--ok);color:#04261c}
+.crash-btn.cashout:hover{filter:brightness(1.08)}
+.crash-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.crash-log{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.crash-log span{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--bg3);color:var(--tm)}
+.crash-log span.win{color:var(--ok);background:rgba(16,217,160,.1)}
+.crash-log span.loss{color:var(--cas-lose);background:rgba(248,113,113,.1)}
+
+/* Slot machine */
+.slot-frame{background:var(--cas-felt);border-radius:14px;border:1px solid var(--bdl);padding:18px;margin-bottom:14px}
+.slot-reels{display:flex;gap:8px;justify-content:center;margin-bottom:14px}
+.slot-reel{width:76px;height:88px;background:var(--bg2);border-radius:10px;border:2px solid var(--bdl);display:flex;align-items:center;justify-content:center;font-size:38px;overflow:hidden;position:relative}
+.slot-reel.spinning .slot-sym{animation:slotSpin .12s linear infinite}
+@keyframes slotSpin{0%{transform:translateY(0)}100%{transform:translateY(-40px)}}
+.slot-reel.win{border-color:var(--cas-b);box-shadow:0 0 0 3px rgba(245,185,66,.25)}
+.slot-payline{text-align:center;font-size:11px;color:var(--tm);margin-bottom:14px;min-height:15px;font-weight:700}
+.slot-payline.win{color:var(--cas-b)}
+.slot-controls{display:flex;gap:8px}
+.slot-paytable{margin-top:12px;font-size:10px;color:var(--tm);display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.slot-paytable span{background:var(--bg3);padding:3px 7px;border-radius:6px}
+
 .conn-dot{width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite}
 .conn-badge.groq .conn-dot{background:var(--ok)}
 #adminBadge{display:none;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;background:linear-gradient(135deg,rgba(248,113,113,.15),rgba(251,191,36,.15));color:var(--warn);border:1px solid rgba(251,191,36,.2)}
@@ -481,6 +533,7 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
         <button class="main-tab-btn active" id="btnChat" onclick="switchMainTab('chat')"><i class="fa-solid fa-message"></i> Chat</button>
         <button class="main-tab-btn" id="btnFootball" onclick="switchMainTab('football')"><i class="fa-solid fa-futbol"></i> Football</button>
         <button class="main-tab-btn" id="btnApiKeys" onclick="switchMainTab('apikeys')"><i class="fa-solid fa-key"></i> API Keys</button>
+        <button class="main-tab-btn" id="btnCasino" onclick="switchMainTab('casino')"><i class="fa-solid fa-dice"></i> Casino</button>
         <div class="conn-badge groq" id="connBadge"><span class="conn-dot"></span><span id="connTxt">Groq · Llama</span></div>
         <div id="adminBadge">&#128274; ADMIN</div>
       </div>
@@ -631,6 +684,59 @@ app.get('/games/today', async (req, res) => {<br>
 });
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 🎰 CASINO PANEL -->
+    <div id="casinoPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg)">
+      <div class="casino-hdr">
+        <div class="ctitle">🎰 JuanAi Casino</div>
+      </div>
+      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Play credits reset if you reload the page.</div>
+      <div class="casino-grid">
+
+        <!-- CRASH GAME -->
+        <div class="cgame-card">
+          <div class="cgame-hdr">
+            <h3><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> Skyrocket</h3>
+            <div class="cgame-balance">KES <span id="crashBalance">1000</span></div>
+          </div>
+          <div class="crash-stage">
+            <canvas class="crash-canvas" id="crashCanvas"></canvas>
+            <div class="crash-mult" id="crashMult">1.00x</div>
+            <div class="crash-status" id="crashStatus">Place a bet to start</div>
+          </div>
+          <div class="crash-controls">
+            <input type="number" class="crash-bet-input" id="crashBetAmt" value="50" min="10" step="10">
+            <button class="crash-btn play" id="crashPlayBtn" onclick="crashPlay()">Play ⏯️</button>
+            <button class="crash-btn cashout" id="crashCashoutBtn" onclick="crashCashout()" disabled>Cash Out</button>
+          </div>
+          <div class="crash-log" id="crashLog"></div>
+        </div>
+
+        <!-- SLOT MACHINE -->
+        <div class="cgame-card">
+          <div class="cgame-hdr">
+            <h3><i class="fa-solid fa-gem" style="color:var(--cas-b)"></i> Golden Reels</h3>
+            <div class="cgame-balance">KES <span id="slotBalance">1000</span></div>
+          </div>
+          <div class="slot-frame">
+            <div class="slot-reels">
+              <div class="slot-reel" id="slotReel0"><span class="slot-sym">🍒</span></div>
+              <div class="slot-reel" id="slotReel1"><span class="slot-sym">🍋</span></div>
+              <div class="slot-reel" id="slotReel2"><span class="slot-sym">🔔</span></div>
+            </div>
+            <div class="slot-payline" id="slotPayline">Spin to win</div>
+            <div class="slot-controls">
+              <input type="number" class="crash-bet-input" id="slotBetAmt" value="50" min="10" step="10">
+              <button class="crash-btn play" id="slotSpinBtn" onclick="slotSpin()" style="flex:1">Spin ⏯️</button>
+            </div>
+            <div class="slot-paytable">
+              <span>💎💎💎 = 20x</span><span>🔔🔔🔔 = 10x</span><span>🍋🍋🍋 = 5x</span><span>🍒🍒🍒 = 3x</span><span>any 2 match = 1.5x</span>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -2308,17 +2414,207 @@ function switchMainTab(t){
   var chatWrap=document.getElementById('chatWrap');
   var fbPanel=document.getElementById('footballPanel');
   var apiPanel=document.getElementById('apiKeysPanel');
+  var casinoPanel=document.getElementById('casinoPanel');
   var btnChat=document.getElementById('btnChat');
   var btnFb=document.getElementById('btnFootball');
   var btnApi=document.getElementById('btnApiKeys');
+  var btnCasino=document.getElementById('btnCasino');
   // Hide all
   if(chatWrap)chatWrap.style.display='none';
   if(fbPanel)fbPanel.style.display='none';
   if(apiPanel)apiPanel.style.display='none';
-  [btnChat,btnFb,btnApi].forEach(function(b){if(b)b.classList.remove('active');});
+  if(casinoPanel)casinoPanel.style.display='none';
+  [btnChat,btnFb,btnApi,btnCasino].forEach(function(b){if(b)b.classList.remove('active');});
   if(t==='chat'){if(chatWrap)chatWrap.style.display='flex';if(btnChat)btnChat.classList.add('active');}
   else if(t==='football'){if(fbPanel)fbPanel.style.display='flex';if(btnFb)btnFb.classList.add('active');loadFixtures();}
   else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderApiKeys();}
+  else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
+}
+
+// ─── CASINO — FREE-PLAY DEMO GAMES ─────────────────────────────────────────
+// Both games below are original, self-contained demo games — not clones of
+// any real-money product. No backend call, no real currency: balances are
+// just in-memory JS numbers that reset on page reload. Provably-fair-style
+// RNG (Math.random) is fine here specifically because nothing real is at
+// stake; if this is ever wired to real money, the odds/RNG must come from a
+// licensed game provider instead, not this code.
+var casinoInit=false;
+function initCasino(){
+  if(casinoInit)return;
+  casinoInit=true;
+  crashResize();
+  window.addEventListener('resize',crashResize);
+}
+
+// ── Skyrocket (crash/multiplier game) ──
+var crashState={running:false,busted:false,cashedOut:false,mult:1,bet:0,raf:null,startT:0,balance:1000,history:[],crashPoint:0};
+function crashResize(){
+  var cv=document.getElementById('crashCanvas');if(!cv)return;
+  var box=cv.parentElement.getBoundingClientRect();
+  cv.width=box.width;cv.height=box.height;
+}
+function crashRollCrashPoint(){
+  // Simple house-edge exponential distribution — skews toward low
+  // multipliers with a long tail toward high ones, same shape as real
+  // crash games use, tuned only for a free-play demo (not audited/fair-use
+  // grade, since no money is at stake).
+  var r=Math.random();
+  var point=0.98/(1-r*0.97);
+  return Math.max(1.01,Math.min(point,50));
+}
+function crashPlay(){
+  if(crashState.running)return;
+  var betInput=document.getElementById('crashBetAmt');
+  var bet=parseInt(betInput.value,10)||0;
+  if(bet<10){toast('Minimum bet is KES 10','error');return;}
+  if(bet>crashState.balance){toast('Not enough balance','error');return;}
+  crashState.balance-=bet;
+  crashState.bet=bet;
+  crashState.running=true;
+  crashState.busted=false;
+  crashState.cashedOut=false;
+  crashState.mult=1;
+  crashState.crashPoint=crashRollCrashPoint();
+  crashState.startT=performance.now();
+  document.getElementById('crashBalance').textContent=crashState.balance;
+  document.getElementById('crashPlayBtn').disabled=true;
+  document.getElementById('crashCashoutBtn').disabled=false;
+  document.getElementById('crashStatus').textContent='Flying...';
+  var mEl=document.getElementById('crashMult');
+  mEl.classList.remove('busted','cashed');
+  crashTick();
+}
+function crashTick(){
+  if(!crashState.running)return;
+  var elapsed=(performance.now()-crashState.startT)/1000;
+  crashState.mult=Math.pow(Math.E,0.14*elapsed); // smooth accelerating curve
+  document.getElementById('crashMult').textContent=crashState.mult.toFixed(2)+'x';
+  crashDraw(elapsed);
+  if(crashState.mult>=crashState.crashPoint){
+    crashBust();
+    return;
+  }
+  crashState.raf=requestAnimationFrame(crashTick);
+}
+function crashDraw(elapsed){
+  var cv=document.getElementById('crashCanvas');if(!cv)return;
+  var ctx=cv.getContext('2d');
+  var w=cv.width,h=cv.height;
+  ctx.clearRect(0,0,w,h);
+  // grid
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
+  for(var gx=0;gx<w;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
+  for(var gy=0;gy<h;gy+=30){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();}
+  // curve
+  var pts=[];
+  var steps=60;
+  for(var i=0;i<=steps;i++){
+    var t=(elapsed*(i/steps));
+    var m=Math.pow(Math.E,0.14*t);
+    var x=(i/steps)*w*0.86+8;
+    var y=h-14-Math.min((m-1)/(crashState.crashPoint*1.4),1)*(h-30);
+    pts.push([x,y]);
+  }
+  var grad=ctx.createLinearGradient(0,0,w,0);
+  grad.addColorStop(0,'#8b5cf6');grad.addColorStop(1,'#f5b942');
+  ctx.strokeStyle=grad;ctx.lineWidth=3;ctx.lineCap='round';
+  ctx.beginPath();
+  pts.forEach(function(p,i){if(i===0)ctx.moveTo(p[0],p[1]);else ctx.lineTo(p[0],p[1]);});
+  ctx.stroke();
+  // rocket dot at tip
+  if(pts.length){
+    var tip=pts[pts.length-1];
+    ctx.fillStyle='#f5b942';
+    ctx.beginPath();ctx.arc(tip[0],tip[1],5,0,Math.PI*2);ctx.fill();
+  }
+}
+function crashBust(){
+  crashState.running=false;
+  cancelAnimationFrame(crashState.raf);
+  var mEl=document.getElementById('crashMult');
+  mEl.textContent=crashState.crashPoint.toFixed(2)+'x';
+  mEl.classList.add('busted');
+  document.getElementById('crashStatus').textContent='Crashed! Better luck next round';
+  document.getElementById('crashPlayBtn').disabled=false;
+  document.getElementById('crashCashoutBtn').disabled=true;
+  if(!crashState.cashedOut){
+    crashLog(false,crashState.bet);
+  }
+}
+function crashCashout(){
+  if(!crashState.running||crashState.cashedOut)return;
+  crashState.cashedOut=true;
+  crashState.running=false;
+  cancelAnimationFrame(crashState.raf);
+  var winAmt=Math.floor(crashState.bet*crashState.mult);
+  crashState.balance+=winAmt;
+  document.getElementById('crashBalance').textContent=crashState.balance;
+  var mEl=document.getElementById('crashMult');
+  mEl.classList.add('cashed');
+  document.getElementById('crashStatus').textContent='Cashed out at '+crashState.mult.toFixed(2)+'x — won KES '+winAmt;
+  document.getElementById('crashPlayBtn').disabled=false;
+  document.getElementById('crashCashoutBtn').disabled=true;
+  crashLog(true,winAmt);
+}
+function crashLog(won,amt){
+  crashState.history.unshift({won:won,amt:amt});
+  crashState.history=crashState.history.slice(0,8);
+  var el=document.getElementById('crashLog');
+  el.innerHTML=crashState.history.map(function(h){
+    return '<span class="'+(h.won?'win':'loss')+'">'+(h.won?'+':'-')+'KES '+h.amt+'</span>';
+  }).join('');
+}
+
+// ── Golden Reels (3-reel slot machine) ──
+var SLOT_SYMS=['🍒','🍋','🔔','⭐','💎'];
+var SLOT_PAYOUT={'💎':20,'⭐':8,'🔔':10,'🍋':5,'🍒':3};
+var slotState={balance:1000,spinning:false};
+function slotSpin(){
+  if(slotState.spinning)return;
+  var betInput=document.getElementById('slotBetAmt');
+  var bet=parseInt(betInput.value,10)||0;
+  if(bet<10){toast('Minimum bet is KES 10','error');return;}
+  if(bet>slotState.balance){toast('Not enough balance','error');return;}
+  slotState.balance-=bet;
+  document.getElementById('slotBalance').textContent=slotState.balance;
+  slotState.spinning=true;
+  document.getElementById('slotSpinBtn').disabled=true;
+  document.getElementById('slotPayline').textContent='Spinning...';
+  document.getElementById('slotPayline').classList.remove('win');
+  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
+  reels.forEach(function(r){r.classList.add('spinning');r.classList.remove('win');});
+  var finalSyms=[randSym(),randSym(),randSym()];
+  // stop reels one at a time for a satisfying cascade
+  reels.forEach(function(r,i){
+    setTimeout(function(){
+      r.classList.remove('spinning');
+      r.querySelector('.slot-sym').textContent=finalSyms[i];
+      if(i===2)slotResolve(finalSyms,bet);
+    },500+i*350);
+  });
+}
+function randSym(){return SLOT_SYMS[Math.floor(Math.random()*SLOT_SYMS.length)];}
+function slotResolve(syms,bet){
+  var payEl=document.getElementById('slotPayline');
+  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
+  var winAmt=0;
+  if(syms[0]===syms[1]&&syms[1]===syms[2]){
+    winAmt=bet*(SLOT_PAYOUT[syms[0]]||3);
+    reels.forEach(function(r){r.classList.add('win');});
+  }else if(syms[0]===syms[1]||syms[1]===syms[2]||syms[0]===syms[2]){
+    winAmt=Math.floor(bet*1.5);
+  }
+  slotState.balance+=winAmt;
+  document.getElementById('slotBalance').textContent=slotState.balance;
+  if(winAmt>0){
+    payEl.textContent='You won KES '+winAmt+'!';
+    payEl.classList.add('win');
+  }else{
+    payEl.textContent='No match — try again';
+    payEl.classList.remove('win');
+  }
+  slotState.spinning=false;
+  document.getElementById('slotSpinBtn').disabled=false;
 }
 
 // ─── FOOTBALL ENGINE ──────────────────────────────────────────────────────────

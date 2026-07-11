@@ -158,13 +158,18 @@ const ODDSAPIIO_LEAGUE_EXCLUSIONS = [
   'amateur', 'regional'
 ];
 
-// TOGGLE: set FILTER_LEAGUES=1 in the environment to re-enable the
-// allowlist/exclusion narrowing above. Default is OFF — every league
-// odds-api.io returns is shown, same as SafariBet and other real betting
-// sites, instead of JuanAi silently dropping most of the world's matches.
-// Turn this back on only if the AI-analysis backlog becomes unmanageable
-// again (see note above ODDSAPIIO_LEAGUE_ALLOWLIST for why it existed).
-const FILTER_LEAGUES = process.env.FILTER_LEAGUES === '1';
+// TOGGLE: set FILTER_LEAGUES=0 in the environment to disable the
+// allowlist/exclusion narrowing above and show every league odds-api.io
+// returns, same as SafariBet. Default is ON — with only 11 free-tier AI
+// keys, an unfiltered merge realistically produces 300-3,600+ pending
+// matches (confirmed in testing and in the 366-match/constant-"cooling
+// down" backlog this was reintroduced to fix), which permanently exceeds
+// what the AI pool can clear. Narrowing to leagues people actually bet on
+// keeps volume inside what 11 keys can sustainably analyze without
+// perpetual rate-limit cooldowns. Only disable this once AI capacity
+// (more genuinely separate keys, or a paid tier) has actually grown to
+// match — otherwise this just reproduces the same backlog.
+const FILTER_LEAGUES = process.env.FILTER_LEAGUES !== '0';
 
 function isTrackedLeague(leagueName) {
   if (!leagueName) return false;
@@ -248,10 +253,21 @@ function convertOddsApiIoEvent(e) {
     // displayed the SAME frozen minute forever instead of ever finishing.
     // That's what produced dozens of unrelated matches all showing ~90'
     // simultaneously. A real football match (even with extra time) is
-    // essentially always over within 130 real minutes of kickoff, so treat
-    // anything still unsettled past that point as finished rather than
-    // leaving it live and frozen.
-    const REALISTIC_MAX_LIVE_MIN = 130;
+    // A real football match (even with extra time) is essentially always
+    // over within 113 real minutes of kickoff — 90 regulation + 15 half-time
+    // break + a generous 8 min stoppage per half. That 113 figure is also
+    // exactly where estimateMatchMinute's own display ceiling sits (98'
+    // shown = 113 real minutes elapsed, once the 8-min kickoff-delay buffer
+    // and half-time break are accounted for) — so the two numbers MUST
+    // match, or there's a gap where a match displays frozen at "~98'"
+    // without yet being forced to FINISHED. That gap was the actual cause
+    // of matches like SKN St Polten and WKS Slask Wroclaw sitting stuck at
+    // 98' for many extra minutes after really ending: this cutoff used to
+    // be 130, well past the 113-minute point where the display estimate
+    // stops climbing, so anything unsettled in between showed as a frozen
+    // 98' instead of flipping to FINISHED. Treat anything still unsettled
+    // past 113 minutes as finished rather than leaving it live and frozen.
+    const REALISTIC_MAX_LIVE_MIN = 113;
     const elapsedMin = Math.floor((Date.now() - new Date(e.date).getTime()) / 60000);
     if (elapsedMin > REALISTIC_MAX_LIVE_MIN) {
       status = 'FINISHED';

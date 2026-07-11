@@ -178,10 +178,27 @@ app.get('/api/status', async (req, res) => {
 
 // GET /internal/fixtures-view?days=0 — read-only, used by JuanAi's own UI to display
 // whatever the scheduler already fetched/analyzed. No key required (same-origin admin UI).
+//
+// Applies the same finished/stale filtering as /api/fixtures. This used to return raw,
+// unfiltered data and rely on the frontend's client-side FINISHED check alone — but
+// odds-api.io's "settled" status is often delayed or missing entirely for regional/
+// lower-tier leagues (see footballData.js's STALE-LIVE CUTOFF note), so a match could
+// sit on screen indefinitely after it actually ended, still showing as live with a
+// frozen minute count. Filtering server-side, with a real-time kickoff-age cutoff as a
+// backstop (not just the raw status field), closes that gap so finished matches
+// disappear from the dashboard promptly instead of waiting on an unreliable upstream
+// flag or the periodic cleanup job's next run.
 app.get('/internal/fixtures-view', async (req, res) => {
   const days = req.query.days || '0';
   const bucket = await db.getFixtures(days);
-  res.json(bucket || { matches: [], fetchedAt: null });
+  if (!bucket) return res.json({ matches: [], fetchedAt: null });
+  const STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // same cutoff used by /api/fixtures and db.js's expireOldMatches job
+  const matches = (bucket.matches || []).filter(m => {
+    if (m.status === 'FINISHED') return false;
+    if (m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
+    return true;
+  });
+  res.json(Object.assign({}, bucket, { matches }));
 });
 
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,
