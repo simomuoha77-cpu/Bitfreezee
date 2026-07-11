@@ -294,11 +294,25 @@ async function getMergedMatchesForDate(dateStr, isTodayBucket) {
     getOddsApiIoMatchesForDate(dateStr, isTodayBucket)
   ]);
 
+  // Dedup by team names AND kickoff time proximity (within 3 hours) — team
+  // names alone wasn't catching real-world duplicates like Spain vs Belgium
+  // appearing under both "FIFA World Cup" (football-data.org) and
+  // "International - FIFA World Cup" (odds-api.io) as two separate match
+  // IDs, since slightly different competition-name strings meant the two
+  // sources' matches were never being recognized as the same fixture. Real
+  // matches between the same two teams essentially never happen within
+  // hours of each other, so adding a time check makes this safe without
+  // needing to compare competition names directly (which vary too much
+  // between sources to match reliably).
   const dedupedOaio = oaioMatches.filter(oaio =>
-    !fdMatches.some(fd =>
-      realOdds.teamsMatch(fd.homeTeam && fd.homeTeam.name, oaio.homeTeam.name) &&
-      realOdds.teamsMatch(fd.awayTeam && fd.awayTeam.name, oaio.awayTeam.name)
-    )
+    !fdMatches.some(fd => {
+      const sameTeams = realOdds.teamsMatch(fd.homeTeam && fd.homeTeam.name, oaio.homeTeam.name) &&
+        realOdds.teamsMatch(fd.awayTeam && fd.awayTeam.name, oaio.awayTeam.name);
+      if (!sameTeams) return false;
+      if (!fd.utcDate || !oaio.utcDate) return sameTeams; // no date to compare — fall back to team-name-only match
+      const hoursDiff = Math.abs(new Date(fd.utcDate).getTime() - new Date(oaio.utcDate).getTime()) / (60 * 60 * 1000);
+      return hoursDiff <= 3;
+    })
   );
 
   return fdMatches.concat(dedupedOaio);

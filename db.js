@@ -19,6 +19,7 @@
 
 const { MongoClient } = require('mongodb');
 const footballData = require('./footballData');
+const realOdds = require('./realOdds');
 
 const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
@@ -357,6 +358,67 @@ async function clearMatchOdds(matchId, days) {
 // match plus stoppage/extra time essentially never exceeds ~3 hours, so
 // anything older than that is deleted outright — not just hidden — freeing
 // the space and guaranteeing it can never show as live/pending again.
+// Cleans up duplicate matches already sitting in the database from BEFORE
+// the dedup fix in footballData.js existed — same two teams, kickoff times
+// within 3 hours of each other, but different match IDs (one from
+// football-data.org, one from odds-api.io, with slightly different
+// competition-name strings that prevented the original merge-time dedup
+// from catching them). When a duplicate pair is found, keeps whichever
+// copy has real market odds (isRealMarketOdds) if only one does — since
+// that's strictly better data — otherwise keeps the more recently updated
+// one and deletes the other.
+async function deduplicateExistingMatches() {
+  await ensureMongo();
+  if (usingFallback) return 0; // not worth implementing for the fallback path — this is a one-time cleanup, real Mongo is the real target
+
+  try {
+    const allDocs = await fixturesCollection.find({}).toArray();
+    const toDelete = [];
+    const seen = new Set();
+
+    for (let i = 0; i < allDocs.length; i++) {
+      if (seen.has(allDocs[i]._id?.toString())) continue;
+      const a = allDocs[i].match;
+      if (!a || !a.homeTeam || !a.awayTeam) continue;
+
+      for (let j = i + 1; j < allDocs.length; j++) {
+        if (seen.has(allDocs[j]._id?.toString())) continue;
+        const b = allDocs[j].match;
+        if (!b || !b.homeTeam || !b.awayTeam) continue;
+        if (allDocs[i].days !== allDocs[j].days) continue; // only dedupe within the same day-bucket
+
+        const sameTeams = realOdds.teamsMatch(a.homeTeam.name, b.homeTeam.name) &&
+          realOdds.teamsMatch(a.awayTeam.name, b.awayTeam.name);
+        if (!sameTeams) continue;
+        if (!a.utcDate || !b.utcDate) continue;
+        const hoursDiff = Math.abs(new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime()) / (60 * 60 * 1000);
+        if (hoursDiff > 3) continue;
+
+        // Found a duplicate pair — decide which to keep.
+        const aHasReal = a.aiOdds && a.aiOdds.isRealMarketOdds;
+        const bHasReal = allDocs[j].aiOdds && allDocs[j].aiOdds.isRealMarketOdds;
+        let deleteIdx;
+        if (aHasReal && !bHasReal) deleteIdx = j;
+        else if (bHasReal && !aHasReal) deleteIdx = i;
+        else deleteIdx = (allDocs[i].updatedAt > allDocs[j].updatedAt) ? j : i;
+
+        toDelete.push(allDocs[deleteIdx]._id);
+        seen.add(allDocs[deleteIdx]._id?.toString());
+        if (deleteIdx === i) break; // doc i itself was deleted, stop comparing it against further docs
+      }
+    }
+
+    if (toDelete.length) {
+      const result = await fixturesCollection.deleteMany({ _id: { $in: toDelete } });
+      return result.deletedCount || 0;
+    }
+    return 0;
+  } catch (e) {
+    console.error('[db] deduplicateExistingMatches failed: ' + e.message);
+    return 0;
+  }
+}
+
 async function expireOldMatches() {
   await ensureMongo();
   const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // matches that kicked off more than 3 hours ago, regardless of reported status
@@ -406,6 +468,7 @@ module.exports = {
   upsertMatchOdds,
   clearMatchOdds,
   expireOldMatches,
+  deduplicateExistingMatches,
   getApiKeys,
   addApiKey,
   isValidApiKey,

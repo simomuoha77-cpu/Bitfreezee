@@ -258,12 +258,25 @@ function start() {
   // stops a match from being stuck showing as live/pending forever if
   // odds-api.io never marks it "settled" in our data. Runs every 5 min;
   // cheap since it's a single deleteMany with no external API calls.
+  //
+  // Also runs deduplication right after — cleans up matches that exist
+  // twice under different match IDs (e.g. Spain vs Belgium appearing
+  // separately from football-data.org's "FIFA World Cup" and odds-api.io's
+  // "International - FIFA World Cup", which the merge-time dedup didn't
+  // catch before the fix in footballData.js). This self-heals any
+  // duplicates already sitting in the database from before that fix.
   setInterval(async function(){
     try {
       const deleted = await db.expireOldMatches();
       if (deleted > 0) console.log('[scheduler] Expired ' + deleted + ' match(es) older than 3 hours — removed from database entirely');
     } catch (e) {
       console.error('[scheduler] expireOldMatches failed: ' + e.message);
+    }
+    try {
+      const deduped = await db.deduplicateExistingMatches();
+      if (deduped > 0) console.log('[scheduler] Removed ' + deduped + ' duplicate match(es) (same teams, same kickoff window, different source)');
+    } catch (e) {
+      console.error('[scheduler] deduplicateExistingMatches failed: ' + e.message);
     }
   }, EXPIRY_CHECK_INTERVAL_MS);
 }
