@@ -224,8 +224,25 @@ function convertOddsApiIoEvent(e) {
   // faster live-repricing cadence both apply correctly.
   let estimatedMinute = null;
   if (status === 'SCHEDULED' && e.date && new Date(e.date).getTime() < Date.now()) {
-    status = 'IN_PLAY';
-    estimatedMinute = estimateMatchMinute(e.date);
+    // STALE-LIVE CUTOFF: odds-api.io's "settled" flag is often delayed or
+    // simply missing for lower/regional leagues, so relying on it alone
+    // left matches stuck showing IN_PLAY indefinitely — real time kept
+    // passing but estimateMatchMinute() has a hard ceiling (98, regulation
+    // + stoppage both halves), so every match that ran past that ceiling
+    // displayed the SAME frozen minute forever instead of ever finishing.
+    // That's what produced dozens of unrelated matches all showing ~90'
+    // simultaneously. A real football match (even with extra time) is
+    // essentially always over within 130 real minutes of kickoff, so treat
+    // anything still unsettled past that point as finished rather than
+    // leaving it live and frozen.
+    const REALISTIC_MAX_LIVE_MIN = 130;
+    const elapsedMin = Math.floor((Date.now() - new Date(e.date).getTime()) / 60000);
+    if (elapsedMin > REALISTIC_MAX_LIVE_MIN) {
+      status = 'FINISHED';
+    } else {
+      status = 'IN_PLAY';
+      estimatedMinute = estimateMatchMinute(e.date);
+    }
   }
 
   return {
