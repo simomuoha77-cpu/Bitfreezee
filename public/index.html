@@ -531,6 +531,11 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
           <option value="0">Today</option>
           <option value="1">Tomorrow</option>
           <option value="2">In 2 Days</option>
+          <option value="3">In 3 Days</option>
+          <option value="4">In 4 Days</option>
+          <option value="5">In 5 Days</option>
+          <option value="6">In 6 Days</option>
+          <option value="7">In 7 Days</option>
         </select>
         <button onclick="loadFixtures()" style="background:var(--grad);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
         <button onclick="analyzeAllMatches()" style="background:linear-gradient(135deg,#ff4f6b,#ff8c42);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px" title="Analysis already runs automatically in the background"><i class="fa-solid fa-robot"></i> Analysis Status</button>
@@ -596,23 +601,14 @@ async function getJuanAiFixtures(days) {<br>
 // Each match has:<br>
 // match.homeTeam, match.awayTeam<br>
 // match.utcDate, match.status<br>
-// match.minute — current match minute if IN_PLAY (null otherwise)<br>
-// match.minuteIsEstimated — true if match.minute is an ESTIMATE (odds-api.io<br>
-//   sourced matches don't have a real match clock, only kickoff time — see<br>
-//   note below). false/absent means it's a real minute from football-data.org.<br>
-//   Show a "~" prefix or similar when true, so users know it's approximate.<br>
 // match.competition<br>
 // match.aiOdds.homeWin, match.aiOdds.draw, match.aiOdds.awayWin<br>
 // match.aiOdds.over25, match.aiOdds.under25<br>
 // match.aiOdds.btts, match.aiOdds.bttsNo<br>
 // match.aiPrediction, match.aiConfidence<br>
-// match.aiAnalysis, match.aiXG, match.aiValueBet<br>
-// match.aiOdds.isRealMarketOdds — true = real bookmaker price (safe for<br>
-//   real-money bets), false/absent = AI estimate (NOT safe for real-money<br>
-//   bets). Pass &realOddsOnly=1 on the fetch URL to have this filtered<br>
-//   server-side automatically.<br><br>
-// ⚠️ match.aiOdds are AI-generated predictions, not real bookmaker odds,<br>
-// UNLESS aiOdds.isRealMarketOdds is true. Label accordingly if shown to end users.
+// match.aiAnalysis, match.aiXG, match.aiValueBet<br><br>
+// ⚠️ match.aiOdds are AI-generated predictions, not real bookmaker odds.<br>
+// Label them accordingly if shown to end users.
           </div>
         </div>
 
@@ -640,9 +636,11 @@ app.get('/games/today', async (req, res) => {<br>
 
 <script>
 // ── JuanAi BACKEND CONFIG ──────────────────────────────────────────────────
-// Once server.js is running, set this to its address (same box if hosted
-// together, e.g. same Render service; otherwise the deployed backend URL).
-// Leave as-is for local dev: http://localhost:3000
+// This page is served BY server.js itself, so the backend is always at the
+// same origin the page was loaded from — http://localhost:3000 in local dev,
+// or https://your-app.onrender.com once deployed. window.location.origin
+// resolves to whichever one is actually true at runtime, so this works in
+// both places with no manual edits before deploying.
 var JUANAI_BACKEND_URL = window.location.origin;
 
 // Fire-and-forget push to the real backend. Failure here (backend not running,
@@ -2358,14 +2356,12 @@ function getFbDate(daysAhead){
 // This function just displays whatever the backend already has. It does NOT
 // fetch from football-data.org directly in the browser anymore, and there is
 // no demo/sample fixture fallback — if the backend has nothing yet, say so.
-async function loadFixtures(silent){
+async function loadFixtures(){
   var days = document.getElementById('fbDays').value;
   var dateStr = getFbDate(days);
 
-  if(!silent){
-    document.getElementById('fixturesList').innerHTML =
-      '<div style="text-align:center;padding:30px;color:var(--t2)"><div class="img-gen-spin" style="margin:0 auto 10px"></div><div style="font-size:13px">Loading fixtures for ' + dateStr + '...</div></div>';
-  }
+  document.getElementById('fixturesList').innerHTML =
+    '<div style="text-align:center;padding:30px;color:var(--t2)"><div class="img-gen-spin" style="margin:0 auto 10px"></div><div style="font-size:13px">Loading fixtures for ' + dateStr + '...</div></div>';
 
   try{
     var resp = await fetch(JUANAI_BACKEND_URL + '/internal/fixtures-view?days=' + days);
@@ -2374,40 +2370,22 @@ async function loadFixtures(silent){
     var matches = data.matches || [];
 
     if(!matches.length){
-      if(!silent){
-        document.getElementById('fixturesList').innerHTML =
-          '<div style="text-align:center;padding:30px;color:var(--t2)">'
-          + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
-          + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
-          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
-          + '</div>';
-      }
+      document.getElementById('fixturesList').innerHTML =
+        '<div style="text-align:center;padding:30px;color:var(--t2)">'
+        + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
+        + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
+        + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
+        + '</div>';
       fbMatches = [];
       updateFbStats([]);
-      if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); }
-      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, 20000);
       return;
     }
 
     fbMatches = matches;
-    var STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // same 3h cutoff as the backend's real-time safety filter and background expiry job
-    // Finished matches are deleted server-side automatically (see db.js's
-    // expireOldMatches, run every 2 min) — this filter is just a client-side
-    // safety net for the brief window before that job catches a match, not
-    // a toggle-able view anymore, since there's no reason to ever want to
-    // see a finished match once the backend guarantees it'll be deleted.
-    var visibleMatches = matches.filter(function(m){
-      if(m.status === 'FINISHED') return false;
-      if(m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
-      return true;
-    });
-    renderFixtures(visibleMatches);
-    updateFbStats(visibleMatches); // stats now reflect only what's actually shown, matching the deleted-finished-matches behavior
+    renderFixtures(matches);
+    updateFbStats(matches);
     // No need to trigger analysis manually — the backend's scheduler already
     // analyzes any match missing odds, automatically, in the background.
-    // We just need to keep checking back until it's done — see
-    // scheduleAutoPoll() below, which silently re-calls loadFixtures().
-    scheduleAutoPoll(visibleMatches);
 
   }catch(e){
     document.getElementById('fixturesList').innerHTML =
@@ -2417,26 +2395,6 @@ async function loadFixtures(silent){
       + '<div style="font-size:11px;color:var(--t2);line-height:1.6">Make sure <code>node server.js</code> is running at <code>' + JUANAI_BACKEND_URL + '</code>, then click Refresh.</div>'
       + '</div>';
   }
-}
-
-// ── Auto-poll: no manual "Generate AI Odds" clicking needed ──────────────
-// The scheduler in scheduler.js is already analyzing matches in the
-// background at its own pace (paced to respect free-tier API limits, so it
-// can take a couple minutes per match). This just quietly re-fetches the
-// fixtures view every 20s, ONLY while at least one visible match is still
-// waiting on odds, and stops once everything's analyzed — so there's no
-// endless polling once the page is fully up to date.
-var fbAutoPollTimer = null;
-function scheduleAutoPoll(matches){
-  if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
-  // Finished matches are excluded here — there's nothing to analyze for a
-  // game that's already over, so one lacking odds (e.g. it ended before the
-  // scheduler got to it) shouldn't keep the page silently polling forever.
-  var stillWaiting = (matches||[]).some(function(m){ return !m.aiOdds && m.status !== 'FINISHED'; });
-  if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
-  fbAutoPollTimer = setTimeout(function(){
-    loadFixtures(true); // silent refresh — no spinner reset, no user action needed
-  }, 20000);
 }
 
 function updateFbStats(matches){
@@ -2465,28 +2423,10 @@ function renderFixtures(matches){
     byComp[cn].matches.push(m);
   });
 
-  // Sort matches within each competition chronologically (soonest kickoff first)
-  Object.keys(byComp).forEach(function(cn){
-    byComp[cn].matches.sort(function(a,b){
-      var ta = a.utcDate ? new Date(a.utcDate).getTime() : Infinity;
-      var tb = b.utcDate ? new Date(b.utcDate).getTime() : Infinity;
-      return ta - tb;
-    });
-  });
-
-  // Order the competition groups themselves by their earliest kickoff, so the
-  // whole page reads top-to-bottom as "what's coming up soonest" rather than
-  // whatever order the API happened to return competitions in.
-  var compOrder = Object.keys(byComp).sort(function(cnA,cnB){
-    var earliestA = byComp[cnA].matches[0] && byComp[cnA].matches[0].utcDate ? new Date(byComp[cnA].matches[0].utcDate).getTime() : Infinity;
-    var earliestB = byComp[cnB].matches[0] && byComp[cnB].matches[0].utcDate ? new Date(byComp[cnB].matches[0].utcDate).getTime() : Infinity;
-    return earliestA - earliestB;
-  });
-
   var html = '';
   var days = document.getElementById('fbDays').value;
 
-  compOrder.forEach(function(compName){
+  Object.keys(byComp).forEach(function(compName){
     var group = byComp[compName];
     html += '<div style="margin-bottom:20px">';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:10px;border:1px solid var(--bdr)">'
@@ -2496,19 +2436,13 @@ function renderFixtures(matches){
       + '</div>';
 
     group.matches.forEach(function(m){
-      // aiOdds comes straight from the backend's /internal/fixtures-view response,
-      // which is the scheduler's real, freshly-analyzed data. We do NOT read any
-      // cached localStorage odds here anymore — a stale browser cache from
-      // earlier testing could otherwise silently override real server data with
-      // old/fake-looking odds, which is exactly the kind of mismatch that made
-      // matches look wrong. The server is the single source of truth.
-      var savedOdds = m.aiOdds || null;
+      var oddsKey = 'jfb_odds_' + m.id + '_' + days;
+      var savedOdds = null;
+      try{ var s = localStorage.getItem(oddsKey); if(s) savedOdds = JSON.parse(s); }catch(e){}
 
       var statusLabel = getMatchStatus(m);
       var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : 'var(--acc)';
-      var kickoffDate = m.utcDate ? new Date(m.utcDate).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
-      var kickoffTime = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
-      var kickoff = kickoffDate ? (kickoffDate + ' · ' + kickoffTime) : kickoffTime;
+      var kickoff = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
       var score = m.score && m.score.fullTime && m.score.fullTime.home !== null
         ? m.score.fullTime.home + ' - ' + m.score.fullTime.away
         : m.score && m.score.halfTime && m.score.halfTime.home !== null
@@ -2531,9 +2465,8 @@ function renderFixtures(matches){
       if(savedOdds){
         html += renderOddsBlock(savedOdds, m.id, days);
       }else{
-        html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" id="odds_loading_' + m.id + '">'
-          + '<div class="img-gen-spin" style="width:16px;height:16px"></div>'
-          + '<div style="font-size:10px;color:var(--t2)">AI analyzing automatically&hellip;</div>'
+        html += '<div style="display:flex;justify-content:center;gap:8px" id="odds_loading_' + m.id + '">'
+          + '<button onclick="analyzeMatch(\'' + m.id + '\',\'' + days + '\')" style="background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif;display:flex;align-items:center;gap:5px"><i class="fa-solid fa-robot"></i> Generate AI Odds</button>'
           + '</div>';
       }
 
@@ -2547,42 +2480,22 @@ function renderFixtures(matches){
 }
 
 function renderOddsBlock(odds, matchId, days){
-  var liveBadge = odds.isLiveRepriced
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,79,107,.15);color:var(--err);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800"><span style="width:5px;height:5px;border-radius:50%;background:var(--err);display:inline-block;animation:pulse 1.5s infinite"></span> LIVE-PRICED' + (odds.liveAt && odds.liveAt.minute ? ' · ' + odds.liveAt.minute + "'" : '') + '</span>'
-    : '';
-  var marginBadge = (odds.marginApplied != null)
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(16,217,160,.12);color:var(--ok);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800">+' + (odds.marginApplied * 100).toFixed(0) + '% MARGIN</span>'
-    : '';
-  // Real market odds (from SharpAPI) get a distinct green header instead of
-  // the AI-estimate warning — these are genuine sportsbook prices, not a
-  // model's guess, so the disclaimer language is different and more
-  // reassuring. Live-repriced odds always fall back to the AI warning since
-  // live repricing never uses real odds (see analyzeMatch in ai.js).
-  var headerHtml = (odds.isRealMarketOdds && !odds.isLiveRepriced)
-    ? '<div style="font-size:9px;color:var(--ok);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ Real Market Odds' + (odds.realOddsSource ? ' (' + esc(odds.realOddsSource) + ')' : '') + marginBadge + '</div>'
-    : '<div style="font-size:9px;color:var(--warn);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ AI Estimate — NOT Safe for Real-Money Bets' + marginBadge + liveBadge + '</div>';
   var html = '<div style="margin-top:6px">'
-    + headerHtml
+    + '<div style="font-size:9px;color:var(--tm);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">🤖 AI-Generated Estimate — Not Real Market Odds</div>'
     // 1X2
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
     + oddsBtn('1', odds.homeWin, '#6366f1')
     + oddsBtn('X', odds.draw, '#ffb800')
     + oddsBtn('2', odds.awayWin, '#ff4f6b')
     + '</div>'
-    // Over/Under + BTTS — only shown when actually available. SharpAPI's
-    // free tier only covers moneyline (1X2), so real-odds matches won't have
-    // these; showing '?' placeholders for markets we simply don't have data
-    // for is more confusing than just omitting the row.
-    + ((odds.over25 || odds.btts) ? (
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
-      + oddsBtn('O2.5', odds.over25, '#10d9a0')
-      + oddsBtn('U2.5', odds.under25, '#38bdf8')
-      + oddsBtn('BTTS', odds.btts, '#a855f7')
-      + oddsBtn('No', odds.bttsNo, '#8896b0')
-      + '</div>'
-    ) : '')
-    // Double Chance — always shown, since these are derived directly from
-    // the real (or AI) 1X2 odds and are always computable.
+    // Over/Under + BTTS
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
+    + oddsBtn('O2.5', odds.over25, '#10d9a0')
+    + oddsBtn('U2.5', odds.under25, '#38bdf8')
+    + oddsBtn('BTTS', odds.btts, '#a855f7')
+    + oddsBtn('No', odds.bttsNo, '#8896b0')
+    + '</div>'
+    // Double Chance
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px">'
     + oddsBtn('1X', odds.dc_home_draw, '#6366f1')
     + oddsBtn('12', odds.dc_home_away, '#ff4f6b')
@@ -2598,7 +2511,6 @@ function renderOddsBlock(odds, matchId, days){
       + '<span style="font-weight:700;color:' + confColor + '">' + odds.confidence + '% confident</span>'
       + '</div>'
       + (odds.valueBet ? '<div style="color:var(--warn);font-weight:700;margin-bottom:4px">💡 Value Bet: ' + esc(odds.valueBet) + '</div>' : '')
-      + (odds.consistencyWarning ? '<div style="color:var(--err);font-weight:700;margin-bottom:4px;font-size:11px">⚠️ ' + esc(odds.consistencyWarning) + '</div>' : '')
       + (odds.analysis ? '<div style="color:var(--t2);line-height:1.5;margin-top:4px">' + esc(odds.analysis.substring(0,180)) + (odds.analysis.length>180?'...':'') + '</div>' : '')
       + '</div>';
   }
@@ -2623,36 +2535,12 @@ function getMatchStatus(m){
   var s = m.status;
   if(s==='SCHEDULED') return 'Upcoming';
   if(s==='TIMED') return 'Scheduled';
+  if(s==='IN_PLAY') return '🔴 LIVE';
   if(s==='PAUSED') return '⏸ Half Time';
   if(s==='FINISHED') return 'FT';
   if(s==='POSTPONED') return 'Postponed';
   if(s==='CANCELLED') return 'Cancelled';
-  if(s==='IN_PLAY'){
-    var minuteInfo = getDisplayMinute(m);
-    return minuteInfo ? ('🔴 ' + minuteInfo) : '🔴 LIVE';
-  }
   return s || 'Unknown';
-}
-
-// Returns a display string for the current match minute, e.g. "62'" — real
-// minute data when football-data.org provides it (source !== 'odds-api.io'),
-// or a rough estimate from kickoff time otherwise, clearly marked with a
-// "~" since odds-api.io doesn't expose a true match clock (no stoppage time,
-// half-time break, or extra time accounted for — it's just wall-clock time
-// since kickoff, so it will drift from the real minute as a match goes on).
-function getDisplayMinute(m){
-  // The server now computes this directly (see footballData.js's
-  // estimateMatchMinute, which properly accounts for half-time — the old
-  // client-side version here used raw elapsed time with no half-time
-  // adjustment, which is exactly what caused matches to show impossible
-  // values like "111'"). Real minute from football-data.org, or a
-  // half-time-aware estimate for odds-api.io matches — either way, this
-  // field is now the single source of truth, also exposed via /api/fixtures
-  // so external sites like BetaKE see the same value.
-  if(m.minute != null){
-    return (m.minuteIsEstimated ? '~' : '') + m.minute + "'";
-  }
-  return null;
 }
 
 function getCompFlag(areaName){
@@ -2766,27 +2654,11 @@ async function renderApiKeys(){
     el.innerHTML = '<div style="color:var(--err);font-size:12px">⚠️ Can\'t reach JuanAi backend at <code>' + JUANAI_BACKEND_URL + '</code>. Run <code>node server.js</code> (see README) then refresh this panel.</div>';
     return;
   }
-
-  var storageBanner = '';
-  try{
-    var statusResp = await fetch(JUANAI_BACKEND_URL + '/api/status');
-    if(statusResp.ok){
-      var status = await statusResp.json();
-      var mongo = status.apiKeyStorage;
-      if(mongo && !mongo.connected){
-        storageBanner = '<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--err)">'
-          + '⚠️ <b>Keys will NOT survive a restart:</b> ' + esc(mongo.note || 'MongoDB not connected') + '. '
-          + (mongo.configured ? 'Check MONGO_URI is correct and Atlas Network Access allows this server\'s IP.' : 'Set MONGO_URI in Render\'s Environment tab.')
-          + '</div>';
-      }
-    }
-  }catch(e){ /* status check is best-effort — don't block the panel on it */ }
-
   if(!keys.length){
-    el.innerHTML = storageBanner + '<div style="color:var(--tm);font-size:12px">No API keys yet. Generate one above.</div>';
+    el.innerHTML = '<div style="color:var(--tm);font-size:12px">No API keys yet. Generate one above.</div>';
     return;
   }
-  el.innerHTML = storageBanner + keys.map(function(k){
+  el.innerHTML = keys.map(function(k){
     return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:12px;margin-bottom:8px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
       + '<div style="font-size:13px;font-weight:700">' + esc(k.name) + '</div>'

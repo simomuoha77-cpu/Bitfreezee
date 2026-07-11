@@ -66,48 +66,11 @@ async function getJuanAiFixtures(days = 0) {
 Real HTTP call — works from anywhere, no shared browser or localStorage
 needed.
 
-## ⚠️ Real-money safety — read this before accepting real stakes
-
-Not every match's odds come from a real bookmaker. JuanAi tries real market
-odds first (SharpAPI, then odds-api.io), and only falls back to an
-AI-generated *estimate* when neither provider has priced that match — which
-is common for smaller leagues (lower divisions, youth/reserve teams,
-regional cups) that major sportsbooks simply don't cover on their free
-tiers.
-
-**An AI-generated odds estimate is a probability guess, not a real market
-price.** There's no real liquidity, no real bookmaker risk management, and
-no guarantee of accuracy behind it. If BetaKE accepts real-money stakes
-against an AI-estimated price, JuanAi's 6% margin only protects you if the
-AI's underlying probability is roughly correct — for a match no real
-bookmaker will price, that can't be verified.
-
-**Before accepting a real-money bet on any match, check:**
-```js
-if (match.aiOdds && match.aiOdds.isRealMarketOdds === true) {
-  // Safe — a real bookmaker (SharpAPI/odds-api.io) actually priced this match
-} else {
-  // AI estimate only — do NOT accept real-money stakes on this match
-}
-```
-
-Or simpler: pass `?realOddsOnly=1` on the `/api/fixtures` call and JuanAi
-will only return matches that are actually safe to bet real money on:
-
-```js
-const resp = await fetch(`${JUANAI_URL}/api/fixtures?key=${API_KEY}&days=${days}&realOddsOnly=1`);
-```
-
-Every match in that response is guaranteed to have real bookmaker odds
-behind it. AI-only matches simply won't appear — nothing further to check
-on BetaKE's side.
-
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/fixtures?key=...&days=0` | API key | What BetaKE calls |
-| GET | `/api/fixtures?key=...&days=0&realOddsOnly=1` | API key | Same, but ONLY matches with real bookmaker odds — safe for real-money betting |
 | GET | `/api/status` | none | Background job visibility (match counts, last update) |
 | GET | `/api/health` | none | Uptime check |
 | GET | `/internal/fixtures-view?days=0` | none* | JuanAi's own UI reads current state |
@@ -134,30 +97,19 @@ All in `scheduler.js`:
 - `FIXTURE_REFRESH_INTERVAL_MS` — how often to pull fresh fixtures (default 15 min)
 - `ANALYSIS_LOOP_INTERVAL_MS` — how often to check for matches needing analysis (default 90s)
 - `ANALYSIS_MAX_AGE_MS` — re-analyze odds older than this (default 3h)
-- `DAY_BUCKETS` — which day offsets to track (default: today through 7 days out, matching the frontend's dropdown)
+- `DAY_BUCKETS` — which day offsets to track (default: today + tomorrow)
 
 ## Deploying to Render
 
 1. Push this folder to its own GitHub repo.
 2. New Render Web Service, point at that repo.
 3. Set environment variables in Render's dashboard (Settings, Environment):
-   `GEMINI_KEY`, `GROQ_KEY`, `FDORG_KEY`, `MONGO_URI` — do NOT commit `.env` to GitHub.
+   `GEMINI_KEY`, `GROQ_KEY`, `FDORG_KEY` — do NOT commit `.env` to GitHub.
 4. Render builds with `npm install`, starts with `npm start` automatically.
-5. In `public/index.html`, `JUANAI_BACKEND_URL` is already set to
-   `window.location.origin`, so it automatically points at whatever domain
-   served the page — no manual edit needed before deploying.
+5. In `public/index.html`, update `JUANAI_BACKEND_URL` near the top of the
+   `<script>` block to your Render URL (e.g. `https://juanai.onrender.com`),
+   commit, push — Render redeploys automatically.
 6. Give BetaKE that same Render URL plus an API key generated from the panel.
-
-**MONGO_URI is required for API keys to survive restarts.** Render's free
-tier has an ephemeral filesystem — any local file (including the old
-`data/apikeys.json`) is wiped every time the service restarts, redeploys, or
-spins down from inactivity (which free services do automatically). Without
-`MONGO_URI` set, API keys still work, but only until the next restart, then
-they're gone and you'll need to regenerate them. Set up a free MongoDB Atlas
-cluster (M0 tier, $0/mo), whitelist `0.0.0.0/0` under Network Access since
-Render doesn't give you a fixed IP on the free tier, and paste the connection
-string as `MONGO_URI`. The API Keys panel in the UI shows a warning banner if
-this isn't connected.
 
 **Free-tier note:** Render's free web services spin down when idle and take
 ~30-60s to wake on the next request. If BetaKE calls JuanAi's API while it's
