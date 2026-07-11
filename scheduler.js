@@ -167,19 +167,9 @@ async function analysisPass() {
     const liveA = isLive(a.match) ? 1 : 0;
     const liveB = isLive(b.match) ? 1 : 0;
     if (liveA !== liveB) return liveB - liveA; // live matches always first
-    // Day-bucket takes priority over kickoff time: today's matches must be
-    // FULLY drained before tomorrow's are touched, and tomorrow's before the
-    // day-after's. Previously this sorted only by kickoff time, which meant
-    // a tomorrow match kicking off at 09:00 could sort ahead of a today match
-    // kicking off at 22:00 — burning limited AI capacity on tomorrow's game
-    // while today's own fixtures were still sitting unanalyzed. With only
-    // 11 free-tier keys total, capacity is scarce enough that this ordering
-    // matters a lot — today's games are the ones people are actually betting
-    // on right now.
-    if (a.days !== b.days) return a.days - b.days;
     const timeA = a.match.utcDate ? new Date(a.match.utcDate).getTime() : Infinity;
     const timeB = b.match.utcDate ? new Date(b.match.utcDate).getTime() : Infinity;
-    return timeA - timeB; // within the same day, soonest kickoff next
+    return timeA - timeB; // soonest kickoff next
   });
 
   const totalPending = queue.length;

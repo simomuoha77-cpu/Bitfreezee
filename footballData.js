@@ -158,18 +158,13 @@ const ODDSAPIIO_LEAGUE_EXCLUSIONS = [
   'amateur', 'regional'
 ];
 
-// TOGGLE: set FILTER_LEAGUES=0 in the environment to disable the
-// allowlist/exclusion narrowing above and show every league odds-api.io
-// returns, same as SafariBet. Default is ON — with only 11 free-tier AI
-// keys, an unfiltered merge realistically produces 300-3,600+ pending
-// matches (confirmed in testing and in the 366-match/constant-"cooling
-// down" backlog this was reintroduced to fix), which permanently exceeds
-// what the AI pool can clear. Narrowing to leagues people actually bet on
-// keeps volume inside what 11 keys can sustainably analyze without
-// perpetual rate-limit cooldowns. Only disable this once AI capacity
-// (more genuinely separate keys, or a paid tier) has actually grown to
-// match — otherwise this just reproduces the same backlog.
-const FILTER_LEAGUES = process.env.FILTER_LEAGUES !== '0';
+// TOGGLE: set FILTER_LEAGUES=1 in the environment to re-enable the
+// allowlist/exclusion narrowing above. Default is OFF — every league
+// odds-api.io returns is shown, same as SafariBet and other real betting
+// sites, instead of JuanAi silently dropping most of the world's matches.
+// Turn this back on only if the AI-analysis backlog becomes unmanageable
+// again (see note above ODDSAPIIO_LEAGUE_ALLOWLIST for why it existed).
+const FILTER_LEAGUES = process.env.FILTER_LEAGUES === '1';
 
 function isTrackedLeague(leagueName) {
   if (!leagueName) return false;
