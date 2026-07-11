@@ -165,11 +165,18 @@ async function getFixtures(days) {
       // Recalculate the estimated live minute at READ time, not just at the
       // last save — this keeps it advancing in near-real-time (checked on
       // every API/UI request) instead of only updating every 2 minutes
-      // when the fixture refresh job happens to run. Only applies to
-      // odds-api.io-sourced matches still IN_PLAY; football-data.org's
-      // minute is already a real value from the source, left untouched.
-      if (m.minuteIsEstimated && m.status === 'IN_PLAY' && m.utcDate) {
-        m.minute = footballData.estimateMatchMinute(m.utcDate);
+      // when the fixture refresh job happens to run. Applies whenever a
+      // match is still live (IN_PLAY or PAUSED/half-time) so a match that
+      // enters or leaves half-time between reads gets its status corrected
+      // here too, not just its minute. Football-data.org's minute is
+      // already a real value from the source, left untouched.
+      if (m.minuteIsEstimated && (m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.utcDate) {
+        const est = footballData.estimateMatchMinute(m.utcDate);
+        if (est) {
+          m.minute = est.minute;
+          m.isHalftime = est.isHalftime;
+          m.status = est.isHalftime ? 'PAUSED' : 'IN_PLAY';
+        }
       }
       return m;
     });

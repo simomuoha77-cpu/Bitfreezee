@@ -206,17 +206,21 @@ function estimateMatchMinute(kickoffIso) {
 
   if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF) {
     // Still in the first half (or its stoppage time) — no adjustment needed.
-    return elapsedMin;
+    return { minute: elapsedMin, isHalftime: false };
   }
   if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF + HALF_TIME_BREAK_MIN) {
-    // In the half-time window itself — show 45' (HT) rather than a
-    // second-half minute that hasn't started yet.
-    return FIRST_HALF_MIN;
+    // In the half-time window itself. Returning isHalftime:true here is the
+    // actual fix for matches appearing to "keep counting" through the
+    // break — without this flag, every consumer (JuanAi's own dashboard,
+    // and SafariBet reading match.minute over the API) had no way to tell
+    // "paused at 45, clock stopped" apart from "still live at minute 45",
+    // since both looked like the exact same bare number.
+    return { minute: FIRST_HALF_MIN, isHalftime: true };
   }
   // Second half: subtract the half-time break from elapsed wall-clock time.
   const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - HALF_TIME_BREAK_MIN;
   const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
-  return FIRST_HALF_MIN + cappedSecondHalf;
+  return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
 }
 
 function convertOddsApiIoEvent(e) {
@@ -234,6 +238,7 @@ function convertOddsApiIoEvent(e) {
   // treat that as IN_PLAY so the frontend's live badge and the scheduler's
   // faster live-repricing cadence both apply correctly.
   let estimatedMinute = null;
+  let isHalftime = false;
   if (status === 'SCHEDULED' && e.date && new Date(e.date).getTime() < Date.now()) {
     // STALE-LIVE CUTOFF: odds-api.io's "settled" flag is often delayed or
     // simply missing for lower/regional leagues, so relying on it alone
@@ -251,8 +256,17 @@ function convertOddsApiIoEvent(e) {
     if (elapsedMin > REALISTIC_MAX_LIVE_MIN) {
       status = 'FINISHED';
     } else {
-      status = 'IN_PLAY';
-      estimatedMinute = estimateMatchMinute(e.date);
+      const est = estimateMatchMinute(e.date);
+      estimatedMinute = est ? est.minute : null;
+      isHalftime = est ? est.isHalftime : false;
+      // PAUSED matches football-data.org's own convention for half-time —
+      // using it here (instead of leaving status as IN_PLAY) means any
+      // consumer already handling football-data.org's real PAUSED status
+      // (JuanAi's own frontend already does: `status === 'IN_PLAY' ||
+      // status === 'PAUSED'` counts as live) gets correct half-time
+      // handling for free, without needing special-case logic just for
+      // odds-api.io matches.
+      status = isHalftime ? 'PAUSED' : 'IN_PLAY';
     }
   }
 
@@ -266,6 +280,7 @@ function convertOddsApiIoEvent(e) {
     // external sites like BetaKE, not just JuanAi's own UI.
     minute: estimatedMinute,
     minuteIsEstimated: estimatedMinute !== null, // transparency flag: this is NOT a real match clock, see note above
+    isHalftime, // explicit flag: true means the clock is PAUSED at half-time, not still running — fixes matches appearing to "keep counting" through the break
     homeTeam: { name: e.home },
     awayTeam: { name: e.away },
     competition: { name: e.league && e.league.name || 'Unknown League' },
