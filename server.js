@@ -56,7 +56,11 @@ async function requireApiKey(req, res, next) {
 // in your own code and risk missing a match that should have been excluded.
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
   const days = req.query.days || '0';
-  const bucket = await db.getFixtures(days);
+  // sport defaults to 'football' so every existing caller (BetaKE included)
+  // keeps working identically without needing to add this param at all.
+  // Pass ?sport=basketball for basketball fixtures instead.
+  const sport = req.query.sport === 'basketball' ? 'basketball' : 'football';
+  const bucket = await db.getFixtures(days, sport);
   if (!bucket) {
     return res.json({ matches: [], fetchedAt: null, note: 'No fixtures loaded for this day yet — background refresh runs on a schedule, try again shortly' });
   }
@@ -87,18 +91,33 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     // anything whose odds are an AI estimate rather than a real bookmaker
     // price. A match with no odds at all (not yet analyzed) is also
     // excluded here, since there's nothing to bet on yet either way.
-    if (realOddsOnly && !(m.aiOdds && m.aiOdds.isRealMarketOdds)) return false;
+    //
+    // Basketball matches never carry aiOdds at all — they skip AI analysis
+    // entirely by design (see basketballData.js) and instead carry a
+    // top-level `realOdds` field set directly from odds-api.io. Checking
+    // only `m.aiOdds.isRealMarketOdds` here would silently exclude EVERY
+    // basketball match under realOddsOnly=1, since that field structurally
+    // doesn't exist for them — not because their odds aren't real.
+    if (realOddsOnly) {
+      const hasRealOdds = sport === 'basketball'
+        ? !!m.realOdds
+        : !!(m.aiOdds && m.aiOdds.isRealMarketOdds);
+      if (!hasRealOdds) return false;
+    }
     return true;
   });
   res.json({
     matches,
+    sport,
     fetchedAt: bucket.fetchedAt,
     updatedAt: bucket.updatedAt,
     oddsMargin: ai.DEFAULT_MARGIN,
     realOddsOnlyFilterApplied: realOddsOnly,
-    disclaimer: realOddsOnly
-      ? 'realOddsOnly=1 was set: every match returned has aiOdds.isRealMarketOdds === true, meaning a real bookmaker (SharpAPI/odds-api.io) actually priced it — safe to use for real-money staking. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied on top of the real price. Still manage your own exposure regardless of these numbers.'
-      : 'IMPORTANT for real-money betting: check aiOdds.isRealMarketOdds on EVERY match before accepting a stake. true = a real bookmaker priced this match (via SharpAPI/odds-api.io) — safe to bet real money against. false/absent = the odds are an AI-generated ESTIMATE, not a real market price, and should NOT be used to accept real-money stakes — there is no real liquidity or bookmaker risk management behind that number. Pass ?realOddsOnly=1 to have this filtering done for you server-side. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied either way.'
+    disclaimer: sport === 'basketball'
+      ? 'Basketball matches only ever carry REAL bookmaker odds (via odds-api.io) or no odds at all (match.realOdds === null) — there is no AI-estimated fallback for this sport. A null match.realOdds means no bookmaker has priced this match yet; do not bet real money against it.'
+      : (realOddsOnly
+        ? 'realOddsOnly=1 was set: every match returned has aiOdds.isRealMarketOdds === true, meaning a real bookmaker (SharpAPI/odds-api.io) actually priced it — safe to use for real-money staking. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied on top of the real price. Still manage your own exposure regardless of these numbers.'
+        : 'IMPORTANT for real-money betting: check aiOdds.isRealMarketOdds on EVERY match before accepting a stake. true = a real bookmaker priced this match (via SharpAPI/odds-api.io) — safe to bet real money against. false/absent = the odds are an AI-generated ESTIMATE, not a real market price, and should NOT be used to accept real-money stakes — there is no real liquidity or bookmaker risk management behind that number. Pass ?realOddsOnly=1 to have this filtering done for you server-side. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied either way.')
   });
 });
 
@@ -112,6 +131,7 @@ app.get('/api/status', async (req, res) => {
   await db.ensureMongo();
   const days0 = await db.getFixtures(0);
   const days1 = await db.getFixtures(1);
+  const basketballDays0 = await db.getFixtures(0, 'basketball');
   function summarize(bucket) {
     if (!bucket || !Array.isArray(bucket.matches)) return { matches: 0, analyzed: 0, realOdds: 0, updatedAt: null };
     return {
@@ -121,9 +141,22 @@ app.get('/api/status', async (req, res) => {
       updatedAt: bucket.updatedAt || null
     };
   }
+  // Basketball has no AI-analysis step at all (see basketballData.js) — its
+  // "analyzed" concept doesn't apply, so this summary shape is deliberately
+  // different (realOdds only) rather than forcing basketball into fields
+  // that don't mean anything for it.
+  function summarizeBasketball(bucket) {
+    if (!bucket || !Array.isArray(bucket.matches)) return { matches: 0, realOdds: 0, updatedAt: null };
+    return {
+      matches: bucket.matches.length,
+      realOdds: bucket.matches.filter(m => m.realOdds).length,
+      updatedAt: bucket.updatedAt || null
+    };
+  }
   res.json({
     today: summarize(days0),
     tomorrow: summarize(days1),
+    basketballToday: summarizeBasketball(basketballDays0),
     apiKeyStorage: db.getMongoStatus(),
     realOddsSource: {
       configured: realOdds.isConfigured(),
@@ -193,7 +226,9 @@ app.post('/internal/analyze-now', async (req, res) => {
 app.get('/internal/clear-fixtures', async (req, res) => {
   await db.saveFixtures(0, []);
   await db.saveFixtures(1, []);
-  res.json({ ok: true, message: 'Fixtures cleared for days=0 and days=1. Scheduler will repopulate with real data on its next cycle (or restart the server to force it immediately).' });
+  await db.saveFixtures(0, [], 'basketball');
+  await db.saveFixtures(1, [], 'basketball');
+  res.json({ ok: true, message: 'Fixtures cleared for days=0 and days=1 (football + basketball). Scheduler will repopulate with real data on its next cycle (or restart the server to force it immediately).' });
 });
 
 // ── API KEY MANAGEMENT (called by JuanAi's admin UI) ───────────────

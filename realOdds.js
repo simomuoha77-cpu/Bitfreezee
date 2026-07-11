@@ -61,7 +61,7 @@ const CACHE_MS = 5 * 60 * 1000; // 5 min — real odds don't need to be fresher
                                  // keeps us comfortably under both rate
                                  // limits even with many matches per cycle.
 let sharpApiCache = { data: null, fetchedAt: 0 };
-let oddsApiIoCache = { data: null, fetchedAt: 0 }; // shared across whichever key served the last successful /events fetch — the events LIST itself doesn't depend on which key fetched it, so one cache entry serves all keys
+// (per-sport odds-api.io events cache now lives as oddsApiIoCacheBySport, defined near fetchOddsApiIoEvents)
 
 const MIN_MS_BETWEEN_CALLS = 5500; // ~10.9 req/min ceiling, under SharpAPI's 12/min cap
 let lastSharpApiCallAt = 0;
@@ -168,18 +168,27 @@ async function oaioFetch(path) {
   return json;
 }
 
-// Fetches the current list of pending football events from odds-api.io,
-// using the same 5-minute cache pattern. This is a much heavier payload
-// (~1MB, thousands of matches) than SharpAPI's response, so caching matters
-// even more here to stay under the 100 req/hour-per-key free-tier limit.
-async function fetchOddsApiIoEvents() {
+// Fetches the current list of pending events from odds-api.io for a given
+// sport (defaults to 'football' so existing callers are unaffected), using
+// the same 5-minute cache pattern. This is a much heavier payload (~1MB,
+// thousands of matches) than SharpAPI's response, so caching matters even
+// more here to stay under the 100 req/hour-per-key free-tier limit. Cache
+// is keyed PER SPORT now (was a single shared slot) — needed once
+// basketball was added alongside football: with one shared cache slot,
+// alternating football/basketball fetches would each evict the other's
+// cached data, so neither sport would ever actually benefit from caching.
+const oddsApiIoCacheBySport = {}; // sport -> { data, fetchedAt }
+async function fetchOddsApiIoEvents(sport) {
+  sport = sport || 'football';
   const now = Date.now();
-  if (oddsApiIoCache.data && (now - oddsApiIoCache.fetchedAt) < CACHE_MS) {
-    return oddsApiIoCache.data;
+  const cached = oddsApiIoCacheBySport[sport];
+  if (cached && (now - cached.fetchedAt) < CACHE_MS) {
+    return cached.data;
   }
-  const json = await oaioFetch('/events?sport=football');
-  oddsApiIoCache = { data: Array.isArray(json) ? json : [], fetchedAt: now };
-  return oddsApiIoCache.data;
+  const json = await oaioFetch('/events?sport=' + encodeURIComponent(sport));
+  const data = Array.isArray(json) ? json : [];
+  oddsApiIoCacheBySport[sport] = { data, fetchedAt: now };
+  return data;
 }
 
 // Fetches real odds for a specific event ID from odds-api.io. Not cached
@@ -276,13 +285,20 @@ async function getFromSharpApi(homeTeam, awayTeam) {
 }
 
 // Tries odds-api.io for a specific match: first finds the event by team-name
-// match against the cached pending-events list, then fetches odds for that
-// specific event ID. Returns null if not found, not configured, or the
-// matched event has no priced odds yet (common for far-out fixtures).
-async function getFromOddsApiIo(homeTeam, awayTeam) {
+// match against the cached pending-events list for the given sport, then
+// fetches odds for that specific event ID. Returns null if not found, not
+// configured, or the matched event has no priced odds yet (common for
+// far-out fixtures). `sport` defaults to 'football' so existing callers are
+// unaffected; pass 'nba' (or another odds-api.io sport slug) for other
+// sports. Handles BOTH 3-way markets (football: home/draw/away) and 2-way
+// markets (basketball: home/away, no draw exists in the sport) — confirmed
+// against odds-api.io's own published NBA example response, which omits
+// "draw" entirely rather than sending a null/zero placeholder for it.
+async function getFromOddsApiIo(homeTeam, awayTeam, sport) {
   if (!ODDSAPIIO_KEYS.length) return null;
+  sport = sport || 'football';
   try {
-    const events = await fetchOddsApiIoEvents();
+    const events = await fetchOddsApiIoEvents(sport);
     const match = events.find(e =>
       e.status === 'pending' && teamsMatch(e.home, homeTeam) && teamsMatch(e.away, awayTeam)
     );
@@ -296,33 +312,56 @@ async function getFromOddsApiIo(homeTeam, awayTeam) {
     if (!mlMarket || !mlMarket.odds || !mlMarket.odds[0]) return null;
 
     const prices = mlMarket.odds[0];
-    if (!prices.home || !prices.draw || !prices.away) return null; // incomplete — don't guess
+    if (!prices.home || !prices.away) return null; // incomplete — don't guess
+    const hasDraw = prices.draw != null; // absent for 2-way sports like basketball, present for football/soccer
+
+    if (!hasDraw) {
+      // 2-way market (basketball etc.) — no draw field to require or return.
+      return {
+        homeWin: parseFloat(prices.home),
+        draw: null,
+        awayWin: parseFloat(prices.away),
+        isTwoWay: true, // flag so ai.js / the frontend know not to expect a draw price for this sport
+        sportsbook: bookmakerKey.replace(/\s*\(no latency\)\s*/i, ''),
+        provider: 'odds-api.io',
+        fetchedAt: Date.now()
+      };
+    }
 
     return {
       homeWin: parseFloat(prices.home),
       draw: parseFloat(prices.draw),
       awayWin: parseFloat(prices.away),
+      isTwoWay: false,
       sportsbook: bookmakerKey.replace(/\s*\(no latency\)\s*/i, ''), // clean up SharpAPI-style latency suffix if present
       provider: 'odds-api.io',
       fetchedAt: Date.now()
     };
   } catch (e) {
-    console.error('[realOdds] odds-api.io lookup failed for ' + homeTeam + ' vs ' + awayTeam + ': ' + e.message);
+    console.error('[realOdds] odds-api.io lookup failed for ' + homeTeam + ' vs ' + awayTeam + ' (sport=' + sport + '): ' + e.message);
     return null;
   }
 }
 
 // Finds real odds for a specific match, trying SharpAPI first (faster, more
-// reliable rate limit), then odds-api.io (broader league coverage) as a
-// second attempt. Returns null if neither provider has this match — caller
-// falls back to AI-generated odds in that case.
-async function getRealOddsForMatch(homeTeam, awayTeam) {
+// reliable rate limit — but football/soccer only), then odds-api.io
+// (broader league AND sport coverage) as a second attempt. `sport` defaults
+// to 'football' so existing football callers are unaffected. Returns null
+// if neither provider has this match — caller falls back to AI-generated
+// odds in that case.
+async function getRealOddsForMatch(homeTeam, awayTeam, sport) {
   if (!isConfigured()) return null;
+  sport = sport || 'football';
 
-  const fromSharp = await getFromSharpApi(homeTeam, awayTeam);
-  if (fromSharp) return fromSharp;
+  // SharpAPI is football-only (see the module header note on both
+  // providers' real, tested coverage) — skip it entirely for other sports
+  // rather than wasting a throttled call that can never succeed.
+  if (sport === 'football') {
+    const fromSharp = await getFromSharpApi(homeTeam, awayTeam);
+    if (fromSharp) return fromSharp;
+  }
 
-  const fromOddsApiIo = await getFromOddsApiIo(homeTeam, awayTeam);
+  const fromOddsApiIo = await getFromOddsApiIo(homeTeam, awayTeam, sport);
   if (fromOddsApiIo) return fromOddsApiIo;
 
   return null; // neither provider covers this match — caller falls back to AI

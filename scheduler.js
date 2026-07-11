@@ -89,6 +89,38 @@ async function refreshFixturesForDay(days) {
   }
 }
 
+let lastBasketballRefresh = {}; // days -> timestamp, entirely separate tracking from football's lastFixtureRefresh
+
+// Refreshes basketball fixtures for a single day-bucket. Deliberately
+// separate from refreshFixturesForDay above rather than a shared/branching
+// function — basketball has no AI-analysis step, no h2h/form lookups, no
+// TBD-team self-heal (odds-api.io basketball events always have named
+// teams), and a different realistic carry-over window, so trying to share
+// one function would mean threading sport-conditionals through logic that
+// doesn't actually apply to it. Keeping football's function untouched was
+// the explicit goal here.
+async function refreshBasketballFixturesForDay(days) {
+  const basketballData = require('./basketballData');
+  const dateStr = basketballData.getDateString(days);
+  try {
+    const matches = await basketballData.getBasketballMatchesForDate(dateStr, days === 0);
+    const existing = await db.getFixtures(days, 'basketball');
+
+    // Same "don't wipe good data on a temporary empty fetch" protection as
+    // football's version — see the matching comment above for the reasoning.
+    if (matches.length === 0 && existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
+      console.warn('[scheduler] Basketball fixture source returned nothing for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
+      return;
+    }
+
+    await db.saveFixtures(days, matches, 'basketball');
+    lastBasketballRefresh[days] = Date.now();
+    console.log('[scheduler] Refreshed ' + matches.length + ' real basketball fixtures for days=' + days + ' (' + dateStr + ')');
+  } catch (e) {
+    console.error('[scheduler] Basketball fixture refresh FAILED for days=' + days + ': ' + e.message);
+  }
+}
+
 function needsAnalysis(match) {
   // Never analyze a finished match — the game is over, there's nothing left
   // to price, and without this check a finished match that somehow never
@@ -233,6 +265,19 @@ async function fixtureRefreshLoop() {
   }
 }
 
+// Same today/future-days pacing pattern as football's loop, running against
+// lastBasketballRefresh instead so the two sports' refresh timers never
+// interfere with each other.
+async function basketballFixtureRefreshLoop() {
+  for (const days of DAY_BUCKETS) {
+    const last = lastBasketballRefresh[days] || 0;
+    const interval = days === 0 ? TODAY_REFRESH_INTERVAL_MS : FIXTURE_REFRESH_INTERVAL_MS;
+    if (Date.now() - last >= interval) {
+      await refreshBasketballFixturesForDay(days);
+    }
+  }
+}
+
 function start() {
   if (running) return;
   running = true;
@@ -246,6 +291,17 @@ function start() {
   // be due yet on most of these checks.
   fixtureRefreshLoop();
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
+
+  // Basketball: same interval, entirely independent state (lastBasketballRefresh),
+  // so a slow/failing football-data.org call can never delay basketball
+  // updates or vice versa. Staggered 5s after football's initial kick-off
+  // (not the recurring interval, just the first call) purely so their
+  // startup log lines don't interleave confusingly — has no effect on
+  // steady-state behavior since setInterval runs independently after that.
+  setTimeout(function(){
+    basketballFixtureRefreshLoop();
+    setInterval(basketballFixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
+  }, 5 * 1000);
 
   // Give the first fixture refresh a head start before the first analysis pass.
   setTimeout(function(){

@@ -83,24 +83,31 @@ async function ensureMongo() {
 // we send; if we don't include aiOdds in this call, it stays untouched —
 // unlike the old file-based approach, we don't need to manually copy prior
 // odds forward, since we're not overwriting the whole bucket anymore).
-async function saveFixtures(days, matches) {
+async function saveFixtures(days, matches, sport) {
+  sport = sport || 'football'; // default keeps every existing caller's behavior byte-for-byte identical
+  const bucketKey = sport + ':' + String(days); // namespacing by sport means basketball and football never share a days-bucket, even though match IDs already can't collide (oaio_bball_ vs oaio_/plain numeric) — this keeps querying by sport simple rather than relying on ID-prefix sniffing
   await ensureMongo();
   const now = new Date().toISOString();
 
   if (usingFallback) {
-    const existing = fixturesFallback[String(days)];
+    const existing = fixturesFallback[bucketKey];
     const existingById = {};
     if (existing) existing.matches.forEach(m => { existingById[String(m.id)] = m; });
     const merged = matches.map(m => {
       const prev = existingById[String(m.id)];
       return prev && prev.aiOdds ? Object.assign({}, m, { aiOdds: prev.aiOdds, aiPrediction: prev.aiPrediction, aiConfidence: prev.aiConfidence, aiAnalysis: prev.aiAnalysis, aiXG: prev.aiXG, aiValueBet: prev.aiValueBet, aiAnalyzedAt: prev.aiAnalyzedAt }) : m;
     });
-    fixturesFallback[String(days)] = { matches: merged, fetchedAt: Date.now(), updatedAt: now };
+    fixturesFallback[bucketKey] = { matches: merged, fetchedAt: Date.now(), updatedAt: now };
     // Same cross-bucket cleanup in fallback mode — see the real-Mongo path
-    // below for why this matters.
-    Object.keys(fixturesFallback).forEach(otherDays => {
-      if (otherDays === String(days)) return;
-      const bucket = fixturesFallback[otherDays];
+    // below for why this matters. Scoped to buckets of the SAME sport only
+    // (bucketKey prefix match) — a football match id and a basketball
+    // match id are namespaced differently anyway, but this keeps the
+    // cleanup's intent explicit rather than relying on that as an
+    // implementation detail.
+    Object.keys(fixturesFallback).forEach(otherBucketKey => {
+      if (otherBucketKey === bucketKey) return;
+      if (!otherBucketKey.startsWith(sport + ':')) return;
+      const bucket = fixturesFallback[otherBucketKey];
       if (!bucket) return;
       const matchIds = new Set(matches.map(m => String(m.id)));
       bucket.matches = bucket.matches.filter(m => !matchIds.has(String(m.id)));
@@ -111,12 +118,12 @@ async function saveFixtures(days, matches) {
   try {
     const ops = matches.map(m => ({
       updateOne: {
-        filter: { matchId: String(m.id), days: String(days) },
+        filter: { matchId: String(m.id), days: bucketKey },
         // $set updates the match's base fixture data (teams, date, status,
         // score) WITHOUT touching aiOdds/aiPrediction/etc — those fields are
         // only ever written by upsertMatchOdds below, so a fixture refresh
         // can never accidentally wipe out existing analysis.
-        update: { $set: { matchId: String(m.id), days: String(days), match: m, fetchedAt: Date.now(), updatedAt: now } },
+        update: { $set: { matchId: String(m.id), days: bucketKey, sport: sport, match: m, fetchedAt: Date.now(), updatedAt: now } },
         upsert: true
       }
     }));
@@ -129,28 +136,32 @@ async function saveFixtures(days, matches) {
     // checks independently) — this was the actual cause of a match showing
     // FINISHED in one bucket and stuck LIVE in another, since each bucket
     // tracked its own independent copy that never reconciled. Deleting the
-    // match from every OTHER bucket whenever we save it into this one
-    // guarantees exactly one authoritative copy exists at any time — the
-    // most recently refreshed one.
+    // match from every OTHER bucket OF THE SAME SPORT whenever we save it
+    // into this one guarantees exactly one authoritative copy exists at any
+    // time — the most recently refreshed one. Scoped by sport (regex
+    // prefix) so a basketball fixture refresh can never delete a football
+    // bucket's data even if match IDs ever happened to coincide.
     const matchIds = matches.map(m => String(m.id));
     if (matchIds.length) {
       await fixturesCollection.deleteMany({
         matchId: { $in: matchIds },
-        days: { $ne: String(days) }
+        days: { $ne: bucketKey, $regex: '^' + sport + ':' }
       });
     }
   } catch (e) {
     console.error('[db] saveFixtures failed, falling back to in-memory: ' + e.message);
-    fixturesFallback[String(days)] = { matches, fetchedAt: Date.now(), updatedAt: now };
+    fixturesFallback[bucketKey] = { matches, fetchedAt: Date.now(), updatedAt: now };
   }
 }
 
-async function getFixtures(days) {
+async function getFixtures(days, sport) {
+  sport = sport || 'football'; // default keeps every existing caller's behavior byte-for-byte identical
+  const bucketKey = sport + ':' + String(days);
   await ensureMongo();
-  if (usingFallback) return fixturesFallback[String(days)] || null;
+  if (usingFallback) return fixturesFallback[bucketKey] || null;
 
   try {
-    const docs = await fixturesCollection.find({ days: String(days) }).toArray();
+    const docs = await fixturesCollection.find({ days: bucketKey }).toArray();
     if (!docs.length) return null;
     const matches = docs.map(d => {
       let m = Object.assign({}, d.match, d.aiOdds ? {
@@ -169,13 +180,28 @@ async function getFixtures(days) {
       // match is still live (IN_PLAY or PAUSED/half-time) so a match that
       // enters or leaves half-time between reads gets its status corrected
       // here too, not just its minute. Football-data.org's minute is
-      // already a real value from the source, left untouched.
+      // already a real value from the source, left untouched. Sport-gated:
+      // basketball matches use basketballData's quarter-based clock
+      // estimator instead — calling football's half-based one on a
+      // basketball match would silently corrupt its minute/status (wrong
+      // break points, wrong regulation-time cap).
       if (m.minuteIsEstimated && (m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.utcDate) {
-        const est = footballData.estimateMatchMinute(m.utcDate);
-        if (est) {
-          m.minute = est.minute;
-          m.isHalftime = est.isHalftime;
-          m.status = est.isHalftime ? 'PAUSED' : 'IN_PLAY';
+        if (sport === 'basketball') {
+          const basketballData = require('./basketballData');
+          const clock = basketballData.estimateBasketballClock(m.utcDate);
+          if (clock) {
+            m.minute = clock.displayMinute;
+            m.isHalftime = clock.isBreak && clock.quarter === 2;
+            m.quarter = clock.quarter;
+            m.status = clock.isBreak ? 'PAUSED' : 'IN_PLAY';
+          }
+        } else {
+          const est = footballData.estimateMatchMinute(m.utcDate);
+          if (est) {
+            m.minute = est.minute;
+            m.isHalftime = est.isHalftime;
+            m.status = est.isHalftime ? 'PAUSED' : 'IN_PLAY';
+          }
         }
       }
       return m;
@@ -185,7 +211,7 @@ async function getFixtures(days) {
     return { matches, fetchedAt, updatedAt };
   } catch (e) {
     console.error('[db] getFixtures failed, falling back to in-memory: ' + e.message);
-    return fixturesFallback[String(days)] || null;
+    return fixturesFallback[bucketKey] || null;
   }
 }
 
@@ -195,11 +221,17 @@ async function getFixtures(days) {
 // read, from JuanAi's UI or BetaKE's API call, with no risk of clobbering
 // unrelated fixture data written by a concurrent saveFixtures call.
 async function upsertMatchOdds(matchId, days, odds) {
+  // AI analysis only ever runs for football (basketball skips it by design
+  // — see basketballData.js's file header) — so this always targets the
+  // football-prefixed bucket key. Written explicitly here (not defaulted
+  // via an optional param like saveFixtures/getFixtures) since there's
+  // currently no legitimate basketball caller of this function at all.
+  const bucketKey = 'football:' + String(days);
   await ensureMongo();
   const now = Date.now();
 
   if (usingFallback) {
-    const bucket = fixturesFallback[String(days)];
+    const bucket = fixturesFallback[bucketKey];
     if (!bucket) return false;
     let found = false;
     bucket.matches = bucket.matches.map(m => {
@@ -215,7 +247,7 @@ async function upsertMatchOdds(matchId, days, odds) {
 
   try {
     const result = await fixturesCollection.updateOne(
-      { matchId: String(matchId), days: String(days) },
+      { matchId: String(matchId), days: bucketKey },
       {
         $set: {
           aiOdds: odds,
@@ -331,9 +363,13 @@ function getMongoStatus() {
 // self-heal matches that got bad odds before the TBD/unknown-team filter
 // existed. Safe no-op if the match never had odds in the first place.
 async function clearMatchOdds(matchId, days) {
+  // Only ever called from football's TBD self-heal path (see scheduler.js's
+  // refreshFixturesForDay) — always football-prefixed, same reasoning as
+  // upsertMatchOdds above.
+  const bucketKey = 'football:' + String(days);
   await ensureMongo();
   if (usingFallback) {
-    const bucket = fixturesFallback[String(days)];
+    const bucket = fixturesFallback[bucketKey];
     if (!bucket) return;
     bucket.matches = bucket.matches.map(m => {
       if (String(m.id) === String(matchId)) {
@@ -346,7 +382,7 @@ async function clearMatchOdds(matchId, days) {
   }
   try {
     await fixturesCollection.updateOne(
-      { matchId: String(matchId), days: String(days) },
+      { matchId: String(matchId), days: bucketKey },
       { $unset: { aiOdds: '', aiPrediction: '', aiConfidence: '', aiAnalysis: '', aiXG: '', aiValueBet: '', aiAnalyzedAt: '' } }
     );
   } catch (e) {
@@ -454,12 +490,17 @@ async function expireOldMatches() {
     // sitting in a day-bucket that's no longer refreshed at all (days 3-7,
     // orphaned when DAY_BUCKETS shrank to [0,1,2] to keep analysis volume
     // sustainable — this data would otherwise sit forever with no bucket
-    // ever touching it again).
+    // ever touching it again). Matched via regex against the sport-prefixed
+    // bucket key format (e.g. "football:3", "basketball:5") introduced
+    // alongside basketball support — the plain "3"/"4"/etc format no longer
+    // exists as a key at all once every write goes through saveFixtures'
+    // sport-prefixed bucketKey, so this must match the suffix, not the
+    // whole string.
     const result = await fixturesCollection.deleteMany({
       $or: [
         { 'match.status': 'FINISHED' },
         { 'match.utcDate': { $lt: cutoff, $ne: null } },
-        { days: { $in: ['3', '4', '5', '6', '7'] } }
+        { days: { $regex: ':(3|4|5|6|7)$' } }
       ]
     });
     return result.deletedCount || 0;
