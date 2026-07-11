@@ -17,10 +17,6 @@
   --grad:linear-gradient(135deg,#6366f1,#10d9a0);
   --sh:0 8px 32px rgba(0,0,0,0.5);--sh2:0 2px 8px rgba(0,0,0,0.3);
   --tr:0.16s cubic-bezier(0.4,0,0.2,1);
-  /* Casino room — its own accent so it reads as a distinct space from the
-     sportsbook/analysis screens, while staying in the same dark shell.
-     Violet-to-gold instead of indigo-to-teal: warmer, more "table felt and
-     brass trim" than the data-dashboard feel everywhere else in the app. */
   --cas-a:#8b5cf6;--cas-b:#f5b942;--cas-grad:linear-gradient(135deg,#8b5cf6,#f5b942);
   --cas-felt:#150f24;--cas-felt2:#1c1433;--cas-win:#f5b942;--cas-lose:#f87171;
 }
@@ -159,9 +155,10 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
 .cgame-balance{font-size:12px;font-weight:700;color:var(--cas-b);background:rgba(245,185,66,.1);border:1px solid rgba(245,185,66,.25);padding:4px 10px;border-radius:20px}
 
 /* Crash game */
-.crash-stage{position:relative;height:220px;background:var(--cas-felt);border-radius:14px;overflow:hidden;border:1px solid var(--bdl);margin-bottom:14px}
-.crash-canvas{width:100%;height:100%;display:block}
-.crash-mult{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--t1);text-shadow:0 2px 20px rgba(139,92,246,.6);pointer-events:none;transition:color .15s}
+.crash-stage{position:relative;height:240px;background:var(--cas-felt);border-radius:14px;overflow:hidden;border:1px solid var(--bdl);margin-bottom:14px}
+.crash-bg-canvas,.crash-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.crash-plane{position:absolute;width:34px;height:34px;transform:translate(-50%,-50%);pointer-events:none;filter:drop-shadow(0 2px 8px rgba(245,185,66,.5));transition:none;will-change:left,top}
+.crash-mult{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--t1);text-shadow:0 2px 20px rgba(139,92,246,.6);pointer-events:none;transition:color .15s}
 .crash-mult.busted{color:var(--cas-lose)}
 .crash-mult.cashed{color:var(--ok)}
 .crash-status{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--tm);text-transform:uppercase}
@@ -701,8 +698,10 @@ app.get('/games/today', async (req, res) => {<br>
             <h3><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> Skyrocket</h3>
             <div class="cgame-balance">KES <span id="crashBalance">1000</span></div>
           </div>
-          <div class="crash-stage">
+          <div class="crash-stage" id="crashStage">
+            <canvas class="crash-bg-canvas" id="crashBgCanvas"></canvas>
             <canvas class="crash-canvas" id="crashCanvas"></canvas>
+            <div class="crash-plane" id="crashPlane" style="left:8px;top:calc(100% - 22px)">🚀</div>
             <div class="crash-mult" id="crashMult">1.00x</div>
             <div class="crash-status" id="crashStatus">Place a bet to start</div>
           </div>
@@ -2432,32 +2431,57 @@ function switchMainTab(t){
 }
 
 // ─── CASINO — FREE-PLAY DEMO GAMES ─────────────────────────────────────────
-// Both games below are original, self-contained demo games — not clones of
-// any real-money product. No backend call, no real currency: balances are
-// just in-memory JS numbers that reset on page reload. Provably-fair-style
-// RNG (Math.random) is fine here specifically because nothing real is at
-// stake; if this is ever wired to real money, the odds/RNG must come from a
-// licensed game provider instead, not this code.
+// Both games are original, self-contained demo games — not clones of any
+// real-money product. No backend call, no real currency: balances are just
+// in-memory JS numbers that reset on page reload. If this is ever wired to
+// real money, the odds/RNG must come from a licensed game provider instead
+// of this code — Math.random-based RNG is fine ONLY because nothing real is
+// at stake here.
 var casinoInit=false;
 function initCasino(){
   if(casinoInit)return;
   casinoInit=true;
   crashResize();
-  window.addEventListener('resize',crashResize);
+  crashDrawBackground(); // static grid/glow, drawn ONCE — not redrawn every frame
+  window.addEventListener('resize',function(){crashResize();crashDrawBackground();});
 }
 
 // ── Skyrocket (crash/multiplier game) ──
+// Smoothness notes: the animated multiplier curve is the only thing redrawn
+// every frame, on its own transparent canvas layered over a static
+// background canvas (grid + glow) that's rendered once. The plane icon is a
+// plain positioned DOM element moved via left/top, so the browser can
+// composite it on the GPU instead of Claude re-rasterizing an emoji into
+// canvas 60x/sec. requestAnimationFrame drives the loop (not setInterval),
+// so it stays locked to the display's real refresh rate and pauses
+// automatically when the tab isn't visible.
 var crashState={running:false,busted:false,cashedOut:false,mult:1,bet:0,raf:null,startT:0,balance:1000,history:[],crashPoint:0};
 function crashResize(){
-  var cv=document.getElementById('crashCanvas');if(!cv)return;
-  var box=cv.parentElement.getBoundingClientRect();
-  cv.width=box.width;cv.height=box.height;
+  ['crashCanvas','crashBgCanvas'].forEach(function(id){
+    var cv=document.getElementById(id);if(!cv)return;
+    var box=cv.parentElement.getBoundingClientRect();
+    var dpr=Math.min(window.devicePixelRatio||1,2);
+    cv.width=box.width*dpr;cv.height=box.height*dpr;
+    cv.style.width=box.width+'px';cv.style.height=box.height+'px';
+    var ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+  });
+}
+function crashDrawBackground(){
+  var cv=document.getElementById('crashBgCanvas');if(!cv)return;
+  var ctx=cv.getContext('2d');
+  var w=cv.clientWidth,h=cv.clientHeight;
+  ctx.clearRect(0,0,w,h);
+  var glow=ctx.createRadialGradient(w*0.3,h*0.55,10,w*0.3,h*0.55,Math.max(w,h)*0.7);
+  glow.addColorStop(0,'rgba(139,92,246,0.16)');glow.addColorStop(1,'rgba(139,92,246,0)');
+  ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
+  for(var gx=0;gx<w;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
+  for(var gy=0;gy<h;gy+=32){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();}
 }
 function crashRollCrashPoint(){
-  // Simple house-edge exponential distribution — skews toward low
-  // multipliers with a long tail toward high ones, same shape as real
-  // crash games use, tuned only for a free-play demo (not audited/fair-use
-  // grade, since no money is at stake).
+  // House-edge exponential distribution — skews toward low multipliers with
+  // a long tail toward high ones. Tuned only for a free-play demo (not
+  // audited/provably-fair grade, since no money is at stake).
   var r=Math.random();
   var point=0.98/(1-r*0.97);
   return Math.max(1.01,Math.min(point,50));
@@ -2482,7 +2506,9 @@ function crashPlay(){
   document.getElementById('crashStatus').textContent='Flying...';
   var mEl=document.getElementById('crashMult');
   mEl.classList.remove('busted','cashed');
-  crashTick();
+  mEl.textContent='1.00x';
+  if(crashState.raf)cancelAnimationFrame(crashState.raf);
+  crashState.raf=requestAnimationFrame(crashTick);
 }
 function crashTick(){
   if(!crashState.running)return;
@@ -2496,41 +2522,44 @@ function crashTick(){
   }
   crashState.raf=requestAnimationFrame(crashTick);
 }
+function crashCurveXY(t,w,h){
+  var m=Math.pow(Math.E,0.14*t);
+  var x=Math.min((t/9)*w*0.86+8,w*0.9);
+  var y=h-14-Math.min((m-1)/(crashState.crashPoint*1.4),1)*(h-30);
+  return [x,y];
+}
 function crashDraw(elapsed){
   var cv=document.getElementById('crashCanvas');if(!cv)return;
   var ctx=cv.getContext('2d');
-  var w=cv.width,h=cv.height;
+  var w=cv.clientWidth,h=cv.clientHeight;
   ctx.clearRect(0,0,w,h);
-  // grid
-  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
-  for(var gx=0;gx<w;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
-  for(var gy=0;gy<h;gy+=30){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();}
-  // curve
+  var steps=Math.max(2,Math.min(80,Math.floor(elapsed*20)));
   var pts=[];
-  var steps=60;
   for(var i=0;i<=steps;i++){
-    var t=(elapsed*(i/steps));
-    var m=Math.pow(Math.E,0.14*t);
-    var x=(i/steps)*w*0.86+8;
-    var y=h-14-Math.min((m-1)/(crashState.crashPoint*1.4),1)*(h-30);
-    pts.push([x,y]);
+    var t=elapsed*(i/steps);
+    pts.push(crashCurveXY(t,w,h));
   }
   var grad=ctx.createLinearGradient(0,0,w,0);
   grad.addColorStop(0,'#8b5cf6');grad.addColorStop(1,'#f5b942');
-  ctx.strokeStyle=grad;ctx.lineWidth=3;ctx.lineCap='round';
+  ctx.strokeStyle=grad;ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';
   ctx.beginPath();
   pts.forEach(function(p,i){if(i===0)ctx.moveTo(p[0],p[1]);else ctx.lineTo(p[0],p[1]);});
   ctx.stroke();
-  // rocket dot at tip
+  // fill under the curve for a bit of weight
+  ctx.lineTo(pts[pts.length-1][0],h);ctx.lineTo(pts[0][0],h);ctx.closePath();
+  var fillGrad=ctx.createLinearGradient(0,0,0,h);
+  fillGrad.addColorStop(0,'rgba(139,92,246,0.25)');fillGrad.addColorStop(1,'rgba(139,92,246,0)');
+  ctx.fillStyle=fillGrad;ctx.fill();
+  // move the plane DOM element to the curve tip — GPU-composited, not redrawn into canvas
   if(pts.length){
     var tip=pts[pts.length-1];
-    ctx.fillStyle='#f5b942';
-    ctx.beginPath();ctx.arc(tip[0],tip[1],5,0,Math.PI*2);ctx.fill();
+    var plane=document.getElementById('crashPlane');
+    if(plane){plane.style.left=tip[0]+'px';plane.style.top=tip[1]+'px';}
   }
 }
 function crashBust(){
   crashState.running=false;
-  cancelAnimationFrame(crashState.raf);
+  if(crashState.raf)cancelAnimationFrame(crashState.raf);
   var mEl=document.getElementById('crashMult');
   mEl.textContent=crashState.crashPoint.toFixed(2)+'x';
   mEl.classList.add('busted');
@@ -2540,12 +2569,18 @@ function crashBust(){
   if(!crashState.cashedOut){
     crashLog(false,crashState.bet);
   }
+  setTimeout(function(){
+    var plane=document.getElementById('crashPlane');
+    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
+    var cv=document.getElementById('crashCanvas');
+    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
+  },1400);
 }
 function crashCashout(){
   if(!crashState.running||crashState.cashedOut)return;
   crashState.cashedOut=true;
   crashState.running=false;
-  cancelAnimationFrame(crashState.raf);
+  if(crashState.raf)cancelAnimationFrame(crashState.raf);
   var winAmt=Math.floor(crashState.bet*crashState.mult);
   crashState.balance+=winAmt;
   document.getElementById('crashBalance').textContent=crashState.balance;
@@ -2555,6 +2590,12 @@ function crashCashout(){
   document.getElementById('crashPlayBtn').disabled=false;
   document.getElementById('crashCashoutBtn').disabled=true;
   crashLog(true,winAmt);
+  setTimeout(function(){
+    var plane=document.getElementById('crashPlane');
+    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
+    var cv=document.getElementById('crashCanvas');
+    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
+  },1400);
 }
 function crashLog(won,amt){
   crashState.history.unshift({won:won,amt:amt});
@@ -2584,7 +2625,6 @@ function slotSpin(){
   var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
   reels.forEach(function(r){r.classList.add('spinning');r.classList.remove('win');});
   var finalSyms=[randSym(),randSym(),randSym()];
-  // stop reels one at a time for a satisfying cascade
   reels.forEach(function(r,i){
     setTimeout(function(){
       r.classList.remove('spinning');
