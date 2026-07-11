@@ -185,8 +185,19 @@ function isTrackedLeague(leagueName) {
 // more closely than raw elapsed time did.
 function estimateMatchMinute(kickoffIso) {
   if (!kickoffIso) return null;
-  const elapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
-  if (elapsedMin < 0) return null; // hasn't kicked off yet
+  // KICKOFF-DELAY BUFFER: real matches consistently kick off a few minutes
+  // AFTER their scheduled/listed time (warm-ups, anthem, ref delays, minor
+  // overruns) — confirmed against real user reports of this estimate
+  // running a consistent ~8 minutes ahead of actual match time, which is
+  // the signature of a fixed forward bias (not random noise): every match
+  // is being timed from a kickoff moment that's earlier than when the ball
+  // actually started moving. Subtracting a buffer from elapsed time before
+  // doing anything else corrects that offset at the source, rather than
+  // trying to patch it further down in the half/stoppage logic.
+  const KICKOFF_DELAY_BUFFER_MIN = 8;
+  const rawElapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
+  if (rawElapsedMin < 0) return null; // hasn't kicked off yet
+  const elapsedMin = Math.max(0, rawElapsedMin - KICKOFF_DELAY_BUFFER_MIN);
 
   const HALF_TIME_BREAK_MIN = 15;
   const FIRST_HALF_MIN = 45;
