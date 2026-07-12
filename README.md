@@ -204,13 +204,33 @@ below.
      -d '{"apiKey":"jsk_xxx","baseUrl":"https://safaribet.com","secret":"THE_SAME_SHARED_SECRET"}'
    ```
 4. When a real logged-in user wants to play Aviator, SafariBet's backend
-   signs a short-lived token for that specific user:
-   ```js
-   const userToken = require('./userToken'); // copy this file's logic, or re-implement the same HMAC scheme
-   const utoken = userToken.sign(realUserId);
+   calls JuanAi's session endpoint to get a signed token for that user —
+   SafariBet never needs to implement the signing itself:
    ```
-   Embed the game with both the API key and this token:
-   `https://your-juanai-url.onrender.com/casino/aviator.html?key=jsk_xxx&utoken=SIGNED_TOKEN`
+   POST https://your-juanai-url.onrender.com/api/casino/session
+   Content-Type: application/json
+
+   { "key": "jsk_xxx", "userId": "USER_ID", "username": "USERNAME" }
+   ```
+   Response:
+   ```json
+   { "success": true, "utoken": "VALID_TOKEN", "balance": 500 }
+   ```
+   (`balance` is the user's current real balance, fetched live from
+   SafariBet's own `/api/casino/balance` endpoint in the same call — no
+   extra round-trip needed before launching. `username` is accepted but
+   not currently used server-side; safe to keep sending it.)
+
+   Then launch the game with the returned token:
+   `https://your-juanai-url.onrender.com/casino/aviator.html?key=jsk_xxx&utoken=VALID_TOKEN`
+
+   **This endpoint is server-to-server only** — call it from SafariBet's
+   own backend, never from a page a user's browser can see. Anyone who can
+   call it can mint a session for any userId they send, which is exactly
+   why it requires your private `jsk_xxx` key and must never be exposed
+   client-side. Tokens last 6 hours (`userToken.js`'s `MAX_TOKEN_AGE_MS`);
+   call this endpoint again anytime to mint a fresh one — it's cheap and
+   stateless, so calling it fresh before every launch is fine too.
 
 **Why this direction, and why signed tokens instead of a raw userId:**
 see the header comments in `casinoIntegration.js` and `walletClient.js` —

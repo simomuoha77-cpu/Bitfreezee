@@ -35,15 +35,18 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 // ── Auth middleware: checks the API key against real stored keys ──
-// Accepts the key from any of: ?key=jsk_xxx, x-api-key header, or
-// Authorization: Bearer jsk_xxx — this way every site embedding JuanAi's
-// games (or any future frontend) can pass the same key however's
-// convenient, and it's still the exact same key/session underneath.
+// Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
+// Authorization: Bearer jsk_xxx, or body.key (for JSON POST bodies that
+// bundle the key alongside other fields, like /api/casino/session below)
+// — this way every site embedding JuanAi's games (or any future
+// frontend) can pass the same key however's convenient, and it's still
+// the exact same key/session underneath.
 function extractApiKey(req) {
   if (req.query.key) return req.query.key;
   if (req.headers['x-api-key']) return req.headers['x-api-key'];
   const auth = req.headers['authorization'];
   if (auth && auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  if (req.body && req.body.key) return req.body.key;
   return null;
 }
 
@@ -343,7 +346,58 @@ app.get('/api/casino/balance', requireApiKey, async (req, res) => {
   res.status(result.success ? 200 : 502).json(result);
 });
 
-// ── CASINO PLAY API (browser-safe, real money) ─────────────────────────
+// ── CASINO SESSION API (server-to-server only) ─────────────────────────
+// POST /api/casino/session   body: { key, userId, username }
+// SafariBet's OWN backend calls this — never the browser — when a user
+// taps "Play Aviator", to get a signed utoken for that specific user (and
+// their current real balance in the same response, so SafariBet doesn't
+// need a second call before launching). SafariBet then launches the game
+// with: /casino/aviator.html?key=jsk_xxx&utoken=THE_RETURNED_TOKEN
+//
+// Response: { success: true, utoken, balance }
+// `username` is accepted but not currently used for anything server-side
+// — it's here in case a future version wants to show a display name in
+// the game UI; safe to keep sending it even though it's unused today.
+//
+// WHY THIS MUST STAY SERVER-TO-SERVER: this endpoint mints proof of "this
+// request really is user X" — the same authority userToken.js's signature
+// carries everywhere else in this codebase. It's gated on requireApiKey
+// (the same jsk_xxx check as every other partner endpoint) precisely
+// because whoever can call this can mint a session for ANY userId they
+// send. That's fine when the caller is SafariBet's own backend (which
+// already knows who is really logged in), and NOT fine if this were ever
+// exposed to a browser — anyone could then mint a token for any other
+// user's id and play (or query balance/history) as them. Keep your
+// jsk_xxx key private on your own server; never send it from a page a
+// user's browser can see.
+//
+// TOKEN LIFETIME: see userToken.js's MAX_TOKEN_AGE_MS (currently 6 hours).
+// If a user's play session outlives that, call this endpoint again to
+// mint a fresh token — there's no harm in calling it again anytime
+// (e.g. right before every launch), it's cheap and stateless.
+app.post('/api/casino/session', requireApiKey, async (req, res) => {
+  const { userId, username } = req.body || {};
+  if (!userId) return res.status(400).json({ success: false, message: 'userId is required' });
+  if (!userToken.isConfigured()) {
+    return res.status(500).json({ success: false, message: 'JUANAI_USER_TOKEN_SECRET is not set on this server — sessions cannot be issued until it is configured' });
+  }
+  try {
+    const utoken = userToken.sign(String(userId));
+    // Fetch the user's real balance from SafariBet's own wallet right now,
+    // so this one response gives SafariBet everything needed to launch
+    // the game immediately — no second round-trip required. If the
+    // wallet call fails (e.g. not registered yet, or SafariBet's balance
+    // endpoint is briefly down), still return the utoken — the game page
+    // will fetch balance itself on load via /api/casino/play/balance, so
+    // a wallet hiccup here doesn't need to block issuing the session.
+    const balResult = await casinoIntegration.getBalance(req.apiKey, String(userId));
+    res.json({ success: true, utoken, balance: balResult.success ? balResult.balance : null });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to create session: ' + e.message });
+  }
+});
+
+
 // These are the ONLY real-money casino endpoints meant to be called
 // directly from a game page in the browser (e.g. public/casino/aviator
 // .html embedded in an iframe). Instead of a raw userId — which a browser
