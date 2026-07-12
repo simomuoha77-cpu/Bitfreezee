@@ -24,6 +24,7 @@ const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
+const casinoIntegration = require('./casinoIntegration');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -260,6 +261,71 @@ app.post('/api/aviator/cashout', requireApiKey, (req, res) => {
   const { slot } = req.body || {};
   const result = casino.cashOut(req.apiKey, extractUserToken(req), slot);
   res.status(result.success ? 200 : 400).json(result);
+});
+
+// ── CASINO PARTNER API (real money, server-to-server only) ────────────
+// For betting sites (e.g. SafariBet) to integrate JuanAi's casino games
+// with THEIR OWN real balance as the only source of truth. See
+// casinoIntegration.js's header comment for the full design rationale —
+// short version: JuanAi never holds or moves real money; it only records
+// bets against its own server-authoritative round engine (same one behind
+// /api/casino/aviator/*) and reports factual outcomes for the partner's
+// server to act on. Outcomes are retrieved by POLLING, not by JuanAi
+// pushing to a callback URL — safer for real money (no public callback
+// endpoint on the partner's side to secure/spoof, no retry/webhook
+// complexity on JuanAi's side).
+//
+// IMPORTANT: these endpoints are meant to be called SERVER-TO-SERVER —
+// from the partner's own backend, using their JuanAi API key — never
+// directly from the partner's website's browser/frontend. Calling these
+// from a browser would expose the API key and the partner's internal
+// userId values to anyone who opens devtools.
+
+// GET /api/casino/games?key=jsk_xxx
+// Returns the catalog of games available to embed. See casinoIntegration
+// .js's GAMES list — only lists games that are actually live and working.
+app.get('/api/casino/games', requireApiKey, (req, res) => {
+  res.json({ success: true, data: casinoIntegration.listGames() });
+});
+
+// POST /api/casino/bet   body: { gameId, userId, slot, stake }
+// Partner's server calls this AFTER deducting (or reserving) the stake
+// from their user's real balance. JuanAi does not touch any balance here
+// — it only validates and records the bet against the live round.
+app.post('/api/casino/bet', requireApiKey, (req, res) => {
+  const { gameId, userId, slot, stake } = req.body || {};
+  const result = casinoIntegration.placeBet(req.apiKey, userId, gameId, slot, Number(stake));
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// GET /api/casino/bet/:betId?key=jsk_xxx
+// Partner's server polls this to find out whether a bet has resolved yet.
+// status is 'pending' | 'won' | 'lost'. On 'won', credit `won` to the
+// user's real balance; on 'lost', no action needed (stake was already
+// deducted/reserved by the partner when placing the bet).
+app.get('/api/casino/bet/:betId', requireApiKey, (req, res) => {
+  const result = casinoIntegration.getBetResult(req.apiKey, req.params.betId);
+  res.status(result.success ? 200 : 404).json(result);
+});
+
+// POST /api/casino/bet/:betId/cashout
+// Partner's server calls this when their user requests a cashout (e.g.
+// taps "Cash Out" in the partner's own UI). Same server-side timing
+// guarantee as the free-play engine: the multiplier is always recomputed
+// from JuanAi's own clock, never trusted from the partner's request.
+app.post('/api/casino/bet/:betId/cashout', requireApiKey, (req, res) => {
+  const result = casinoIntegration.cashOut(req.apiKey, req.params.betId);
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// GET /api/casino/history?key=jsk_xxx&userId=xxx&limit=50
+// Partner's server can pull a user's recent resolved bets for
+// reconciliation/auditing against their own ledger.
+app.get('/api/casino/history', requireApiKey, (req, res) => {
+  const { userId, limit } = req.query;
+  if (!userId) return res.status(400).json({ success: false, message: 'userId query param is required' });
+  const data = casinoIntegration.getHistory(req.apiKey, userId, limit ? Number(limit) : 50);
+  res.json({ success: true, data });
 });
 
 // ── INTERNAL API (called by JuanAi's own frontend, not by BetaKE) ──

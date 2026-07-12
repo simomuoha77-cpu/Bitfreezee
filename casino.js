@@ -197,27 +197,30 @@ function getPublicState(apiKey, signedToken) {
   return base;
 }
 
-function placeBet(apiKey, signedToken, slot, stake) {
+// ── Session-generic core (balance-free) ───────────────────────────────
+// These operate purely on round/slot/stake state, keyed by an arbitrary
+// sessionKey string — no concept of "balance" lives here at all. Both the
+// free-play frontend (placeBet/cashOut below, which layer a fake balance
+// on top) and casinoIntegration.js's real-money partner API (which layers
+// NO balance — that's the partner's own ledger) call into these same
+// functions, so there is exactly one source of truth for round validity,
+// timing, and outcome — never two divergent implementations to keep in
+// sync.
+
+function placeBetCore(sessionKey, slot, stake) {
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
   if (!Number.isFinite(stake) || stake < MIN_BET) return { success: false, message: `Minimum bet is KES ${MIN_BET}` };
   if (stake > MAX_BET) return { success: false, message: `Maximum bet is KES ${MAX_BET}` };
-  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
   if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
   if (round.status !== 'waiting') return { success: false, message: 'Betting is closed for this round' };
   const s = getSession(sessionKey);
   if (s.bets[slot]) return { success: false, message: 'Bet already placed for this slot' };
-  if (stake > s.balance) return { success: false, message: 'Insufficient balance' };
-  // Balance can only ever go DOWN here by exactly the staked amount, never
-  // below zero (guaranteed by the check above) — this is the "you can only
-  // lose what you staked, nothing more" guarantee.
-  s.balance -= stake;
   s.bets[slot] = { stake, cashedOut: false, roundId: round.id };
-  return { success: true, newBalance: s.balance };
+  return { success: true, roundId: round.id };
 }
 
-function cashOut(apiKey, signedToken, slot) {
+function cashOutCore(sessionKey, slot) {
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
-  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
   if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
   const s = getSession(sessionKey);
   const bet = s.bets[slot];
@@ -226,19 +229,88 @@ function cashOut(apiKey, signedToken, slot) {
   if (round.status !== 'flying') return { success: false, message: 'Round is not currently flying' };
   // THE key server-side check: recompute the multiplier from the server's
   // own clock at the exact moment this request is processed. The client
-  // never gets to assert what the multiplier "was" — if the round has
-  // already crashed by the time this request is handled (even by a few
-  // milliseconds), the cashout is rejected, full stop. This closes the
-  // classic crash-game exploit of firing a cashout request right as/after
-  // a crash and hoping the server trusts client-reported timing.
+  // (or partner server) never gets to assert what the multiplier "was" —
+  // if the round has already crashed by the time this request is handled
+  // (even by a few milliseconds), the cashout is rejected, full stop. This
+  // closes the classic crash-game exploit of firing a cashout request
+  // right as/after a crash and hoping the server trusts client-reported
+  // timing.
   const mult = currentMultiplier();
   if (mult >= round.crashPoint) return { success: false, message: 'Too late — round already crashed' };
   bet.cashedOut = true;
-  // Win is ALWAYS computed here from the server's own stake + server's own
-  // clock-derived multiplier — never from any number the client sends.
   const won = Math.floor(bet.stake * mult * 100) / 100;
-  s.balance += won;
-  return { success: true, newBalance: s.balance, won, multiplier: mult };
+  return { success: true, won, multiplier: mult };
+}
+
+// checkResolution: used by casinoIntegration.js's polling endpoint to find
+// out whether a specific partner bet has resolved yet, without exposing
+// any balance concept. Returns null while still pending (round hasn't
+// crashed and the bet hasn't been cashed out), or { won, multiplier,
+// winAmount } once resolved.
+function checkResolution(sessionKey, slot, roundId) {
+  const s = getSession(sessionKey);
+  const bet = s.bets[slot];
+  // If the bet's round has moved on (a new round has started, clearing
+  // bets — see startNewRound()) and we still have no record, it means the
+  // round crashed and this bet was never cashed out in time: a loss.
+  if (!bet || bet.roundId !== roundId) {
+    // Only report a resolution once we're SURE the round in question has
+    // actually crashed — otherwise this could incorrectly report "lost"
+    // for a bet that's still legitimately pending in an earlier round
+    // state edge case.
+    if (round.id !== roundId || round.status === 'crashed') {
+      return { won: false, multiplier: null, winAmount: 0 };
+    }
+    return null; // still pending, nothing to report yet
+  }
+  if (bet.cashedOut) {
+    const mult = currentMultiplier();
+    return { won: true, multiplier: mult, winAmount: Math.floor(bet.stake * mult * 100) / 100 };
+  }
+  if (round.status === 'crashed') {
+    return { won: false, multiplier: round.crashPoint, winAmount: 0 };
+  }
+  return null; // still flying, not yet resolved
+}
+
+// ── Balance-aware wrappers (free-play frontend only) ───────────────────
+
+function placeBet(apiKey, signedToken, slot, stake) {
+  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
+  const s = getSession(sessionKey);
+  if (stake > s.balance) return { success: false, message: 'Insufficient balance' };
+  const result = placeBetCore(sessionKey, slot, stake);
+  if (!result.success) return result;
+  // Balance can only ever go DOWN here by exactly the staked amount, never
+  // below zero (guaranteed by the check above) — this is the "you can only
+  // lose what you staked, nothing more" guarantee.
+  s.balance -= stake;
+  return { success: true, newBalance: s.balance };
+}
+
+function cashOut(apiKey, signedToken, slot) {
+  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
+  const s = getSession(sessionKey);
+  const result = cashOutCore(sessionKey, slot);
+  if (!result.success) return result;
+  // Win is ALWAYS computed by cashOutCore from the server's own stake +
+  // server's own clock-derived multiplier — never from any number the
+  // client sends.
+  s.balance += result.won;
+  return { success: true, newBalance: s.balance, won: result.won, multiplier: result.multiplier };
+}
+
+// ── Balance-free primitives for partner (real-money) integration ──────
+// Thin, explicitly-named wrappers so casinoIntegration.js never has to
+// import the *Core functions directly — keeps the "no balance concept
+// here" boundary obvious at the call site.
+
+function placeBetForSession(sessionKey, slot, stake) {
+  return placeBetCore(sessionKey, slot, stake);
+}
+
+function cashOutForSession(sessionKey, slot) {
+  return cashOutCore(sessionKey, slot);
 }
 
 function getPlayersView() {
@@ -264,5 +336,5 @@ function getPlayersView() {
   return rows;
 }
 
-module.exports = { getPublicState, placeBet, cashOut, getPlayersView };
+module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution };
 
