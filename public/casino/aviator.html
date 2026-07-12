@@ -275,7 +275,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
   <button class="back-btn" onclick="history.back()">← Go Back</button>
   <div class="avi-logo">✈ Aviator</div>
   <div style="display:flex;align-items:center">
-    <div class="bal" onclick="location.href='/pages/account.html'">
+    <div class="bal" onclick="showT('Free-play balance — resets if the server restarts','ti')">
       <span id="bv">0.00</span><span class="bal-kes">KES</span>
     </div>
     <button class="menu-btn">☰</button>
@@ -382,6 +382,22 @@ let BET1=null,BET2=null,USER=null;
 let lastRound=null,prevST='waiting',lastTickM=0;
 let localMulti=1.00,flightActive=false,flyStart=null,pathPts=[];
 let waitTimer=null,countVal=5,countdownRound=null;
+
+// ══════════════════════════════════════
+//  JUANAI API KEY
+// ══════════════════════════════════════
+// This page is a JuanAi-served casino game — same auth pattern as
+// JuanAi's football API: a key identifies the caller. Pass it as
+// ?key=jsk_xxx in the URL (JuanAi's own dashboard does this automatically
+// when linking here; a betting site embedding this page does the same
+// with its own JuanAi key). Balance/bets are tracked server-side per key
+// (see casino.js) — nothing here can be edited client-side to change a
+// balance or outcome, only to request an action that the server then
+// independently validates.
+const API_KEY = new URLSearchParams(location.search).get('key') || '';
+const API_BASE=''; // same-origin: this page is served BY the JuanAi server itself
+function apiUrl(path){ return API_BASE+path+(path.includes('?')?'&':'?')+'key='+encodeURIComponent(API_KEY); }
+USER = { balance: 0 }; // populated from the server's own state on first poll — never trust a locally-set starting balance
 
 // ══════════════════════════════════════
 //  AUDIO
@@ -729,18 +745,22 @@ function showWinSplash(won,mul){
 //  POLL SERVER
 // ══════════════════════════════════════
 async function poll(){
+  if(!API_KEY){showT('Missing JuanAi API key — open this page with ?key=jsk_xxx','tl');return;}
   try{
-    const tok=localStorage.getItem('token');
-    const headers={'Content-Type':'application/json'};
-    if(tok) headers['Authorization']='Bearer '+tok;
-    const r=await fetch('/api/aviator/state',{headers});
-    if(r.status===401){location.href='/pages/login.html';return;}
-    const d=(await r.json()).data;
+    const r=await fetch(apiUrl('/api/casino/aviator/state'));
+    if(r.status===401){showT('Invalid JuanAi API key','tl');return;}
+    const body=await r.json();
+    const d=body.data;
     if(!d) return;
+    USER.balance=d.balance;updBal();
     prevST=ST;ST=d.status;HIST=d.history||[];
+    // Sync local bet slots from the server's own record of them, so a
+    // page reload (or a second device using the same key) always reflects
+    // the server's true state rather than whatever this tab guessed.
+    BET1=d.bets && d.bets[1] ? { stake:d.bets[1].stake, cashedOut:d.bets[1].cashedOut } : null;
+    BET2=d.bets && d.bets[2] ? { stake:d.bets[2].stake, cashedOut:d.bets[2].cashedOut } : null;
     if(d.roundId!==lastRound){
       lastRound=d.roundId;
-      if(ST!=='waiting'){BET1=null;BET2=null;}
       updBtns();
     }
     updHist();
@@ -766,14 +786,12 @@ async function poll(){
       mv.textContent='Flew Away @ '+cp.toFixed(2)+'×';
       [BET1,BET2].forEach((b,i)=>{
         if(b&&!b.cashedOut){
-          b.cashedOut=true;
           showT('💥 Lost KES '+b.stake.toFixed(2),'tl');
-          if(i===0)BET1=null;else BET2=null;
         }
       });updBtns();
     }
-    fetch('/api/aviator/players',{headers}).then(r=>r.json()).then(d=>{
-      PLAYERS=d.data||[];
+    fetch(apiUrl('/api/casino/aviator/players')).then(r=>r.json()).then(body=>{
+      PLAYERS=body.data||[];
       document.getElementById('pc').textContent=PLAYERS.length;
       renderBL();
     }).catch(()=>{});
@@ -811,7 +829,7 @@ function renderBL(){
 // ══════════════════════════════════════
 async function hbet(s){
   getAC();
-  if(!USER){showT('Login to bet','ti');setTimeout(()=>location.href='/pages/login.html',1200);return;}
+  if(!API_KEY){showT('Missing JuanAi API key','tl');return;}
   const bet=s===1?BET1:BET2;
   const btn=document.getElementById('b'+s);
   if(btn.disabled) return;
@@ -826,15 +844,12 @@ async function doBet(s){
   const stake=parseFloat(document.getElementById('s'+s).value);
   if(!stake||stake<10) return showT('Min bet KES 10','tl');
   if(stake>100000) return showT('Max bet KES 100,000','tl');
-  const tok=localStorage.getItem('token');
-  if(!tok){showT('Session expired','tl');setTimeout(()=>location.href='/pages/login.html',1500);return;}
   playBet();
   const btn=document.getElementById('b'+s);btn.disabled=true;
   try{
-    const r=await fetch('/api/aviator/bet',{method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:JSON.stringify({stake})});
-    if(r.status===401){location.href='/pages/login.html';return;}
+    const r=await fetch(apiUrl('/api/casino/aviator/bet'),{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slot:s,stake})});
     const d=await r.json();
     if(d.success){
       if(s===1)BET1={stake,cashedOut:false};else BET2={stake,cashedOut:false};
@@ -847,22 +862,21 @@ async function doBet(s){
 async function doCash(s){
   const bet=s===1?BET1:BET2;
   if(!bet||bet.cashedOut) return;
-  bet.cashedOut=true;
   const btn=document.getElementById('b'+s);btn.disabled=true;
-  const tok=localStorage.getItem('token');
   try{
-    const r=await fetch('/api/aviator/cashout',{method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:JSON.stringify({betSlot:s,clientMultiplier:localMulti})});
+    const r=await fetch(apiUrl('/api/casino/aviator/cashout'),{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slot:s})});
     const d=await r.json();
     if(d.success){
+      bet.cashedOut=true;
       USER.balance=d.newBalance;updBal();
       playCashout();
       showWinSplash(d.won,d.multiplier);
       showT(`💰 ${d.multiplier.toFixed(2)}× — Won KES ${d.won.toFixed(2)}`,'tw');
-      if(s===1)BET1=null;else BET2=null;updBtns();
-    }else{bet.cashedOut=false;btn.disabled=false;showT(d.message||'Failed','tl');}
-  }catch(e){bet.cashedOut=false;btn.disabled=false;showT('Connection error','tl');}
+      updBtns();
+    }else{btn.disabled=false;showT(d.message||'Too late — round already crashed','tl');}
+  }catch(e){btn.disabled=false;showT('Connection error','tl');}
 }
 
 function updBtns(){
@@ -909,8 +923,7 @@ function showT(msg,cls=''){
 //  INIT
 // ══════════════════════════════════════
 window.addEventListener('DOMContentLoaded',()=>{
-  const t=localStorage.getItem('token'),u=localStorage.getItem('user');
-  if(t&&u){try{USER=JSON.parse(u);updBal();}catch(e){}}
+  if(!API_KEY){showT('Open this page with ?key=jsk_xxx (your JuanAi API key)','tl');}
 
   // Unlock audio on first touch
   let audioUnlocked=false;
