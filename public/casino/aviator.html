@@ -991,7 +991,7 @@ async function doBet(s){
   try{
     const r=await fetch('/api/aviator/bet',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:JSON.stringify({stake})});
+      body:JSON.stringify({slot:s,stake})});
     if(r.status===401){showT('Invalid API key','tl');btn.disabled=false;return;}
     const d=await r.json();
     if(d.success){
@@ -1011,7 +1011,7 @@ async function doCash(s){
   try{
     const r=await fetch('/api/aviator/cashout',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:JSON.stringify({betSlot:s,clientMultiplier:localMulti})});
+      body:JSON.stringify({slot:s,clientMultiplier:localMulti})});
     const d=await r.json();
     if(d.success){
       USER.balance=d.newBalance;updBal();
