@@ -692,6 +692,15 @@ app.get('/games/today', async (req, res) => {<br>
       <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Play credits reset if you reload the page.</div>
       <div class="casino-grid">
 
+        <!-- AVIATOR — real server-authoritative crash game, own page -->
+        <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <h3 style="margin-bottom:6px"><i class="fa-solid fa-plane-departure" style="color:var(--cas-a)"></i> Aviator</h3>
+            <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
+          </div>
+          <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
+        </div>
+
         <!-- CRASH GAME -->
         <div class="cgame-card">
           <div class="cgame-hdr">
@@ -2446,7 +2455,35 @@ function initCasino(){
   window.addEventListener('resize',function(){crashResize();crashDrawBackground();});
 }
 
-// ── Skyrocket (crash/multiplier game) ──
+// ── Aviator — real server-authoritative crash game, own page ──
+// Uses whatever API key JuanAi's dashboard already has (the same key used
+// for the football/API Keys panel), so there's nothing extra to set up —
+// if no key exists yet, one is created automatically the first time this
+// is opened, same as clicking "Generate" in the API Keys tab would do.
+async function launchAviator(){
+  try{
+    var keys = await getApiKeys();
+    var key;
+    if(keys && keys.length){
+      key = keys[0].key;
+    } else {
+      var resp = await fetch(JUANAI_BACKEND_URL + '/internal/apikeys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: 'Aviator (auto-created)' })
+      });
+      if(!resp.ok) throw new Error('Backend rejected key creation');
+      var created = await resp.json();
+      key = created && created.key;
+    }
+    if(!key){ toast('Could not get a JuanAi API key — check the API Keys tab','error'); return; }
+    window.open('/casino/aviator.html?key='+encodeURIComponent(key), '_blank');
+  }catch(e){
+    toast('Could not launch Aviator: '+e.message, 'error');
+  }
+}
+
+
 // Smoothness notes: the animated multiplier curve is the only thing redrawn
 // every frame, on its own transparent canvas layered over a static
 // background canvas (grid + glow) that's rendered once. The plane icon is a

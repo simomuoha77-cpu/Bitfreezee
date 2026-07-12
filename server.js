@@ -23,6 +23,7 @@ const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const scheduler = require('./scheduler');
+const casino = require('./casino');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -169,6 +170,48 @@ app.get('/api/status', async (req, res) => {
     aiKeyPool: ai.getAiKeyPoolStatus(),
     serverTime: new Date().toISOString()
   });
+});
+
+// ── CASINO API (what BetaKE — or any site with a JuanAi key — calls) ──
+// Server-authoritative crash game. See casino.js's header comment for the
+// full explanation of why the round state, RNG, and cashout timing all
+// live server-side instead of in the browser. The API key doubles as the
+// session identity here (one shared free-play balance per key) — same
+// requireApiKey middleware as the football endpoints, so BetaKE uses its
+// existing JuanAi key with no extra setup.
+//
+// GET /api/casino/aviator/state?key=jsk_xxx
+// Returns the current round's status/history/your balance & bets. Poll
+// this every ~300ms from the client, same as the football live-match data.
+app.get('/api/casino/aviator/state', requireApiKey, (req, res) => {
+  const key = req.query.key || req.headers['x-api-key'];
+  res.json({ success: true, data: casino.getPublicState(key) });
+});
+
+// GET /api/casino/aviator/players?key=jsk_xxx
+// Lightweight anonymized list of bets placed in the current round, for the
+// "All Bets" table. No real user identity — see casino.js's getPlayersView.
+app.get('/api/casino/aviator/players', requireApiKey, (req, res) => {
+  const key = req.query.key || req.headers['x-api-key'];
+  res.json({ success: true, data: casino.getPlayersView() });
+});
+
+// POST /api/casino/aviator/bet?key=jsk_xxx   body: { slot: 1|2, stake: number }
+app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
+  const key = req.query.key || req.headers['x-api-key'];
+  const { slot, stake } = req.body || {};
+  const result = casino.placeBet(key, slot, Number(stake));
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// POST /api/casino/aviator/cashout?key=jsk_xxx   body: { slot: 1|2 }
+// NOTE: intentionally does NOT accept a client-reported multiplier — the
+// server recomputes it from its own clock. See casino.js's cashOut().
+app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
+  const key = req.query.key || req.headers['x-api-key'];
+  const { slot } = req.body || {};
+  const result = casino.cashOut(key, slot);
+  res.status(result.success ? 200 : 400).json(result);
 });
 
 // ── INTERNAL API (called by JuanAi's own frontend, not by BetaKE) ──
