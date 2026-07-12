@@ -701,6 +701,8 @@ app.get('/games/today', async (req, res) => {<br>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
         </div>
 
+        <div style="grid-column:1/-1;font-size:11px;color:var(--tm);text-align:center;padding-top:4px">Also in this tab — two smaller original demo games:</div>
+
         <!-- CRASH GAME -->
         <div class="cgame-card">
           <div class="cgame-hdr">
@@ -2461,6 +2463,15 @@ function initCasino(){
 // if no key exists yet, one is created automatically the first time this
 // is opened, same as clicking "Generate" in the API Keys tab would do.
 async function launchAviator(){
+  // IMPORTANT: window.open() must happen synchronously inside the click
+  // handler, before any `await`. Mobile Chrome (and most browsers) only
+  // allow a popup/new-tab open when it's directly caused by a user
+  // gesture — once we `await` a fetch first, the browser no longer
+  // considers the later window.open() as gesture-triggered and silently
+  // blocks it (no error, tab just never opens). Opening a blank tab FIRST
+  // and then navigating it once the key is ready avoids that entirely.
+  var tab = window.open('', '_blank');
+  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Aviator…</body>'); }
   try{
     var keys = await getApiKeys();
     var key;
@@ -2476,10 +2487,16 @@ async function launchAviator(){
       var created = await resp.json();
       key = created && created.key;
     }
-    if(!key){ toast('Could not get a JuanAi API key — check the API Keys tab','error'); return; }
-    window.open('/casino/aviator.html?key='+encodeURIComponent(key), '_blank');
+    if(!key){
+      toast('Could not get a JuanAi API key — check the API Keys tab','error');
+      if(tab) tab.close();
+      return;
+    }
+    var url = '/casino/aviator.html?key='+encodeURIComponent(key);
+    if(tab){ tab.location.href = url; } else { window.open(url, '_blank'); }
   }catch(e){
     toast('Could not launch Aviator: '+e.message, 'error');
+    if(tab) tab.close();
   }
 }
 
