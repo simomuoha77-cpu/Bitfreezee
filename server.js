@@ -188,17 +188,30 @@ app.get('/api/status', async (req, res) => {
 // ── CASINO API (what BetaKE — or any site with a JuanAi key — calls) ──
 // Server-authoritative crash game. See casino.js's header comment for the
 // full explanation of why the round state, RNG, and cashout timing all
-// live server-side instead of in the browser. The API key doubles as the
-// session identity here (one shared free-play balance per key) — same
-// requireApiKey middleware as the football endpoints, so BetaKE uses its
-// existing JuanAi key with no extra setup. Key can be passed as
-// ?key=jsk_xxx, x-api-key header, or Authorization: Bearer jsk_xxx.
+// live server-side instead of in the browser.
 //
-// GET /api/casino/aviator/state?key=jsk_xxx
+// PER-USER BALANCE: pass a signed user token as ?utoken=... (or the
+// x-user-token header) alongside your API key to give each of YOUR users
+// their own isolated free-play "aviator balance", instead of everyone
+// sharing one balance under your API key. Generate that token on YOUR
+// backend with userToken.js's sign(userId) using the shared secret in
+// JUANAI_USER_TOKEN_SECRET — never generate it in the browser, since the
+// entire point is that the browser can't forge an identity it wasn't
+// given. If you don't pass ?utoken=, all your users share one balance
+// under your API key (fine for a single-user test, not for production
+// with real end users).
+//
+// Key can be passed as ?key=jsk_xxx, x-api-key header, or
+// Authorization: Bearer jsk_xxx.
+function extractUserToken(req) {
+  return req.query.utoken || req.headers['x-user-token'] || null;
+}
+
+// GET /api/casino/aviator/state?key=jsk_xxx&utoken=...
 // Returns the current round's status/history/your balance & bets. Poll
 // this every ~300ms from the client, same as the football live-match data.
 app.get('/api/casino/aviator/state', requireApiKey, (req, res) => {
-  res.json({ success: true, data: casino.getPublicState(req.apiKey) });
+  res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
 });
 
 // GET /api/casino/aviator/players?key=jsk_xxx
@@ -208,43 +221,44 @@ app.get('/api/casino/aviator/players', requireApiKey, (req, res) => {
   res.json({ success: true, data: casino.getPlayersView() });
 });
 
-// POST /api/casino/aviator/bet?key=jsk_xxx   body: { slot: 1|2, stake: number }
+// POST /api/casino/aviator/bet?key=jsk_xxx&utoken=...   body: { slot: 1|2, stake: number }
 app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
   const { slot, stake } = req.body || {};
-  const result = casino.placeBet(req.apiKey, slot, Number(stake));
+  const result = casino.placeBet(req.apiKey, extractUserToken(req), slot, Number(stake));
   res.status(result.success ? 200 : 400).json(result);
 });
 
-// POST /api/casino/aviator/cashout?key=jsk_xxx   body: { slot: 1|2 }
+// POST /api/casino/aviator/cashout?key=jsk_xxx&utoken=...   body: { slot: 1|2 }
 // NOTE: intentionally does NOT accept a client-reported multiplier — the
 // server recomputes it from its own clock. See casino.js's cashOut().
 app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
   const { slot } = req.body || {};
-  const result = casino.cashOut(req.apiKey, slot);
+  const result = casino.cashOut(req.apiKey, extractUserToken(req), slot);
   res.status(result.success ? 200 : 400).json(result);
 });
 
 // ── /api/aviator/* — same engine, shorter path ──────────────────────
 // Identical to /api/casino/aviator/* above (same casino.js round engine,
-// same one-shared-round-for-everyone model, same requireApiKey auth) —
-// this is just an alias under the shorter path some frontends (and any
-// betting site embedding the game) call instead. There is only ONE game
-// engine underneath both paths, so behavior is guaranteed identical; pick
-// whichever path is more convenient when integrating.
+// same one-shared-round-for-everyone model, same requireApiKey auth, same
+// optional ?utoken= per-user identity) — this is just an alias under the
+// shorter path some frontends (and any betting site embedding the game)
+// call instead. There is only ONE game engine underneath both paths, so
+// behavior is guaranteed identical; pick whichever path is more
+// convenient when integrating.
 app.get('/api/aviator/state', requireApiKey, (req, res) => {
-  res.json({ success: true, data: casino.getPublicState(req.apiKey) });
+  res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
 });
 app.get('/api/aviator/players', requireApiKey, (req, res) => {
   res.json({ success: true, data: casino.getPlayersView() });
 });
 app.post('/api/aviator/bet', requireApiKey, (req, res) => {
   const { slot, stake } = req.body || {};
-  const result = casino.placeBet(req.apiKey, slot, Number(stake));
+  const result = casino.placeBet(req.apiKey, extractUserToken(req), slot, Number(stake));
   res.status(result.success ? 200 : 400).json(result);
 });
 app.post('/api/aviator/cashout', requireApiKey, (req, res) => {
   const { slot } = req.body || {};
-  const result = casino.cashOut(req.apiKey, slot);
+  const result = casino.cashOut(req.apiKey, extractUserToken(req), slot);
   res.status(result.success ? 200 : 400).json(result);
 });
 

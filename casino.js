@@ -18,17 +18,41 @@
 //     server recomputes the "real" elapsed-time multiplier itself from
 //     round.startedAt and does not trust any multiplier value the client
 //     sends.
-//   - Balances live server-side per API key session; a client can only
-//     ever change its balance by placing/cashing a bet through these
-//     endpoints, never by sending a balance value directly.
+//   - Balances live server-side per-USER session (see userToken.js) — a
+//     client can only ever change its balance by placing/cashing a bet
+//     through these endpoints, never by sending a balance value directly.
+//
+// PER-USER ISOLATION (not per-API-key):
+// A single JuanAi API key is typically shared by ONE betting site across
+// ALL of its end users. If sessions were keyed by API key alone, every
+// user of that site would share one pot — one person's win or loss would
+// affect everyone else. Sessions are instead keyed by a verified userId,
+// established via a signed token from the site's own backend (see
+// userToken.js) so a user can't forge their own id or someone else's to
+// mess with balances. Sites that haven't wired up signed tokens yet fall
+// back to per-API-key sessions (old behavior) — clearly less isolated,
+// but doesn't hard-break integrations mid-migration.
+//
+// NO-SCAM GUARANTEE (what "can't be scammed" actually means here):
+//   - A user can only ever LOSE what they already stake — balance never
+//     goes negative, and a loss never grants anything back.
+//   - A win is always computed server-side from the server's own
+//     round-clock multiplier at the verified moment of cashout, times the
+//     stake the server itself deducted when the bet was placed — never
+//     from any number the client sends.
+//   - Rate limits on bet/cashout close off script-spam abuse even though
+//     spamming alone can't predict or influence the crash point.
 //
 // FREE-PLAY SCOPE: balances here are in-memory only (reset on server
-// restart), which is intentional and fine for a free-play demo — nothing
-// real is at stake. If this is ever extended to handle real money, the
-// balance ledger needs to move to a real persistent, audited store (like
-// fixtures/apikeys already do in db.js via MongoDB), with proper
-// deposit/withdrawal reconciliation — that's a substantially bigger
-// project than this module and out of scope here.
+// restart), which is intentional and fine for a free-play "aviator
+// balance" feature — this is NOT the betting site's real money balance,
+// it's a separate free-play credit pool. If this is ever extended to
+// touch real money, the balance ledger needs to move to a real
+// persistent, audited store (like fixtures/apikeys already do in db.js
+// via MongoDB), with proper deposit/withdrawal reconciliation — a
+// substantially bigger project than this module and out of scope here.
+
+const userToken = require('./userToken');
 
 const ROUND_WAIT_MS = 5000;       // "STARTING IN" countdown before each round
 const GROWTH_RATE = 0.09;         // multiplier = e^(GROWTH_RATE * elapsedSeconds) — matches the client's own animation curve so the two stay visually in sync
@@ -44,19 +68,51 @@ const HISTORY_LEN = 30;
 let round = null; // { id, status: 'waiting'|'flying'|'crashed', startedAt, waitEndsAt, crashPoint, crashedAt }
 let history = []; // recent crash points, newest first — display only
 
-// Per-API-key session state (bets + balance). Keyed by API key string.
-// This is intentionally simple in-memory storage — see FREE-PLAY SCOPE
-// note above for why that's fine here and what would need to change for
-// real money.
-const sessions = new Map(); // apiKey -> { balance, bets: { 1: {stake,cashedOut,roundId}|null, 2: {...}|null } }
+// Per-user session state (bets + free-play "aviator balance"). Keyed by
+// a session key that's either "u:<verifiedUserId>" (when the site passes
+// a signed user token) or "k:<apiKey>" (fallback, old shared-per-key
+// behavior). This is intentionally simple in-memory storage — see
+// FREE-PLAY SCOPE note above for why that's fine here and what would need
+// to change for real money.
+const sessions = new Map(); // sessionKey -> { balance, bets: { 1: {...}|null, 2: {...}|null } }
 
-function getSession(apiKey) {
-  let s = sessions.get(apiKey);
+// Resolves the session key to use for a request: verified user id if a
+// valid signed token was supplied, otherwise falls back to the API key
+// itself. Also returns whether a verified per-user identity was used, so
+// callers/ops can see how much traffic is still on the old fallback.
+function resolveSessionKey(apiKey, signedToken) {
+  const verifiedUserId = userToken.verify(signedToken);
+  if (verifiedUserId) return { sessionKey: `u:${verifiedUserId}`, verified: true };
+  return { sessionKey: `k:${apiKey}`, verified: false };
+}
+
+function getSession(sessionKey) {
+  let s = sessions.get(sessionKey);
   if (!s) {
     s = { balance: STARTING_BALANCE, bets: { 1: null, 2: null } };
-    sessions.set(apiKey, s);
+    sessions.set(sessionKey, s);
   }
   return s;
+}
+
+// ── Simple per-session rate limiting on bet/cashout ──────────────────
+// Doesn't help anyone predict the crash point (that's rolled server-side
+// and never exposed early regardless), but stops a script from hammering
+// these endpoints hundreds of times a second, which is its own kind of
+// abuse worth closing off.
+const RATE_LIMIT_WINDOW_MS = 1000;
+const RATE_LIMIT_MAX = 5; // max bet+cashout actions per session per window
+const rateBuckets = new Map(); // sessionKey -> { windowStart, count }
+
+function checkRateLimit(sessionKey) {
+  const now = Date.now();
+  let b = rateBuckets.get(sessionKey);
+  if (!b || now - b.windowStart > RATE_LIMIT_WINDOW_MS) {
+    b = { windowStart: now, count: 0 };
+    rateBuckets.set(sessionKey, b);
+  }
+  b.count++;
+  return b.count <= RATE_LIMIT_MAX;
 }
 
 function rollCrashPoint() {
@@ -114,9 +170,13 @@ setInterval(tick, 150); // server's own clock — independent of any client poll
 startNewRound();
 
 // ── Public API used by server.js routes ──────────────────────────────
+// Every function takes (apiKey, signedToken, ...) — signedToken is
+// optional (site may not have wired up per-user tokens yet), and is
+// verified via userToken.js before ever being trusted as an identity.
 
-function getPublicState(apiKey) {
-  const s = getSession(apiKey);
+function getPublicState(apiKey, signedToken) {
+  const { sessionKey, verified } = resolveSessionKey(apiKey, signedToken);
+  const s = getSession(sessionKey);
   const base = {
     roundId: round.id,
     status: round.status,
@@ -128,6 +188,7 @@ function getPublicState(apiKey) {
       1: s.bets[1] ? { stake: s.bets[1].stake, cashedOut: s.bets[1].cashedOut } : null,
       2: s.bets[2] ? { stake: s.bets[2].stake, cashedOut: s.bets[2].cashedOut } : null,
     },
+    verifiedIdentity: verified, // useful for the site/ops to confirm token wiring is actually working
   };
   // Only reveal the crash point once the round has actually crashed — this
   // is the crux of not being able to "read the answer" early. During
@@ -136,22 +197,29 @@ function getPublicState(apiKey) {
   return base;
 }
 
-function placeBet(apiKey, slot, stake) {
+function placeBet(apiKey, signedToken, slot, stake) {
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
   if (!Number.isFinite(stake) || stake < MIN_BET) return { success: false, message: `Minimum bet is KES ${MIN_BET}` };
   if (stake > MAX_BET) return { success: false, message: `Maximum bet is KES ${MAX_BET}` };
+  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
+  if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
   if (round.status !== 'waiting') return { success: false, message: 'Betting is closed for this round' };
-  const s = getSession(apiKey);
+  const s = getSession(sessionKey);
   if (s.bets[slot]) return { success: false, message: 'Bet already placed for this slot' };
   if (stake > s.balance) return { success: false, message: 'Insufficient balance' };
+  // Balance can only ever go DOWN here by exactly the staked amount, never
+  // below zero (guaranteed by the check above) — this is the "you can only
+  // lose what you staked, nothing more" guarantee.
   s.balance -= stake;
   s.bets[slot] = { stake, cashedOut: false, roundId: round.id };
   return { success: true, newBalance: s.balance };
 }
 
-function cashOut(apiKey, slot) {
+function cashOut(apiKey, signedToken, slot) {
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
-  const s = getSession(apiKey);
+  const { sessionKey } = resolveSessionKey(apiKey, signedToken);
+  if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
+  const s = getSession(sessionKey);
   const bet = s.bets[slot];
   if (!bet || bet.roundId !== round.id) return { success: false, message: 'No active bet in this round' };
   if (bet.cashedOut) return { success: false, message: 'Already cashed out' };
@@ -166,6 +234,8 @@ function cashOut(apiKey, slot) {
   const mult = currentMultiplier();
   if (mult >= round.crashPoint) return { success: false, message: 'Too late — round already crashed' };
   bet.cashedOut = true;
+  // Win is ALWAYS computed here from the server's own stake + server's own
+  // clock-derived multiplier — never from any number the client sends.
   const won = Math.floor(bet.stake * mult * 100) / 100;
   s.balance += won;
   return { success: true, newBalance: s.balance, won, multiplier: mult };
@@ -173,9 +243,9 @@ function cashOut(apiKey, slot) {
 
 function getPlayersView() {
   // Aggregate a lightweight, anonymized view across all sessions for the
-  // "players" list the frontend shows — no per-user identity is tracked
-  // here at all (sessions are keyed by API key, not by end-user account),
-  // so this reports counts/amounts only, not real usernames.
+  // "players" list the frontend shows — no real identity is ever exposed
+  // here, just counts/amounts, regardless of whether a session is keyed by
+  // verified user id or by API key fallback.
   const rows = [];
   sessions.forEach((s, key) => {
     [1, 2].forEach(slot => {
@@ -195,3 +265,4 @@ function getPlayersView() {
 }
 
 module.exports = { getPublicState, placeBet, cashOut, getPlayersView };
+
