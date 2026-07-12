@@ -689,62 +689,16 @@ app.get('/games/today', async (req, res) => {<br>
       <div class="casino-hdr">
         <div class="ctitle">🎰 JuanAi Casino</div>
       </div>
-      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Play credits reset if you reload the page.</div>
+      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Round outcomes are decided server-side.</div>
       <div class="casino-grid">
 
         <!-- AVIATOR — real server-authoritative crash game, own page -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
-            <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Skyfall</h3>
+            <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Aviator</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
           </div>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
-        </div>
-
-        <div style="grid-column:1/-1;font-size:11px;color:var(--tm);text-align:center;padding-top:4px">Also in this tab — two smaller original demo games:</div>
-
-        <!-- CRASH GAME -->
-        <div class="cgame-card">
-          <div class="cgame-hdr">
-            <h3><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> Skyrocket</h3>
-            <div class="cgame-balance">KES <span id="crashBalance">1000</span></div>
-          </div>
-          <div class="crash-stage" id="crashStage">
-            <canvas class="crash-bg-canvas" id="crashBgCanvas"></canvas>
-            <canvas class="crash-canvas" id="crashCanvas"></canvas>
-            <div class="crash-plane" id="crashPlane" style="left:8px;top:calc(100% - 22px)">🚀</div>
-            <div class="crash-mult" id="crashMult">1.00x</div>
-            <div class="crash-status" id="crashStatus">Place a bet to start</div>
-          </div>
-          <div class="crash-controls">
-            <input type="number" class="crash-bet-input" id="crashBetAmt" value="50" min="10" step="10">
-            <button class="crash-btn play" id="crashPlayBtn" onclick="crashPlay()">Play ⏯️</button>
-            <button class="crash-btn cashout" id="crashCashoutBtn" onclick="crashCashout()" disabled>Cash Out</button>
-          </div>
-          <div class="crash-log" id="crashLog"></div>
-        </div>
-
-        <!-- SLOT MACHINE -->
-        <div class="cgame-card">
-          <div class="cgame-hdr">
-            <h3><i class="fa-solid fa-gem" style="color:var(--cas-b)"></i> Golden Reels</h3>
-            <div class="cgame-balance">KES <span id="slotBalance">1000</span></div>
-          </div>
-          <div class="slot-frame">
-            <div class="slot-reels">
-              <div class="slot-reel" id="slotReel0"><span class="slot-sym">🍒</span></div>
-              <div class="slot-reel" id="slotReel1"><span class="slot-sym">🍋</span></div>
-              <div class="slot-reel" id="slotReel2"><span class="slot-sym">🔔</span></div>
-            </div>
-            <div class="slot-payline" id="slotPayline">Spin to win</div>
-            <div class="slot-controls">
-              <input type="number" class="crash-bet-input" id="slotBetAmt" value="50" min="10" step="10">
-              <button class="crash-btn play" id="slotSpinBtn" onclick="slotSpin()" style="flex:1">Spin ⏯️</button>
-            </div>
-            <div class="slot-paytable">
-              <span>💎💎💎 = 20x</span><span>🔔🔔🔔 = 10x</span><span>🍋🍋🍋 = 5x</span><span>🍒🍒🍒 = 3x</span><span>any 2 match = 1.5x</span>
-            </div>
-          </div>
         </div>
 
       </div>
@@ -2452,9 +2406,6 @@ var casinoInit=false;
 function initCasino(){
   if(casinoInit)return;
   casinoInit=true;
-  crashResize();
-  crashDrawBackground(); // static grid/glow, drawn ONCE — not redrawn every frame
-  window.addEventListener('resize',function(){crashResize();crashDrawBackground();});
 }
 
 // ── Aviator — real server-authoritative crash game, own page ──
@@ -2471,7 +2422,7 @@ async function launchAviator(){
   // blocks it (no error, tab just never opens). Opening a blank tab FIRST
   // and then navigating it once the key is ready avoids that entirely.
   var tab = window.open('', '_blank');
-  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Skyfall…</body>'); }
+  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Aviator…</body>'); }
   try{
     var keys = await getApiKeys();
     var key;
@@ -2500,216 +2451,6 @@ async function launchAviator(){
   }
 }
 
-
-// Smoothness notes: the animated multiplier curve is the only thing redrawn
-// every frame, on its own transparent canvas layered over a static
-// background canvas (grid + glow) that's rendered once. The plane icon is a
-// plain positioned DOM element moved via left/top, so the browser can
-// composite it on the GPU instead of Claude re-rasterizing an emoji into
-// canvas 60x/sec. requestAnimationFrame drives the loop (not setInterval),
-// so it stays locked to the display's real refresh rate and pauses
-// automatically when the tab isn't visible.
-var crashState={running:false,busted:false,cashedOut:false,mult:1,bet:0,raf:null,startT:0,balance:1000,history:[],crashPoint:0};
-function crashResize(){
-  ['crashCanvas','crashBgCanvas'].forEach(function(id){
-    var cv=document.getElementById(id);if(!cv)return;
-    var box=cv.parentElement.getBoundingClientRect();
-    var dpr=Math.min(window.devicePixelRatio||1,2);
-    cv.width=box.width*dpr;cv.height=box.height*dpr;
-    cv.style.width=box.width+'px';cv.style.height=box.height+'px';
-    var ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
-  });
-}
-function crashDrawBackground(){
-  var cv=document.getElementById('crashBgCanvas');if(!cv)return;
-  var ctx=cv.getContext('2d');
-  var w=cv.clientWidth,h=cv.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  var glow=ctx.createRadialGradient(w*0.3,h*0.55,10,w*0.3,h*0.55,Math.max(w,h)*0.7);
-  glow.addColorStop(0,'rgba(139,92,246,0.16)');glow.addColorStop(1,'rgba(139,92,246,0)');
-  ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
-  for(var gx=0;gx<w;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
-  for(var gy=0;gy<h;gy+=32){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();}
-}
-function crashRollCrashPoint(){
-  // House-edge exponential distribution — skews toward low multipliers with
-  // a long tail toward high ones. Tuned only for a free-play demo (not
-  // audited/provably-fair grade, since no money is at stake).
-  var r=Math.random();
-  var point=0.98/(1-r*0.97);
-  return Math.max(1.01,Math.min(point,50));
-}
-function crashPlay(){
-  if(crashState.running)return;
-  var betInput=document.getElementById('crashBetAmt');
-  var bet=parseInt(betInput.value,10)||0;
-  if(bet<10){toast('Minimum bet is KES 10','error');return;}
-  if(bet>crashState.balance){toast('Not enough balance','error');return;}
-  crashState.balance-=bet;
-  crashState.bet=bet;
-  crashState.running=true;
-  crashState.busted=false;
-  crashState.cashedOut=false;
-  crashState.mult=1;
-  crashState.crashPoint=crashRollCrashPoint();
-  crashState.startT=performance.now();
-  document.getElementById('crashBalance').textContent=crashState.balance;
-  document.getElementById('crashPlayBtn').disabled=true;
-  document.getElementById('crashCashoutBtn').disabled=false;
-  document.getElementById('crashStatus').textContent='Flying...';
-  var mEl=document.getElementById('crashMult');
-  mEl.classList.remove('busted','cashed');
-  mEl.textContent='1.00x';
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  crashState.raf=requestAnimationFrame(crashTick);
-}
-function crashTick(){
-  if(!crashState.running)return;
-  var elapsed=(performance.now()-crashState.startT)/1000;
-  crashState.mult=Math.pow(Math.E,0.14*elapsed); // smooth accelerating curve
-  document.getElementById('crashMult').textContent=crashState.mult.toFixed(2)+'x';
-  crashDraw(elapsed);
-  if(crashState.mult>=crashState.crashPoint){
-    crashBust();
-    return;
-  }
-  crashState.raf=requestAnimationFrame(crashTick);
-}
-function crashCurveXY(t,w,h){
-  var m=Math.pow(Math.E,0.14*t);
-  var x=Math.min((t/9)*w*0.86+8,w*0.9);
-  var y=h-14-Math.min((m-1)/(crashState.crashPoint*1.4),1)*(h-30);
-  return [x,y];
-}
-function crashDraw(elapsed){
-  var cv=document.getElementById('crashCanvas');if(!cv)return;
-  var ctx=cv.getContext('2d');
-  var w=cv.clientWidth,h=cv.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  var steps=Math.max(2,Math.min(80,Math.floor(elapsed*20)));
-  var pts=[];
-  for(var i=0;i<=steps;i++){
-    var t=elapsed*(i/steps);
-    pts.push(crashCurveXY(t,w,h));
-  }
-  var grad=ctx.createLinearGradient(0,0,w,0);
-  grad.addColorStop(0,'#8b5cf6');grad.addColorStop(1,'#f5b942');
-  ctx.strokeStyle=grad;ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';
-  ctx.beginPath();
-  pts.forEach(function(p,i){if(i===0)ctx.moveTo(p[0],p[1]);else ctx.lineTo(p[0],p[1]);});
-  ctx.stroke();
-  // fill under the curve for a bit of weight
-  ctx.lineTo(pts[pts.length-1][0],h);ctx.lineTo(pts[0][0],h);ctx.closePath();
-  var fillGrad=ctx.createLinearGradient(0,0,0,h);
-  fillGrad.addColorStop(0,'rgba(139,92,246,0.25)');fillGrad.addColorStop(1,'rgba(139,92,246,0)');
-  ctx.fillStyle=fillGrad;ctx.fill();
-  // move the plane DOM element to the curve tip — GPU-composited, not redrawn into canvas
-  if(pts.length){
-    var tip=pts[pts.length-1];
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left=tip[0]+'px';plane.style.top=tip[1]+'px';}
-  }
-}
-function crashBust(){
-  crashState.running=false;
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  var mEl=document.getElementById('crashMult');
-  mEl.textContent=crashState.crashPoint.toFixed(2)+'x';
-  mEl.classList.add('busted');
-  document.getElementById('crashStatus').textContent='Crashed! Better luck next round';
-  document.getElementById('crashPlayBtn').disabled=false;
-  document.getElementById('crashCashoutBtn').disabled=true;
-  if(!crashState.cashedOut){
-    crashLog(false,crashState.bet);
-  }
-  setTimeout(function(){
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
-    var cv=document.getElementById('crashCanvas');
-    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
-  },1400);
-}
-function crashCashout(){
-  if(!crashState.running||crashState.cashedOut)return;
-  crashState.cashedOut=true;
-  crashState.running=false;
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  var winAmt=Math.floor(crashState.bet*crashState.mult);
-  crashState.balance+=winAmt;
-  document.getElementById('crashBalance').textContent=crashState.balance;
-  var mEl=document.getElementById('crashMult');
-  mEl.classList.add('cashed');
-  document.getElementById('crashStatus').textContent='Cashed out at '+crashState.mult.toFixed(2)+'x — won KES '+winAmt;
-  document.getElementById('crashPlayBtn').disabled=false;
-  document.getElementById('crashCashoutBtn').disabled=true;
-  crashLog(true,winAmt);
-  setTimeout(function(){
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
-    var cv=document.getElementById('crashCanvas');
-    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
-  },1400);
-}
-function crashLog(won,amt){
-  crashState.history.unshift({won:won,amt:amt});
-  crashState.history=crashState.history.slice(0,8);
-  var el=document.getElementById('crashLog');
-  el.innerHTML=crashState.history.map(function(h){
-    return '<span class="'+(h.won?'win':'loss')+'">'+(h.won?'+':'-')+'KES '+h.amt+'</span>';
-  }).join('');
-}
-
-// ── Golden Reels (3-reel slot machine) ──
-var SLOT_SYMS=['🍒','🍋','🔔','⭐','💎'];
-var SLOT_PAYOUT={'💎':20,'⭐':8,'🔔':10,'🍋':5,'🍒':3};
-var slotState={balance:1000,spinning:false};
-function slotSpin(){
-  if(slotState.spinning)return;
-  var betInput=document.getElementById('slotBetAmt');
-  var bet=parseInt(betInput.value,10)||0;
-  if(bet<10){toast('Minimum bet is KES 10','error');return;}
-  if(bet>slotState.balance){toast('Not enough balance','error');return;}
-  slotState.balance-=bet;
-  document.getElementById('slotBalance').textContent=slotState.balance;
-  slotState.spinning=true;
-  document.getElementById('slotSpinBtn').disabled=true;
-  document.getElementById('slotPayline').textContent='Spinning...';
-  document.getElementById('slotPayline').classList.remove('win');
-  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
-  reels.forEach(function(r){r.classList.add('spinning');r.classList.remove('win');});
-  var finalSyms=[randSym(),randSym(),randSym()];
-  reels.forEach(function(r,i){
-    setTimeout(function(){
-      r.classList.remove('spinning');
-      r.querySelector('.slot-sym').textContent=finalSyms[i];
-      if(i===2)slotResolve(finalSyms,bet);
-    },500+i*350);
-  });
-}
-function randSym(){return SLOT_SYMS[Math.floor(Math.random()*SLOT_SYMS.length)];}
-function slotResolve(syms,bet){
-  var payEl=document.getElementById('slotPayline');
-  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
-  var winAmt=0;
-  if(syms[0]===syms[1]&&syms[1]===syms[2]){
-    winAmt=bet*(SLOT_PAYOUT[syms[0]]||3);
-    reels.forEach(function(r){r.classList.add('win');});
-  }else if(syms[0]===syms[1]||syms[1]===syms[2]||syms[0]===syms[2]){
-    winAmt=Math.floor(bet*1.5);
-  }
-  slotState.balance+=winAmt;
-  document.getElementById('slotBalance').textContent=slotState.balance;
-  if(winAmt>0){
-    payEl.textContent='You won KES '+winAmt+'!';
-    payEl.classList.add('win');
-  }else{
-    payEl.textContent='No match — try again';
-    payEl.classList.remove('win');
-  }
-  slotState.spinning=false;
-  document.getElementById('slotSpinBtn').disabled=false;
-}
 
 // ─── FOOTBALL ENGINE ──────────────────────────────────────────────────────────
 // Real fixtures now come from JuanAi's backend (server.js -> footballData.js),

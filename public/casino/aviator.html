@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"/>
-<title>Skyfall – JuanAi Casino</title>
+<title>Aviator – BetaKE</title>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700;900&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -27,7 +27,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
 }
 .avi-logo{
   font-family:'Rajdhani',sans-serif;font-size:24px;font-weight:900;
-  color:#8b5cf6;font-style:italic;letter-spacing:1px;
+  color:#e8001e;font-style:italic;letter-spacing:1px;
   text-shadow:0 0 20px rgba(232,0,30,.4);
 }
 .bal{
@@ -81,7 +81,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
   color:#fff;
   text-shadow:0 0 50px rgba(150,200,255,.7),0 0 100px rgba(80,140,255,.35);
 }
-.mval.crash{color:#f87171;text-shadow:0 0 30px rgba(248,113,113,.7)}
+.mval.crash{color:#e8001e;text-shadow:0 0 30px rgba(232,0,30,.7)}
 .mval.wait{display:none}
 
 /* ── WAIT OVERLAY ── */
@@ -211,7 +211,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
   font-weight:700;color:#444;cursor:pointer;
   border-bottom:2px solid transparent;transition:all .2s;text-transform:uppercase;
 }
-.btab2.on{color:#fff;border-bottom-color:#8b5cf6}
+.btab2.on{color:#fff;border-bottom-color:#e8001e}
 .bhead{
   display:grid;grid-template-columns:1fr 60px 44px 60px;
   padding:4px 10px;font-size:9px;font-weight:700;color:#2a2a2a;
@@ -241,7 +241,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
 }
 .toast.on{opacity:1}
 .toast.tw{border-color:#00e676;color:#00e676}
-.toast.tl{border-color:#f87171;color:#f87171}
+.toast.tl{border-color:#e8001e;color:#e8001e}
 .toast.ti{border-color:#ffd600;color:#ffd600}
 
 /* ── CRASH FLASH ── */
@@ -273,7 +273,7 @@ body{display:flex;flex-direction:column;height:100dvh;height:100vh}
 <!-- TOPBAR -->
 <div class="topbar">
   <button class="back-btn" onclick="history.back()">← Go Back</button>
-  <div class="avi-logo">◆ Skyfall</div>
+  <div class="avi-logo">✈ Aviator</div>
   <div style="display:flex;align-items:center">
     <div class="bal" onclick="showT('Free-play balance — resets if the server restarts','ti')">
       <span id="bv">0.00</span><span class="bal-kes">KES</span>
@@ -550,19 +550,16 @@ function draw(){
   for(let i=0;i<pts.length;i++) cx.lineTo(pts[i].x,pts[i].y);
   cx.lineTo(pts[pts.length-1].x,OY);cx.closePath();
   const fg=cx.createLinearGradient(0,OY-H*.7,0,OY);
-  fg.addColorStop(0,'rgba(139,92,246,0.24)');
-  fg.addColorStop(.5,'rgba(139,92,246,0.08)');
+  fg.addColorStop(0,'rgba(232,0,30,0.22)');
+  fg.addColorStop(.5,'rgba(232,0,30,0.08)');
   fg.addColorStop(1,'rgba(0,0,0,0)');
   cx.fillStyle=fg;cx.fill();cx.restore();
 
-  // ── Trail line — thicker, bolder, violet-to-gold instead of red ──
+  // ── Trail line ──
   cx.save();
-  cx.shadowBlur=crashed?10:22;
-  cx.shadowColor=crashed?'rgba(139,92,246,.5)':'rgba(139,92,246,.55)';
-  const lineGrad=cx.createLinearGradient(pts[0].x,pts[0].y,pts[pts.length-1].x,pts[pts.length-1].y);
-  lineGrad.addColorStop(0,'#6d3fd1');
-  lineGrad.addColorStop(1,crashed?'#5b3a8f':'#f5b942');
-  cx.strokeStyle=lineGrad;cx.lineWidth=5;
+  cx.shadowBlur=crashed?6:14;
+  cx.shadowColor=crashed?'rgba(232,0,30,.4)':'rgba(232,0,30,.35)';
+  cx.strokeStyle='#e8001e';cx.lineWidth=2.5;
   cx.lineJoin='round';cx.lineCap='round';
   cx.beginPath();cx.moveTo(pts[0].x,pts[0].y);
   for(let i=1;i<pts.length-1;i++){
@@ -586,73 +583,89 @@ function draw(){
   }
 }
 
-// ── VEHICLE DRAWING — original comet/shard design, own silhouette ──
-// Deliberately NOT a winged-aircraft shape: no fuselage, no wings, no
-// cockpit canopy — a faceted crystal/comet head with a particle tail
-// instead of a jet flame, in JuanAi's own violet/gold palette rather than
-// red, so it reads as its own thing rather than a copy of any existing
-// crash game's plane art.
+// ── PLANE DRAWING — matches screenshot exactly ──
 function drawPlane(c,crashed){
   c.save();
-  const S=crashed?.85:1.0;
+  const S=crashed?.9:1.0;
   c.scale(S,S);
 
-  const bodyColor = crashed ? '#5b3a8f' : '#8b5cf6';
-  const bodyDark  = crashed ? '#3d2761' : '#6d3fd1';
-  const accent    = '#f5b942';
-
-  // Outer glow halo
+  // Glow halo
   if(!crashed){
-    const rg=c.createRadialGradient(0,0,4,0,0,42);
-    rg.addColorStop(0,'rgba(139,92,246,.30)');rg.addColorStop(1,'rgba(139,92,246,0)');
-    c.beginPath();c.arc(0,0,42,0,Math.PI*2);c.fillStyle=rg;c.fill();
+    const rg=c.createRadialGradient(0,0,4,0,0,48);
+    rg.addColorStop(0,'rgba(232,0,30,.22)');rg.addColorStop(1,'rgba(232,0,30,0)');
+    c.beginPath();c.arc(0,0,48,0,Math.PI*2);c.fillStyle=rg;c.fill();
   }
 
-  // ── Faceted crystal head (diamond/shard, not a fuselage) ──
-  c.shadowBlur=crashed?0:14;
-  c.shadowColor='rgba(139,92,246,.7)';
+  // ── Main fuselage ──
+  c.shadowBlur=crashed?0:12;
+  c.shadowColor='rgba(220,0,20,.6)';
   c.beginPath();
-  c.moveTo(30,0);      // front tip
-  c.lineTo(6,-12);      // top facet
-  c.lineTo(-16,-6);     // top back
-  c.lineTo(-22,0);      // rear point
-  c.lineTo(-16,6);      // bottom back
-  c.lineTo(6,12);       // bottom facet
+  c.moveTo(55,0);
+  // nose
+  c.bezierCurveTo(48,-4,30,-7,8,-8);
+  // bottom of fuselage
+  c.lineTo(-18,-8);c.lineTo(-22,0);c.lineTo(-18,8);c.lineTo(8,8);
+  c.bezierCurveTo(30,7,48,4,55,0);
   c.closePath();
-  c.fillStyle=bodyColor;c.fill();
+  c.fillStyle=crashed?'#7a0a0a':'#c0000e';c.fill();
 
-  // Facet highlight (top half, lighter) — gives it a cut-gem look instead of a fuselage sheen
+  // ── Main wing (swept back) ──
   c.shadowBlur=0;
   c.beginPath();
-  c.moveTo(30,0);c.lineTo(6,-12);c.lineTo(-16,-6);c.lineTo(-22,0);
+  c.moveTo(22,6);     // wing root front
+  c.lineTo(-2,52);    // wingtip
+  c.lineTo(-14,50);   // wingtip back
+  c.lineTo(-6,6);     // wing root back
   c.closePath();
-  c.fillStyle='rgba(255,255,255,.10)';c.fill();
+  c.fillStyle=crashed?'#6a0808':'#a00010';c.fill();
 
-  // Core facet line
+  // ── Wing highlight ──
   c.beginPath();
-  c.moveTo(30,0);c.lineTo(-22,0);
-  c.strokeStyle='rgba(255,255,255,.18)';c.lineWidth=1;c.stroke();
+  c.moveTo(20,6);c.lineTo(0,38);c.lineTo(-2,35);c.lineTo(18,6);
+  c.closePath();
+  c.fillStyle='rgba(255,60,60,.15)';c.fill();
 
-  // Gold accent ring at the widest point (stands in for a cockpit, but
-  // reads as a gem band rather than a canopy)
+  // ── Vertical tail ──
   c.beginPath();
-  c.ellipse(4,0,7,10,0,0,Math.PI*2);
-  c.strokeStyle=accent;c.lineWidth=1.6;c.globalAlpha=.85;c.stroke();
-  c.globalAlpha=1;
+  c.moveTo(-6,-8);c.lineTo(-20,-32);c.lineTo(-22,-30);c.lineTo(-18,-8);
+  c.closePath();
+  c.fillStyle=crashed?'#7a0a0a':'#a00010';c.fill();
 
-  // ── Particle comet tail (replaces a jet exhaust flame) ──
+  // ── Horizontal stabilizer ──
+  c.beginPath();
+  c.moveTo(-8,-4);c.lineTo(-22,-18);c.lineTo(-24,-16);c.lineTo(-19,-4);
+  c.closePath();
+  c.fillStyle=crashed?'#6a0808':'#900010';c.fill();
+
+  // ── Cockpit canopy ──
+  c.beginPath();
+  c.ellipse(24,-2,16,6.5,-.12,0,Math.PI*2);
+  c.fillStyle='rgba(40,140,255,.55)';
+  c.shadowBlur=8;c.shadowColor='rgba(40,160,255,.4)';c.fill();
+
+  // Canopy highlight
+  c.beginPath();
+  c.ellipse(21,-4.5,9,3,-.2,0,Math.PI);
+  c.fillStyle='rgba(255,255,255,.25)';
+  c.shadowBlur=0;c.fill();
+
+  // ── Engine exhaust flame ──
   if(!crashed){
-    for(let i=0;i<5;i++){
-      const t=i/4;
-      const px=-22-t*26;
-      const py=(Math.sin(t*6+performance.now()/120)*4);
-      const size=4.5-(t*3);
-      const grd=c.createRadialGradient(px,py,0,px,py,size*2.2);
-      grd.addColorStop(0, i%2===0 ? 'rgba(245,185,66,.95)' : 'rgba(139,92,246,.85)');
-      grd.addColorStop(1,'rgba(139,92,246,0)');
-      c.beginPath();c.arc(px,py,size*2.2,0,Math.PI*2);
-      c.fillStyle=grd;c.shadowBlur=10;c.shadowColor='rgba(245,185,66,.6)';c.fill();
-    }
+    // Outer flame
+    c.beginPath();c.moveTo(-18,0);
+    c.bezierCurveTo(-32,-9,-44,0,-36,0);
+    c.bezierCurveTo(-44,0,-32,9,-18,0);
+    const fl=c.createLinearGradient(-18,0,-44,0);
+    fl.addColorStop(0,'rgba(255,250,100,1)');
+    fl.addColorStop(.45,'rgba(255,120,0,.95)');
+    fl.addColorStop(1,'rgba(255,40,0,0)');
+    c.fillStyle=fl;c.shadowBlur=18;c.shadowColor='rgba(255,140,0,.8)';c.fill();
+    // Inner bright core
+    c.beginPath();c.moveTo(-18,0);
+    c.bezierCurveTo(-26,-4,-30,0,-25,0);
+    c.bezierCurveTo(-30,0,-26,4,-18,0);
+    c.fillStyle='rgba(255,255,220,.95)';
+    c.shadowBlur=8;c.shadowColor='rgba(255,255,180,.9)';c.fill();
   }
 
   c.restore();
