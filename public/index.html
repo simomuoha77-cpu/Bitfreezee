@@ -695,7 +695,7 @@ app.get('/games/today', async (req, res) => {<br>
         <!-- AVIATOR — real server-authoritative crash game, own page -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
-            <h3 style="margin-bottom:6px"><i class="fa-solid fa-plane-departure" style="color:var(--cas-a)"></i> Aviator</h3>
+            <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Skyfall</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
           </div>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
@@ -2471,7 +2471,7 @@ async function launchAviator(){
   // blocks it (no error, tab just never opens). Opening a blank tab FIRST
   // and then navigating it once the key is ready avoids that entirely.
   var tab = window.open('', '_blank');
-  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Aviator…</body>'); }
+  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Skyfall…</body>'); }
   try{
     var keys = await getApiKeys();
     var key;
