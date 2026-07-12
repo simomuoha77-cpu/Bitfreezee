@@ -882,7 +882,7 @@ async function poll(){
     const headers={'Content-Type':'application/json'};
     if(tok) headers['Authorization']='Bearer '+tok;
     const r=await fetch('/api/aviator/state',{headers});
-    if(r.status===401){location.href='/pages/login.html';return;}
+    if(r.status===401){showT('Invalid or missing API key — reload with ?key=jsk_xxx','tl');return;}
     const d=(await r.json()).data;
     if(!d) return;
     prevST=ST;ST=d.status;HIST=d.history||[];
@@ -969,7 +969,7 @@ function renderBL(){
 // ══════════════════════════════════════
 async function hbet(s){
   getAC();
-  if(!USER){showT('Login to bet','ti');setTimeout(()=>location.href='/pages/login.html',1200);return;}
+  if(!USER){showT('Missing API key — reload with ?key=jsk_xxx','ti');return;}
   const bet=s===1?BET1:BET2;
   const btn=document.getElementById('b'+s);
   if(btn.disabled) return;
@@ -985,14 +985,14 @@ async function doBet(s){
   if(!stake||stake<10) return showT('Min bet KES 10','tl');
   if(stake>100000) return showT('Max bet KES 100,000','tl');
   const tok=localStorage.getItem('token');
-  if(!tok){showT('Session expired','tl');setTimeout(()=>location.href='/pages/login.html',1500);return;}
+  if(!tok){showT('Session expired — reload with ?key=jsk_xxx','tl');return;}
   playBet();
   const btn=document.getElementById('b'+s);btn.disabled=true;
   try{
     const r=await fetch('/api/aviator/bet',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
       body:JSON.stringify({stake})});
-    if(r.status===401){location.href='/pages/login.html';return;}
+    if(r.status===401){showT('Invalid API key','tl');btn.disabled=false;return;}
     const d=await r.json();
     if(d.success){
       if(s===1)BET1={stake,cashedOut:false};else BET2={stake,cashedOut:false};
@@ -1079,7 +1079,7 @@ function toggleAuto(s){
   const a=AUTO[s];
   const btn=document.getElementById('ba'+s);
   if(!a.running){
-    if(!USER){showT('Login to bet','ti');setTimeout(()=>location.href='/pages/login.html',1200);return;}
+    if(!USER){showT('Missing API key — reload with ?key=jsk_xxx','ti');return;}
     clampAuto(s);
     a.running=true;
     btn.textContent='Stop Autobet';
@@ -1114,6 +1114,21 @@ function showT(msg,cls=''){
 //  INIT
 // ══════════════════════════════════════
 window.addEventListener('DOMContentLoaded',()=>{
+  // ── URL key bootstrap ──
+  // This page was built to read its session from localStorage (set by a
+  // separate login page). For embedding via a plain link like
+  // aviator.html?key=jsk_xxx (no login step), pick up that key here and
+  // store it exactly where the rest of this file already looks for it —
+  // every existing fetch/doBet/doCash/poll call below is untouched and
+  // just keeps reading localStorage as before.
+  const urlKey=new URLSearchParams(location.search).get('key');
+  if(urlKey){
+    localStorage.setItem('token',urlKey);
+    if(!localStorage.getItem('user')){
+      localStorage.setItem('user',JSON.stringify({balance:0}));
+    }
+  }
+
   const t=localStorage.getItem('token'),u=localStorage.getItem('user');
   if(t&&u){try{USER=JSON.parse(u);updBal();}catch(e){}}
 
