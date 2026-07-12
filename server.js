@@ -32,12 +32,25 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 // ── Auth middleware: checks the API key against real stored keys ──
+// Accepts the key from any of: ?key=jsk_xxx, x-api-key header, or
+// Authorization: Bearer jsk_xxx — this way every site embedding JuanAi's
+// games (or any future frontend) can pass the same key however's
+// convenient, and it's still the exact same key/session underneath.
+function extractApiKey(req) {
+  if (req.query.key) return req.query.key;
+  if (req.headers['x-api-key']) return req.headers['x-api-key'];
+  const auth = req.headers['authorization'];
+  if (auth && auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  return null;
+}
+
 async function requireApiKey(req, res, next) {
-  const key = req.query.key || req.headers['x-api-key'];
+  const key = extractApiKey(req);
   const valid = await db.isValidApiKey(key);
   if (!valid) {
     return res.status(401).json({ error: 'Invalid or missing API key' });
   }
+  req.apiKey = key; // stash so routes don't need to re-parse it
   next();
 }
 
@@ -178,29 +191,27 @@ app.get('/api/status', async (req, res) => {
 // live server-side instead of in the browser. The API key doubles as the
 // session identity here (one shared free-play balance per key) — same
 // requireApiKey middleware as the football endpoints, so BetaKE uses its
-// existing JuanAi key with no extra setup.
+// existing JuanAi key with no extra setup. Key can be passed as
+// ?key=jsk_xxx, x-api-key header, or Authorization: Bearer jsk_xxx.
 //
 // GET /api/casino/aviator/state?key=jsk_xxx
 // Returns the current round's status/history/your balance & bets. Poll
 // this every ~300ms from the client, same as the football live-match data.
 app.get('/api/casino/aviator/state', requireApiKey, (req, res) => {
-  const key = req.query.key || req.headers['x-api-key'];
-  res.json({ success: true, data: casino.getPublicState(key) });
+  res.json({ success: true, data: casino.getPublicState(req.apiKey) });
 });
 
 // GET /api/casino/aviator/players?key=jsk_xxx
 // Lightweight anonymized list of bets placed in the current round, for the
 // "All Bets" table. No real user identity — see casino.js's getPlayersView.
 app.get('/api/casino/aviator/players', requireApiKey, (req, res) => {
-  const key = req.query.key || req.headers['x-api-key'];
   res.json({ success: true, data: casino.getPlayersView() });
 });
 
 // POST /api/casino/aviator/bet?key=jsk_xxx   body: { slot: 1|2, stake: number }
 app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
-  const key = req.query.key || req.headers['x-api-key'];
   const { slot, stake } = req.body || {};
-  const result = casino.placeBet(key, slot, Number(stake));
+  const result = casino.placeBet(req.apiKey, slot, Number(stake));
   res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -208,9 +219,32 @@ app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
 // NOTE: intentionally does NOT accept a client-reported multiplier — the
 // server recomputes it from its own clock. See casino.js's cashOut().
 app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
-  const key = req.query.key || req.headers['x-api-key'];
   const { slot } = req.body || {};
-  const result = casino.cashOut(key, slot);
+  const result = casino.cashOut(req.apiKey, slot);
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// ── /api/aviator/* — same engine, shorter path ──────────────────────
+// Identical to /api/casino/aviator/* above (same casino.js round engine,
+// same one-shared-round-for-everyone model, same requireApiKey auth) —
+// this is just an alias under the shorter path some frontends (and any
+// betting site embedding the game) call instead. There is only ONE game
+// engine underneath both paths, so behavior is guaranteed identical; pick
+// whichever path is more convenient when integrating.
+app.get('/api/aviator/state', requireApiKey, (req, res) => {
+  res.json({ success: true, data: casino.getPublicState(req.apiKey) });
+});
+app.get('/api/aviator/players', requireApiKey, (req, res) => {
+  res.json({ success: true, data: casino.getPlayersView() });
+});
+app.post('/api/aviator/bet', requireApiKey, (req, res) => {
+  const { slot, stake } = req.body || {};
+  const result = casino.placeBet(req.apiKey, slot, Number(stake));
+  res.status(result.success ? 200 : 400).json(result);
+});
+app.post('/api/aviator/cashout', requireApiKey, (req, res) => {
+  const { slot } = req.body || {};
+  const result = casino.cashOut(req.apiKey, slot);
   res.status(result.success ? 200 : 400).json(result);
 });
 
