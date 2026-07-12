@@ -164,3 +164,63 @@ this isn't connected.
 asleep, that first call will be slow. Consider a periodic health-check ping
 (e.g. a free uptime monitor hitting `/api/health` every 10 min) to keep it
 warm, or add a timeout and retry on BetaKE's side.
+
+## Real-money casino wallet integration (Aviator + SafariBet)
+
+Aviator no longer holds any balance of its own — SafariBet's real balance
+is the only source of truth. This works via signed, server-to-server calls
+in both directions. See `casinoIntegration.js`, `walletClient.js`, and
+`userToken.js` for the full design rationale in comments; short version
+below.
+
+**One-time setup, per partner site (e.g. SafariBet):**
+
+1. Set `JUANAI_USER_TOKEN_SECRET` in `.env` — a long random string, shared
+   between JuanAi and SafariBet's backend only. Generate one with:
+   ```
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+2. On SafariBet's backend, implement 3 endpoints for JuanAi to call
+   (JuanAi calls SafariBet, never the other way around):
+   - `POST /api/casino/debit` — body `{userId, amount, roundId}`, return
+     `{success: true, newBalance}` or `{success: false, message}` if the
+     user doesn't have enough balance.
+   - `POST /api/casino/credit` — body `{userId, amount, roundId}`, return
+     `{success: true, newBalance}`.
+   - `GET /api/casino/balance?userId=X` — return `{success: true, balance}`.
+   Every request from JuanAi carries `X-JuanAi-Timestamp` and
+   `X-JuanAi-Signature` headers — verify these using the SAME shared
+   secret from step 1 before trusting the request (see `walletClient.js`'s
+   `sign()` function for the exact algorithm to replicate on SafariBet's
+   side: `HMAC_SHA256(secret, method + "\n" + path + "\n" + timestamp +
+   "\n" + bodyJson)`, where `path` includes the query string exactly as
+   sent, and reject any request more than a minute or two old to prevent
+   replay).
+3. Register SafariBet's wallet with JuanAi (do this once, or again after
+   any restart if you're not yet on MongoDB — see `MONGO_URI` note above):
+   ```
+   curl -X POST https://your-juanai-url.onrender.com/internal/wallet \
+     -H "Content-Type: application/json" \
+     -d '{"apiKey":"jsk_xxx","baseUrl":"https://safaribet.com","secret":"THE_SAME_SHARED_SECRET"}'
+   ```
+4. When a real logged-in user wants to play Aviator, SafariBet's backend
+   signs a short-lived token for that specific user:
+   ```js
+   const userToken = require('./userToken'); // copy this file's logic, or re-implement the same HMAC scheme
+   const utoken = userToken.sign(realUserId);
+   ```
+   Embed the game with both the API key and this token:
+   `https://your-juanai-url.onrender.com/casino/aviator.html?key=jsk_xxx&utoken=SIGNED_TOKEN`
+
+**Why this direction, and why signed tokens instead of a raw userId:**
+see the header comments in `casinoIntegration.js` and `walletClient.js` —
+short version: JuanAi confirms a real debit before ever accepting a bet,
+confirms a real credit before ever reporting a win, and the browser can
+never forge a user's identity because it never has the shared secret used
+to sign `utoken`.
+
+**Known limitation:** partner-side (real-money) bets don't currently show
+up in the in-game "All Bets" list — that list still only reflects the
+free-play engine's own sessions. Cosmetic only, not a balance/security
+issue, but worth fixing if that list matters for your product.
+

@@ -25,6 +25,8 @@ const footballData = require('./footballData');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
+const walletClient = require('./walletClient');
+const userToken = require('./userToken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -328,6 +330,85 @@ app.get('/api/casino/history', requireApiKey, (req, res) => {
   res.json({ success: true, data });
 });
 
+// GET /api/casino/balance?key=jsk_xxx&userId=xxx
+// SERVER-TO-SERVER ONLY — same warning as above. Do not call this
+// directly from a browser: a raw userId here is not verified as
+// belonging to whoever is asking, so anyone could query any user's
+// balance. The browser-safe equivalent is
+// /api/casino/play/balance?key=jsk_xxx&utoken=... below.
+app.get('/api/casino/balance', requireApiKey, async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ success: false, message: 'userId query param is required' });
+  const result = await casinoIntegration.getBalance(req.apiKey, userId);
+  res.status(result.success ? 200 : 502).json(result);
+});
+
+// ── CASINO PLAY API (browser-safe, real money) ─────────────────────────
+// These are the ONLY real-money casino endpoints meant to be called
+// directly from a game page in the browser (e.g. public/casino/aviator
+// .html embedded in an iframe). Instead of a raw userId — which a browser
+// could simply swap for someone else's — they require a signed ?utoken=
+// (see userToken.js). That token is generated on the PARTNER'S OWN backend
+// for the specific logged-in user and passed into the game's launch URL;
+// the browser only ever carries it along, never mints it. Each route
+// verifies the token server-side and resolves the real userId from it
+// before ever calling into casinoIntegration.js/walletClient.js — a
+// forged or missing token is rejected outright, so no bet, cashout, or
+// balance lookup can ever be performed as a user the caller wasn't
+// actually given a valid token for.
+function resolveVerifiedUserId(req, res) {
+  const token = req.query.utoken || req.body?.utoken;
+  const userId = userToken.verify(token);
+  if (!userId) {
+    res.status(401).json({ success: false, message: 'Missing or invalid utoken — this must be a signed token from the partner\'s own backend, see userToken.js' });
+    return null;
+  }
+  return userId;
+}
+
+// GET /api/casino/play/balance?key=jsk_xxx&utoken=...
+app.get('/api/casino/play/balance', requireApiKey, async (req, res) => {
+  const userId = resolveVerifiedUserId(req, res);
+  if (!userId) return;
+  const result = await casinoIntegration.getBalance(req.apiKey, userId);
+  res.status(result.success ? 200 : 502).json(result);
+});
+
+// POST /api/casino/play/bet?key=jsk_xxx   body: { utoken, gameId, slot, stake }
+app.post('/api/casino/play/bet', requireApiKey, async (req, res) => {
+  const userId = resolveVerifiedUserId(req, res);
+  if (!userId) return;
+  const { gameId, slot, stake } = req.body || {};
+  const result = await casinoIntegration.placeBet(req.apiKey, userId, gameId, slot, Number(stake));
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// GET /api/casino/play/bet/:betId?key=jsk_xxx&utoken=...
+app.get('/api/casino/play/bet/:betId', requireApiKey, async (req, res) => {
+  const userId = resolveVerifiedUserId(req, res);
+  if (!userId) return;
+  const result = await casinoIntegration.getBetResult(req.apiKey, req.params.betId);
+  // Defense in depth: even though betId alone is hard to guess, also
+  // confirm the resolved bet actually belongs to this verified user
+  // before returning it.
+  if (result.success && result.userId && result.userId !== userId) {
+    return res.status(403).json({ success: false, message: 'This bet does not belong to the verified user' });
+  }
+  res.status(result.success ? 200 : 404).json(result);
+});
+
+// POST /api/casino/play/bet/:betId/cashout?key=jsk_xxx   body: { utoken }
+app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) => {
+  const userId = resolveVerifiedUserId(req, res);
+  if (!userId) return;
+  const existing = await casinoIntegration.getBetResult(req.apiKey, req.params.betId);
+  if (existing.success && existing.userId && existing.userId !== userId) {
+    return res.status(403).json({ success: false, message: 'This bet does not belong to the verified user' });
+  }
+  const result = await casinoIntegration.cashOut(req.apiKey, req.params.betId);
+  res.status(result.success ? 200 : 400).json(result);
+});
+
 // ── INTERNAL API (called by JuanAi's own frontend, not by BetaKE) ──
 // These write data. In production, lock these down further (e.g. a
 // separate internal-only secret, or only allow from localhost/admin
@@ -418,6 +499,28 @@ app.delete('/internal/apikeys/:id', async (req, res) => {
   }
 });
 
+// ── WALLET INTEGRATION SETUP (called by JuanAi's admin UI) ──────────
+// Registers a partner's own wallet base URL + shared HMAC secret so
+// casinoIntegration.js/walletClient.js know where to call for
+// debit/credit/balance. SECURITY NOTE: this is currently protected the
+// same (same-origin, no-key) way as the rest of /internal/* — since this
+// endpoint sets the secret used to authorize real money movement, lock
+// this down further (e.g. require an admin session/password, restrict to
+// localhost, or move it behind your own auth) before exposing this
+// admin panel publicly in production.
+app.post('/internal/wallet', async (req, res) => {
+  const { apiKey, baseUrl, secret } = req.body || {};
+  if (!apiKey || !baseUrl || !secret) {
+    return res.status(400).json({ error: 'apiKey, baseUrl, and secret are all required' });
+  }
+  try {
+    await casinoIntegration.registerWallet(apiKey, baseUrl, secret);
+    res.json({ ok: true, apiKey, baseUrl });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to register wallet: ' + e.message });
+  }
+});
+
 // ── Serve the JuanAi frontend itself (optional, convenient) ────────
 // Put JuanAi-1.html in the same folder as this file, renamed to index.html,
 // and it'll be served automatically at http://localhost:3000/
@@ -427,4 +530,5 @@ app.listen(PORT, () => {
   console.log(`JuanAi backend running on http://localhost:${PORT}`);
   console.log(`External betting sites call: GET http://localhost:${PORT}/api/fixtures?key=YOUR_KEY&days=0`);
   scheduler.start();
+  walletClient.loadWalletsFromDb();
 });

@@ -44,6 +44,7 @@
 
 const crypto = require('crypto');
 const casino = require('./casino'); // reuse the same round engine / RNG / anti-cheat timing logic
+const wallet = require('./walletClient'); // synchronous, HMAC-signed calls out to the partner's own wallet endpoints
 
 // ── Games catalog ──────────────────────────────────────────────────────
 // Deliberately lists ONLY games that actually exist and actually work
@@ -91,20 +92,52 @@ function newBetId() {
 // placeBet: partner's server calls this after (or while) deducting the
 // stake from their user's real balance. Returns success/failure and a
 // betId to poll later — never a balance.
-function placeBet(apiKey, userId, gameId, slot, stake) {
+async function placeBet(apiKey, userId, gameId, slot, stake) {
   if (!userId) return { success: false, message: 'userId is required' };
   const game = getGame(gameId);
   if (!game) return { success: false, message: `Unknown gameId '${gameId}'` };
   if (game.status !== 'active') return { success: false, message: `Game '${gameId}' is not currently active` };
+  if (!Number.isFinite(stake) || stake <= 0) return { success: false, message: 'Invalid stake amount' };
 
-  // Reuse casino.js's own bet validation (min/max stake, round-open check,
-  // slot validity) by calling its placeBet with a session key scoped to
-  // this specific partner+user+game, so record-keeping here stays
-  // independent per partner integration instead of colliding with the
-  // free-play frontend's own sessions.
+  // A roundId is needed for the debit call's audit trail, but the actual
+  // round the bet lands in is only known once placeBetForSession succeeds
+  // below — casino.js's shared round could theoretically roll over between
+  // these two steps under extreme timing. We use a provisional reference
+  // (current round id at call time) for the debit call regardless; what
+  // matters for correctness is the wallet's own idempotency on
+  // (userId, provisionalRef), not which exact round it lands in.
+  const provisionalRef = 'debit_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+
+  // STEP 1: confirm the debit BEFORE the bet is allowed to exist at all.
+  // If this fails (insufficient balance, wallet unreachable, etc.), no bet
+  // is ever recorded — nothing to roll back.
+  const debitResult = await wallet.debit(apiKey, userId, Number(stake), provisionalRef);
+  if (!debitResult.success) {
+    return { success: false, message: debitResult.message || 'Debit failed' };
+  }
+
+  // STEP 2: now that money has actually moved, try to place the bet in the
+  // shared round engine.
   const sessionKey = `partner:${apiKey}:${gameId}:${userId}`;
   const result = casino.placeBetForSession(sessionKey, slot, Number(stake));
-  if (!result.success) return result;
+  if (!result.success) {
+    // ROLLBACK: the debit succeeded but the bet itself couldn't be placed
+    // (e.g. round closed in the split second between the debit call and
+    // this line, rate limit, etc.) — refund immediately via a credit call
+    // using the SAME reference, so the partner's ledger can treat this as
+    // an idempotent reversal of that exact debit rather than a new,
+    // unrelated credit.
+    const refund = await wallet.credit(apiKey, userId, Number(stake), provisionalRef);
+    if (!refund.success) {
+      // This is the one truly bad outcome: money left the user's balance
+      // and the automatic refund also failed. Surface this loudly rather
+      // than silently swallowing it — an ops alert/log here is essential
+      // in real production; this comment marks exactly where to hook one.
+      console.error(`[casinoIntegration] CRITICAL: debit for ${userId} ref ${provisionalRef} succeeded, bet placement failed (${result.message}), AND refund failed (${refund.message}). Manual reconciliation required.`);
+      return { success: false, message: 'Bet could not be placed and automatic refund failed — contact support', ref: provisionalRef };
+    }
+    return { success: false, message: result.message };
+  }
 
   const betId = newBetId();
   bets.set(betId, {
@@ -115,6 +148,7 @@ function placeBet(apiKey, userId, gameId, slot, stake) {
     slot,
     stake: Number(stake),
     roundId: result.roundId,
+    debitRef: provisionalRef,
     status: 'pending', // pending -> won | lost
     multiplier: null,
     won: null,
@@ -128,7 +162,7 @@ function placeBet(apiKey, userId, gameId, slot, stake) {
 // Returns status: 'pending' while the round is still in progress, or
 // 'won'/'lost' once resolved, with the multiplier and won amount so the
 // partner can credit their user's real balance accordingly.
-function getBetResult(apiKey, betId) {
+async function getBetResult(apiKey, betId) {
   const bet = bets.get(betId);
   if (!bet || bet.apiKey !== apiKey) return { success: false, message: 'Bet not found' };
 
@@ -145,6 +179,9 @@ function getBetResult(apiKey, betId) {
       bet.multiplier = resolved.multiplier;
       bet.won = resolved.won ? resolved.winAmount : 0;
       bet.resolvedAt = Date.now();
+      if (resolved.won) {
+        await creditWinOnce(bet);
+      }
     }
   }
 
@@ -162,12 +199,33 @@ function getBetResult(apiKey, betId) {
   };
 }
 
+// creditWinOnce: the single place a win is ever credited to the partner's
+// wallet, guarded by bet.creditedAt so concurrent polls/calls can never
+// double-credit the same bet. Both getBetResult's auto-resolution path and
+// cashOut's manual path funnel through here.
+async function creditWinOnce(bet) {
+  if (bet.creditedAt) return { success: true }; // already credited, nothing to do
+  const result = await wallet.credit(bet.apiKey, bet.userId, bet.won, bet.betId);
+  if (result.success) {
+    bet.creditedAt = Date.now();
+  } else {
+    // The round-engine outcome already says "won" and the amount is fixed
+    // — a failed credit here is a real operational problem (money owed to
+    // the user isn't in their account yet), not a "maybe this didn't
+    // happen" ambiguity. Log loudly; a real deployment should retry this
+    // (e.g. a background job scanning for won-but-uncredited bets) rather
+    // than only trying once.
+    console.error(`[casinoIntegration] CRITICAL: win credit failed for bet ${bet.betId}, user ${bet.userId}, amount ${bet.won}: ${result.message}. Needs retry/reconciliation.`);
+  }
+  return result;
+}
+
 // cashOut: partner's server calls this on behalf of their user (e.g. user
 // taps "cash out" in the partner's own UI, partner's backend relays it
 // here). Same server-side timing guarantee as casino.js's own cashOut —
 // the multiplier is always recomputed from the server clock, never
 // trusted from the partner's request.
-function cashOut(apiKey, betId) {
+async function cashOut(apiKey, betId) {
   const bet = bets.get(betId);
   if (!bet || bet.apiKey !== apiKey) return { success: false, message: 'Bet not found' };
   if (bet.status !== 'pending') return { success: false, message: `Bet already resolved as '${bet.status}'` };
@@ -180,6 +238,16 @@ function cashOut(apiKey, betId) {
   bet.multiplier = result.multiplier;
   bet.won = result.won;
   bet.resolvedAt = Date.now();
+
+  const creditResult = await creditWinOnce(bet);
+  if (!creditResult.success) {
+    // The cashout itself is still valid and final (the round-engine timing
+    // check already passed) — we don't reverse it just because the credit
+    // call failed, since that would mean telling the user they lost a bet
+    // they legitimately won. Surface the credit failure separately instead
+    // (see creditWinOnce's log) for ops to reconcile.
+    return { success: true, betId: bet.betId, multiplier: bet.multiplier, won: bet.won, creditWarning: creditResult.message };
+  }
 
   return { success: true, betId: bet.betId, multiplier: bet.multiplier, won: bet.won };
 }
@@ -195,4 +263,20 @@ function getHistory(apiKey, userId, limit = 50) {
   return rows.slice(0, limit);
 }
 
-module.exports = { listGames, getGame, placeBet, getBetResult, cashOut, getHistory };
+// getBalance: pulls the user's REAL balance directly from the partner's
+// own wallet endpoint — Aviator calls this to display the correct
+// SafariBet balance inside the game, rather than tracking any balance of
+// its own. Passthrough to walletClient.js; see that module for the HMAC
+// signing details.
+async function getBalance(apiKey, userId) {
+  return wallet.getBalance(apiKey, userId);
+}
+
+// registerWallet: call this once (e.g. at server startup, or from an
+// admin route backed by db.js) per partner to tell JuanAi where their
+// wallet endpoints live and what shared secret to sign requests with.
+async function registerWallet(apiKey, baseUrl, secret) {
+  await wallet.registerPartnerWallet(apiKey, baseUrl, secret);
+}
+
+module.exports = { listGames, getGame, placeBet, getBetResult, cashOut, getHistory, getBalance, registerWallet };

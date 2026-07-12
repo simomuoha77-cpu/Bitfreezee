@@ -25,12 +25,14 @@ const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
 const FIXTURES_COLLECTION = 'fixtures';
 const KEYS_COLLECTION = 'apikeys';
+const WALLETS_COLLECTION = 'partnerwallets'; // partner API key -> wallet base URL + HMAC secret, for real-money casino integration (see walletClient.js)
 
 let client = null;
 let mongoReady = false;
 let mongoConnectAttempted = false;
 let fixturesCollection = null;
 let apiKeysCollection = null;
+let walletsCollection = null;
 
 // In-memory fallback so the server keeps working (within a single running
 // instance) if MONGO_URI is missing/unreachable — same safety net pattern
@@ -39,6 +41,7 @@ let apiKeysCollection = null;
 // only a "don't crash" safety net, not a real substitute for Mongo.
 let fixturesFallback = {}; // keyed by `${days}` -> { matches: [...], fetchedAt, updatedAt }
 let apiKeysFallback = [];
+let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
 let usingFallback = false;
 
 async function connectMongo() {
@@ -57,9 +60,11 @@ async function connectMongo() {
     const db = client.db(DB_NAME);
     fixturesCollection = db.collection(FIXTURES_COLLECTION);
     apiKeysCollection = db.collection(KEYS_COLLECTION);
+    walletsCollection = db.collection(WALLETS_COLLECTION);
     await fixturesCollection.createIndex({ matchId: 1, days: 1 }, { unique: true });
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });
+    await walletsCollection.createIndex({ apiKey: 1 }, { unique: true });
     mongoReady = true;
     usingFallback = false;
     console.log('[db] Connected to MongoDB Atlas — fixtures/odds AND API keys will persist across restarts.');
@@ -348,6 +353,54 @@ async function revokeApiKey(id) {
   }
 }
 
+// ── Partner wallet config storage ──────────────────────────────────
+// One document per partner API key: their wallet base URL + HMAC shared
+// secret (see walletClient.js). Persisted the same way as API keys so a
+// Render restart doesn't silently disable real-money debit/credit/balance
+// calls — that would be a much worse surprise than losing fixture cache.
+async function saveWallet(apiKey, baseUrl, secret) {
+  await ensureMongo();
+  const record = { apiKey, baseUrl, secret, updatedAt: new Date().toISOString() };
+  if (usingFallback) {
+    walletsFallback = walletsFallback.filter(w => w.apiKey !== apiKey);
+    walletsFallback.push(record);
+    return record;
+  }
+  try {
+    await walletsCollection.updateOne({ apiKey }, { $set: record }, { upsert: true });
+    return record;
+  } catch (e) {
+    console.error('[db] saveWallet failed, falling back to in-memory: ' + e.message);
+    walletsFallback = walletsFallback.filter(w => w.apiKey !== apiKey);
+    walletsFallback.push(record);
+    return record;
+  }
+}
+
+async function getWallet(apiKey) {
+  await ensureMongo();
+  if (usingFallback) {
+    return walletsFallback.find(w => w.apiKey === apiKey) || null;
+  }
+  try {
+    return await walletsCollection.findOne({ apiKey });
+  } catch (e) {
+    console.error('[db] getWallet failed: ' + e.message);
+    return null;
+  }
+}
+
+async function getAllWallets() {
+  await ensureMongo();
+  if (usingFallback) return walletsFallback;
+  try {
+    return await walletsCollection.find({}).toArray();
+  } catch (e) {
+    console.error('[db] getAllWallets failed: ' + e.message);
+    return walletsFallback;
+  }
+}
+
 function getMongoStatus() {
   if (!MONGO_URI) return { configured: false, connected: false, note: 'MONGO_URI not set — fixtures/odds AND API keys stored in-memory only, will NOT survive a restart' };
   return {
@@ -521,6 +574,9 @@ module.exports = {
   addApiKey,
   isValidApiKey,
   revokeApiKey,
+  saveWallet,
+  getWallet,
+  getAllWallets,
   getMongoStatus,
   ensureMongo
 };
