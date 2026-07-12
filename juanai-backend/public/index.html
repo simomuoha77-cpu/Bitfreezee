@@ -17,8 +17,6 @@
   --grad:linear-gradient(135deg,#6366f1,#10d9a0);
   --sh:0 8px 32px rgba(0,0,0,0.5);--sh2:0 2px 8px rgba(0,0,0,0.3);
   --tr:0.16s cubic-bezier(0.4,0,0.2,1);
-  --cas-a:#8b5cf6;--cas-b:#f5b942;--cas-grad:linear-gradient(135deg,#8b5cf6,#f5b942);
-  --cas-felt:#150f24;--cas-felt2:#1c1433;--cas-win:#f5b942;--cas-lose:#f87171;
 }
 html.light{
   --bg:#f0f2f8;--bg2:#fff;--bg3:#e8ecf5;--bgh:#dde3f0;--bga:#d0d8ee;--sur:#fff;
@@ -142,53 +140,6 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
 .main-tab-btn{background:none;border:none;color:var(--t2);cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;font-family:'Inter',sans-serif;transition:.16s;display:flex;align-items:center;gap:5px}
 .main-tab-btn:hover{background:var(--bgh);color:var(--t1)}
 .main-tab-btn.active{background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.2)}
-
-/* ─── CASINO ROOM ──────────────────────────────────────────────────────── */
-.casino-hdr{padding:14px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.casino-hdr .ctitle{font-weight:800;font-size:15px;flex:1;background:var(--cas-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.casino-note{font-size:11px;color:var(--tm);padding:8px 18px;background:var(--bg3);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:6px}
-.casino-grid{display:grid;grid-template-columns:1fr;gap:20px;padding:20px;max-width:640px;margin:0 auto}
-@media(min-width:900px){.casino-grid{grid-template-columns:1fr 1fr;max-width:1100px}}
-.cgame-card{background:radial-gradient(ellipse at top,var(--cas-felt2),var(--cas-felt));border:1px solid var(--bdl);border-radius:18px;padding:18px;box-shadow:var(--sh)}
-.cgame-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-.cgame-hdr h3{font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;color:var(--t1)}
-.cgame-balance{font-size:12px;font-weight:700;color:var(--cas-b);background:rgba(245,185,66,.1);border:1px solid rgba(245,185,66,.25);padding:4px 10px;border-radius:20px}
-
-/* Crash game */
-.crash-stage{position:relative;height:240px;background:var(--cas-felt);border-radius:14px;overflow:hidden;border:1px solid var(--bdl);margin-bottom:14px}
-.crash-bg-canvas,.crash-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.crash-plane{position:absolute;width:34px;height:34px;transform:translate(-50%,-50%);pointer-events:none;filter:drop-shadow(0 2px 8px rgba(245,185,66,.5));transition:none;will-change:left,top}
-.crash-mult{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--t1);text-shadow:0 2px 20px rgba(139,92,246,.6);pointer-events:none;transition:color .15s}
-.crash-mult.busted{color:var(--cas-lose)}
-.crash-mult.cashed{color:var(--ok)}
-.crash-status{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--tm);text-transform:uppercase}
-.crash-controls{display:flex;gap:8px;align-items:center}
-.crash-bet-input{width:90px;padding:10px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;font-weight:700;outline:none;text-align:center}
-.crash-bet-input:focus{border-color:var(--cas-a)}
-.crash-btn{flex:1;padding:12px;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:13px;font-weight:800;cursor:pointer;transition:var(--tr);letter-spacing:.2px}
-.crash-btn.play{background:var(--cas-grad);color:#1a0f2e}
-.crash-btn.play:hover{filter:brightness(1.08);transform:translateY(-1px)}
-.crash-btn.cashout{background:var(--ok);color:#04261c}
-.crash-btn.cashout:hover{filter:brightness(1.08)}
-.crash-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
-.crash-log{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
-.crash-log span{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--bg3);color:var(--tm)}
-.crash-log span.win{color:var(--ok);background:rgba(16,217,160,.1)}
-.crash-log span.loss{color:var(--cas-lose);background:rgba(248,113,113,.1)}
-
-/* Slot machine */
-.slot-frame{background:var(--cas-felt);border-radius:14px;border:1px solid var(--bdl);padding:18px;margin-bottom:14px}
-.slot-reels{display:flex;gap:8px;justify-content:center;margin-bottom:14px}
-.slot-reel{width:76px;height:88px;background:var(--bg2);border-radius:10px;border:2px solid var(--bdl);display:flex;align-items:center;justify-content:center;font-size:38px;overflow:hidden;position:relative}
-.slot-reel.spinning .slot-sym{animation:slotSpin .12s linear infinite}
-@keyframes slotSpin{0%{transform:translateY(0)}100%{transform:translateY(-40px)}}
-.slot-reel.win{border-color:var(--cas-b);box-shadow:0 0 0 3px rgba(245,185,66,.25)}
-.slot-payline{text-align:center;font-size:11px;color:var(--tm);margin-bottom:14px;min-height:15px;font-weight:700}
-.slot-payline.win{color:var(--cas-b)}
-.slot-controls{display:flex;gap:8px}
-.slot-paytable{margin-top:12px;font-size:10px;color:var(--tm);display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
-.slot-paytable span{background:var(--bg3);padding:3px 7px;border-radius:6px}
-
 .conn-dot{width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite}
 .conn-badge.groq .conn-dot{background:var(--ok)}
 #adminBadge{display:none;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;background:linear-gradient(135deg,rgba(248,113,113,.15),rgba(251,191,36,.15));color:var(--warn);border:1px solid rgba(251,191,36,.2)}
@@ -530,7 +481,6 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
         <button class="main-tab-btn active" id="btnChat" onclick="switchMainTab('chat')"><i class="fa-solid fa-message"></i> Chat</button>
         <button class="main-tab-btn" id="btnFootball" onclick="switchMainTab('football')"><i class="fa-solid fa-futbol"></i> Football</button>
         <button class="main-tab-btn" id="btnApiKeys" onclick="switchMainTab('apikeys')"><i class="fa-solid fa-key"></i> API Keys</button>
-        <button class="main-tab-btn" id="btnCasino" onclick="switchMainTab('casino')"><i class="fa-solid fa-dice"></i> Casino</button>
         <div class="conn-badge groq" id="connBadge"><span class="conn-dot"></span><span id="connTxt">Groq · Llama</span></div>
         <div id="adminBadge">&#128274; ADMIN</div>
       </div>
@@ -581,6 +531,11 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
           <option value="0">Today</option>
           <option value="1">Tomorrow</option>
           <option value="2">In 2 Days</option>
+          <option value="3">In 3 Days</option>
+          <option value="4">In 4 Days</option>
+          <option value="5">In 5 Days</option>
+          <option value="6">In 6 Days</option>
+          <option value="7">In 7 Days</option>
         </select>
         <button onclick="loadFixtures()" style="background:var(--grad);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
         <button onclick="analyzeAllMatches()" style="background:linear-gradient(135deg,#ff4f6b,#ff8c42);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px" title="Analysis already runs automatically in the background"><i class="fa-solid fa-robot"></i> Analysis Status</button>
@@ -599,7 +554,7 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
         <div style="text-align:center;padding:40px;color:var(--tm)">
           <i class="fa-solid fa-futbol" style="font-size:32px;opacity:.3;display:block;margin-bottom:10px"></i>
           <div style="font-size:13px">Click Refresh to load fixtures</div>
-          <div style="font-size:11px;margin-top:6px">AI will automatically generate odds for every match</div>
+          <div style="font-size:11px;margin-top:6px">Real bookmaker odds + AI analysis load automatically for every match</div>
         </div>
       </div>
     </div>
@@ -609,7 +564,7 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
       <div style="max-width:700px;margin:0 auto">
         <div style="font-weight:800;font-size:18px;margin-bottom:6px">🔑 API Key Management</div>
         <div style="font-size:12px;color:var(--info);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:12px 14px;margin-bottom:20px;line-height:1.6">
-          <b>ℹ️ Requires the JuanAi backend server to be running</b> (<code>node server.js</code> — see README). Keys generated here are stored and checked by that real server, so external servers like BetaKE can call <code>GET /api/fixtures?key=...</code> over normal HTTP. If the backend isn't running, this panel will say so instead of silently failing. Odds shown are still AI-generated predictions, not real bookmaker prices — don't present them to end users as live market odds.
+          <b>ℹ️ Requires the JuanAi backend server to be running</b> (<code>node server.js</code> — see README). Keys generated here are stored and checked by that real server, so external servers like BetaKE can call <code>GET /api/fixtures?key=...</code> over normal HTTP. If the backend isn't running, this panel will say so instead of silently failing. Odds shown are real bookmaker prices (see each match's source), with AI-written analysis layered on top — the AI never invents the odds themselves.
         </div>
 
         <!-- Generate Key -->
@@ -646,23 +601,14 @@ async function getJuanAiFixtures(days) {<br>
 // Each match has:<br>
 // match.homeTeam, match.awayTeam<br>
 // match.utcDate, match.status<br>
-// match.minute — current match minute if IN_PLAY (null otherwise)<br>
-// match.minuteIsEstimated — true if match.minute is an ESTIMATE (odds-api.io<br>
-//   sourced matches don't have a real match clock, only kickoff time — see<br>
-//   note below). false/absent means it's a real minute from football-data.org.<br>
-//   Show a "~" prefix or similar when true, so users know it's approximate.<br>
 // match.competition<br>
 // match.aiOdds.homeWin, match.aiOdds.draw, match.aiOdds.awayWin<br>
 // match.aiOdds.over25, match.aiOdds.under25<br>
 // match.aiOdds.btts, match.aiOdds.bttsNo<br>
 // match.aiPrediction, match.aiConfidence<br>
-// match.aiAnalysis, match.aiXG, match.aiValueBet<br>
-// match.aiOdds.isRealMarketOdds — true = real bookmaker price (safe for<br>
-//   real-money bets), false/absent = AI estimate (NOT safe for real-money<br>
-//   bets). Pass &realOddsOnly=1 on the fetch URL to have this filtered<br>
-//   server-side automatically.<br><br>
-// ⚠️ match.aiOdds are AI-generated predictions, not real bookmaker odds,<br>
-// UNLESS aiOdds.isRealMarketOdds is true. Label accordingly if shown to end users.
+// match.aiAnalysis, match.aiXG, match.aiValueBet<br><br>
+// ✅ match.realOdds are real bookmaker prices; match.aiOdds is AI commentary layered on top.<br>
+// Label them accordingly if shown to end users.
           </div>
         </div>
 
@@ -684,72 +630,6 @@ app.get('/games/today', async (req, res) => {<br>
       </div>
     </div>
 
-    <!-- 🎰 CASINO PANEL -->
-    <div id="casinoPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg)">
-      <div class="casino-hdr">
-        <div class="ctitle">🎰 JuanAi Casino</div>
-      </div>
-      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Play credits reset if you reload the page.</div>
-      <div class="casino-grid">
-
-        <!-- AVIATOR — real server-authoritative crash game, own page -->
-        <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div style="flex:1;min-width:220px">
-            <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Skyfall</h3>
-            <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
-          </div>
-          <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
-        </div>
-
-        <div style="grid-column:1/-1;font-size:11px;color:var(--tm);text-align:center;padding-top:4px">Also in this tab — two smaller original demo games:</div>
-
-        <!-- CRASH GAME -->
-        <div class="cgame-card">
-          <div class="cgame-hdr">
-            <h3><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> Skyrocket</h3>
-            <div class="cgame-balance">KES <span id="crashBalance">1000</span></div>
-          </div>
-          <div class="crash-stage" id="crashStage">
-            <canvas class="crash-bg-canvas" id="crashBgCanvas"></canvas>
-            <canvas class="crash-canvas" id="crashCanvas"></canvas>
-            <div class="crash-plane" id="crashPlane" style="left:8px;top:calc(100% - 22px)">🚀</div>
-            <div class="crash-mult" id="crashMult">1.00x</div>
-            <div class="crash-status" id="crashStatus">Place a bet to start</div>
-          </div>
-          <div class="crash-controls">
-            <input type="number" class="crash-bet-input" id="crashBetAmt" value="50" min="10" step="10">
-            <button class="crash-btn play" id="crashPlayBtn" onclick="crashPlay()">Play ⏯️</button>
-            <button class="crash-btn cashout" id="crashCashoutBtn" onclick="crashCashout()" disabled>Cash Out</button>
-          </div>
-          <div class="crash-log" id="crashLog"></div>
-        </div>
-
-        <!-- SLOT MACHINE -->
-        <div class="cgame-card">
-          <div class="cgame-hdr">
-            <h3><i class="fa-solid fa-gem" style="color:var(--cas-b)"></i> Golden Reels</h3>
-            <div class="cgame-balance">KES <span id="slotBalance">1000</span></div>
-          </div>
-          <div class="slot-frame">
-            <div class="slot-reels">
-              <div class="slot-reel" id="slotReel0"><span class="slot-sym">🍒</span></div>
-              <div class="slot-reel" id="slotReel1"><span class="slot-sym">🍋</span></div>
-              <div class="slot-reel" id="slotReel2"><span class="slot-sym">🔔</span></div>
-            </div>
-            <div class="slot-payline" id="slotPayline">Spin to win</div>
-            <div class="slot-controls">
-              <input type="number" class="crash-bet-input" id="slotBetAmt" value="50" min="10" step="10">
-              <button class="crash-btn play" id="slotSpinBtn" onclick="slotSpin()" style="flex:1">Spin ⏯️</button>
-            </div>
-            <div class="slot-paytable">
-              <span>💎💎💎 = 20x</span><span>🔔🔔🔔 = 10x</span><span>🍋🍋🍋 = 5x</span><span>🍒🍒🍒 = 3x</span><span>any 2 match = 1.5x</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
   </div>
 </div>
 <div id="toast-con"></div>
@@ -759,7 +639,7 @@ app.get('/games/today', async (req, res) => {<br>
 // Once server.js is running, set this to its address (same box if hosted
 // together, e.g. same Render service; otherwise the deployed backend URL).
 // Leave as-is for local dev: http://localhost:3000
-var JUANAI_BACKEND_URL = window.location.origin;
+var JUANAI_BACKEND_URL = 'http://localhost:3000';
 
 // Fire-and-forget push to the real backend. Failure here (backend not running,
 // offline, etc) must NEVER break the UI — localStorage still works as the
@@ -2424,291 +2304,17 @@ function switchMainTab(t){
   var chatWrap=document.getElementById('chatWrap');
   var fbPanel=document.getElementById('footballPanel');
   var apiPanel=document.getElementById('apiKeysPanel');
-  var casinoPanel=document.getElementById('casinoPanel');
   var btnChat=document.getElementById('btnChat');
   var btnFb=document.getElementById('btnFootball');
   var btnApi=document.getElementById('btnApiKeys');
-  var btnCasino=document.getElementById('btnCasino');
   // Hide all
   if(chatWrap)chatWrap.style.display='none';
   if(fbPanel)fbPanel.style.display='none';
   if(apiPanel)apiPanel.style.display='none';
-  if(casinoPanel)casinoPanel.style.display='none';
-  [btnChat,btnFb,btnApi,btnCasino].forEach(function(b){if(b)b.classList.remove('active');});
+  [btnChat,btnFb,btnApi].forEach(function(b){if(b)b.classList.remove('active');});
   if(t==='chat'){if(chatWrap)chatWrap.style.display='flex';if(btnChat)btnChat.classList.add('active');}
   else if(t==='football'){if(fbPanel)fbPanel.style.display='flex';if(btnFb)btnFb.classList.add('active');loadFixtures();}
   else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderApiKeys();}
-  else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
-}
-
-// ─── CASINO — FREE-PLAY DEMO GAMES ─────────────────────────────────────────
-// Both games are original, self-contained demo games — not clones of any
-// real-money product. No backend call, no real currency: balances are just
-// in-memory JS numbers that reset on page reload. If this is ever wired to
-// real money, the odds/RNG must come from a licensed game provider instead
-// of this code — Math.random-based RNG is fine ONLY because nothing real is
-// at stake here.
-var casinoInit=false;
-function initCasino(){
-  if(casinoInit)return;
-  casinoInit=true;
-  crashResize();
-  crashDrawBackground(); // static grid/glow, drawn ONCE — not redrawn every frame
-  window.addEventListener('resize',function(){crashResize();crashDrawBackground();});
-}
-
-// ── Aviator — real server-authoritative crash game, own page ──
-// Uses whatever API key JuanAi's dashboard already has (the same key used
-// for the football/API Keys panel), so there's nothing extra to set up —
-// if no key exists yet, one is created automatically the first time this
-// is opened, same as clicking "Generate" in the API Keys tab would do.
-async function launchAviator(){
-  // IMPORTANT: window.open() must happen synchronously inside the click
-  // handler, before any `await`. Mobile Chrome (and most browsers) only
-  // allow a popup/new-tab open when it's directly caused by a user
-  // gesture — once we `await` a fetch first, the browser no longer
-  // considers the later window.open() as gesture-triggered and silently
-  // blocks it (no error, tab just never opens). Opening a blank tab FIRST
-  // and then navigating it once the key is ready avoids that entirely.
-  var tab = window.open('', '_blank');
-  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Skyfall…</body>'); }
-  try{
-    var keys = await getApiKeys();
-    var key;
-    if(keys && keys.length){
-      key = keys[0].key;
-    } else {
-      var resp = await fetch(JUANAI_BACKEND_URL + '/internal/apikeys', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name: 'Aviator (auto-created)' })
-      });
-      if(!resp.ok) throw new Error('Backend rejected key creation');
-      var created = await resp.json();
-      key = created && created.key;
-    }
-    if(!key){
-      toast('Could not get a JuanAi API key — check the API Keys tab','error');
-      if(tab) tab.close();
-      return;
-    }
-    var url = '/casino/aviator.html?key='+encodeURIComponent(key);
-    if(tab){ tab.location.href = url; } else { window.open(url, '_blank'); }
-  }catch(e){
-    toast('Could not launch Aviator: '+e.message, 'error');
-    if(tab) tab.close();
-  }
-}
-
-
-// Smoothness notes: the animated multiplier curve is the only thing redrawn
-// every frame, on its own transparent canvas layered over a static
-// background canvas (grid + glow) that's rendered once. The plane icon is a
-// plain positioned DOM element moved via left/top, so the browser can
-// composite it on the GPU instead of Claude re-rasterizing an emoji into
-// canvas 60x/sec. requestAnimationFrame drives the loop (not setInterval),
-// so it stays locked to the display's real refresh rate and pauses
-// automatically when the tab isn't visible.
-var crashState={running:false,busted:false,cashedOut:false,mult:1,bet:0,raf:null,startT:0,balance:1000,history:[],crashPoint:0};
-function crashResize(){
-  ['crashCanvas','crashBgCanvas'].forEach(function(id){
-    var cv=document.getElementById(id);if(!cv)return;
-    var box=cv.parentElement.getBoundingClientRect();
-    var dpr=Math.min(window.devicePixelRatio||1,2);
-    cv.width=box.width*dpr;cv.height=box.height*dpr;
-    cv.style.width=box.width+'px';cv.style.height=box.height+'px';
-    var ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
-  });
-}
-function crashDrawBackground(){
-  var cv=document.getElementById('crashBgCanvas');if(!cv)return;
-  var ctx=cv.getContext('2d');
-  var w=cv.clientWidth,h=cv.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  var glow=ctx.createRadialGradient(w*0.3,h*0.55,10,w*0.3,h*0.55,Math.max(w,h)*0.7);
-  glow.addColorStop(0,'rgba(139,92,246,0.16)');glow.addColorStop(1,'rgba(139,92,246,0)');
-  ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
-  for(var gx=0;gx<w;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
-  for(var gy=0;gy<h;gy+=32){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(w,gy);ctx.stroke();}
-}
-function crashRollCrashPoint(){
-  // House-edge exponential distribution — skews toward low multipliers with
-  // a long tail toward high ones. Tuned only for a free-play demo (not
-  // audited/provably-fair grade, since no money is at stake).
-  var r=Math.random();
-  var point=0.98/(1-r*0.97);
-  return Math.max(1.01,Math.min(point,50));
-}
-function crashPlay(){
-  if(crashState.running)return;
-  var betInput=document.getElementById('crashBetAmt');
-  var bet=parseInt(betInput.value,10)||0;
-  if(bet<10){toast('Minimum bet is KES 10','error');return;}
-  if(bet>crashState.balance){toast('Not enough balance','error');return;}
-  crashState.balance-=bet;
-  crashState.bet=bet;
-  crashState.running=true;
-  crashState.busted=false;
-  crashState.cashedOut=false;
-  crashState.mult=1;
-  crashState.crashPoint=crashRollCrashPoint();
-  crashState.startT=performance.now();
-  document.getElementById('crashBalance').textContent=crashState.balance;
-  document.getElementById('crashPlayBtn').disabled=true;
-  document.getElementById('crashCashoutBtn').disabled=false;
-  document.getElementById('crashStatus').textContent='Flying...';
-  var mEl=document.getElementById('crashMult');
-  mEl.classList.remove('busted','cashed');
-  mEl.textContent='1.00x';
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  crashState.raf=requestAnimationFrame(crashTick);
-}
-function crashTick(){
-  if(!crashState.running)return;
-  var elapsed=(performance.now()-crashState.startT)/1000;
-  crashState.mult=Math.pow(Math.E,0.14*elapsed); // smooth accelerating curve
-  document.getElementById('crashMult').textContent=crashState.mult.toFixed(2)+'x';
-  crashDraw(elapsed);
-  if(crashState.mult>=crashState.crashPoint){
-    crashBust();
-    return;
-  }
-  crashState.raf=requestAnimationFrame(crashTick);
-}
-function crashCurveXY(t,w,h){
-  var m=Math.pow(Math.E,0.14*t);
-  var x=Math.min((t/9)*w*0.86+8,w*0.9);
-  var y=h-14-Math.min((m-1)/(crashState.crashPoint*1.4),1)*(h-30);
-  return [x,y];
-}
-function crashDraw(elapsed){
-  var cv=document.getElementById('crashCanvas');if(!cv)return;
-  var ctx=cv.getContext('2d');
-  var w=cv.clientWidth,h=cv.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  var steps=Math.max(2,Math.min(80,Math.floor(elapsed*20)));
-  var pts=[];
-  for(var i=0;i<=steps;i++){
-    var t=elapsed*(i/steps);
-    pts.push(crashCurveXY(t,w,h));
-  }
-  var grad=ctx.createLinearGradient(0,0,w,0);
-  grad.addColorStop(0,'#8b5cf6');grad.addColorStop(1,'#f5b942');
-  ctx.strokeStyle=grad;ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';
-  ctx.beginPath();
-  pts.forEach(function(p,i){if(i===0)ctx.moveTo(p[0],p[1]);else ctx.lineTo(p[0],p[1]);});
-  ctx.stroke();
-  // fill under the curve for a bit of weight
-  ctx.lineTo(pts[pts.length-1][0],h);ctx.lineTo(pts[0][0],h);ctx.closePath();
-  var fillGrad=ctx.createLinearGradient(0,0,0,h);
-  fillGrad.addColorStop(0,'rgba(139,92,246,0.25)');fillGrad.addColorStop(1,'rgba(139,92,246,0)');
-  ctx.fillStyle=fillGrad;ctx.fill();
-  // move the plane DOM element to the curve tip — GPU-composited, not redrawn into canvas
-  if(pts.length){
-    var tip=pts[pts.length-1];
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left=tip[0]+'px';plane.style.top=tip[1]+'px';}
-  }
-}
-function crashBust(){
-  crashState.running=false;
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  var mEl=document.getElementById('crashMult');
-  mEl.textContent=crashState.crashPoint.toFixed(2)+'x';
-  mEl.classList.add('busted');
-  document.getElementById('crashStatus').textContent='Crashed! Better luck next round';
-  document.getElementById('crashPlayBtn').disabled=false;
-  document.getElementById('crashCashoutBtn').disabled=true;
-  if(!crashState.cashedOut){
-    crashLog(false,crashState.bet);
-  }
-  setTimeout(function(){
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
-    var cv=document.getElementById('crashCanvas');
-    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
-  },1400);
-}
-function crashCashout(){
-  if(!crashState.running||crashState.cashedOut)return;
-  crashState.cashedOut=true;
-  crashState.running=false;
-  if(crashState.raf)cancelAnimationFrame(crashState.raf);
-  var winAmt=Math.floor(crashState.bet*crashState.mult);
-  crashState.balance+=winAmt;
-  document.getElementById('crashBalance').textContent=crashState.balance;
-  var mEl=document.getElementById('crashMult');
-  mEl.classList.add('cashed');
-  document.getElementById('crashStatus').textContent='Cashed out at '+crashState.mult.toFixed(2)+'x — won KES '+winAmt;
-  document.getElementById('crashPlayBtn').disabled=false;
-  document.getElementById('crashCashoutBtn').disabled=true;
-  crashLog(true,winAmt);
-  setTimeout(function(){
-    var plane=document.getElementById('crashPlane');
-    if(plane){plane.style.left='8px';plane.style.top='calc(100% - 22px)';}
-    var cv=document.getElementById('crashCanvas');
-    if(cv){var ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);}
-  },1400);
-}
-function crashLog(won,amt){
-  crashState.history.unshift({won:won,amt:amt});
-  crashState.history=crashState.history.slice(0,8);
-  var el=document.getElementById('crashLog');
-  el.innerHTML=crashState.history.map(function(h){
-    return '<span class="'+(h.won?'win':'loss')+'">'+(h.won?'+':'-')+'KES '+h.amt+'</span>';
-  }).join('');
-}
-
-// ── Golden Reels (3-reel slot machine) ──
-var SLOT_SYMS=['🍒','🍋','🔔','⭐','💎'];
-var SLOT_PAYOUT={'💎':20,'⭐':8,'🔔':10,'🍋':5,'🍒':3};
-var slotState={balance:1000,spinning:false};
-function slotSpin(){
-  if(slotState.spinning)return;
-  var betInput=document.getElementById('slotBetAmt');
-  var bet=parseInt(betInput.value,10)||0;
-  if(bet<10){toast('Minimum bet is KES 10','error');return;}
-  if(bet>slotState.balance){toast('Not enough balance','error');return;}
-  slotState.balance-=bet;
-  document.getElementById('slotBalance').textContent=slotState.balance;
-  slotState.spinning=true;
-  document.getElementById('slotSpinBtn').disabled=true;
-  document.getElementById('slotPayline').textContent='Spinning...';
-  document.getElementById('slotPayline').classList.remove('win');
-  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
-  reels.forEach(function(r){r.classList.add('spinning');r.classList.remove('win');});
-  var finalSyms=[randSym(),randSym(),randSym()];
-  reels.forEach(function(r,i){
-    setTimeout(function(){
-      r.classList.remove('spinning');
-      r.querySelector('.slot-sym').textContent=finalSyms[i];
-      if(i===2)slotResolve(finalSyms,bet);
-    },500+i*350);
-  });
-}
-function randSym(){return SLOT_SYMS[Math.floor(Math.random()*SLOT_SYMS.length)];}
-function slotResolve(syms,bet){
-  var payEl=document.getElementById('slotPayline');
-  var reels=[0,1,2].map(function(i){return document.getElementById('slotReel'+i);});
-  var winAmt=0;
-  if(syms[0]===syms[1]&&syms[1]===syms[2]){
-    winAmt=bet*(SLOT_PAYOUT[syms[0]]||3);
-    reels.forEach(function(r){r.classList.add('win');});
-  }else if(syms[0]===syms[1]||syms[1]===syms[2]||syms[0]===syms[2]){
-    winAmt=Math.floor(bet*1.5);
-  }
-  slotState.balance+=winAmt;
-  document.getElementById('slotBalance').textContent=slotState.balance;
-  if(winAmt>0){
-    payEl.textContent='You won KES '+winAmt+'!';
-    payEl.classList.add('win');
-  }else{
-    payEl.textContent='No match — try again';
-    payEl.classList.remove('win');
-  }
-  slotState.spinning=false;
-  document.getElementById('slotSpinBtn').disabled=false;
 }
 
 // ─── FOOTBALL ENGINE ──────────────────────────────────────────────────────────
@@ -2748,14 +2354,12 @@ function getFbDate(daysAhead){
 // This function just displays whatever the backend already has. It does NOT
 // fetch from football-data.org directly in the browser anymore, and there is
 // no demo/sample fixture fallback — if the backend has nothing yet, say so.
-async function loadFixtures(silent){
+async function loadFixtures(){
   var days = document.getElementById('fbDays').value;
   var dateStr = getFbDate(days);
 
-  if(!silent){
-    document.getElementById('fixturesList').innerHTML =
-      '<div style="text-align:center;padding:30px;color:var(--t2)"><div class="img-gen-spin" style="margin:0 auto 10px"></div><div style="font-size:13px">Loading fixtures for ' + dateStr + '...</div></div>';
-  }
+  document.getElementById('fixturesList').innerHTML =
+    '<div style="text-align:center;padding:30px;color:var(--t2)"><div class="img-gen-spin" style="margin:0 auto 10px"></div><div style="font-size:13px">Loading fixtures for ' + dateStr + '...</div></div>';
 
   try{
     var resp = await fetch(JUANAI_BACKEND_URL + '/internal/fixtures-view?days=' + days);
@@ -2764,40 +2368,22 @@ async function loadFixtures(silent){
     var matches = data.matches || [];
 
     if(!matches.length){
-      if(!silent){
-        document.getElementById('fixturesList').innerHTML =
-          '<div style="text-align:center;padding:30px;color:var(--t2)">'
-          + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
-          + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
-          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
-          + '</div>';
-      }
+      document.getElementById('fixturesList').innerHTML =
+        '<div style="text-align:center;padding:30px;color:var(--t2)">'
+        + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
+        + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
+        + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
+        + '</div>';
       fbMatches = [];
       updateFbStats([]);
-      if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); }
-      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, 20000);
       return;
     }
 
     fbMatches = matches;
-    var STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // same 3h cutoff as the backend's real-time safety filter and background expiry job
-    // Finished matches are deleted server-side automatically (see db.js's
-    // expireOldMatches, run every 2 min) — this filter is just a client-side
-    // safety net for the brief window before that job catches a match, not
-    // a toggle-able view anymore, since there's no reason to ever want to
-    // see a finished match once the backend guarantees it'll be deleted.
-    var visibleMatches = matches.filter(function(m){
-      if(m.status === 'FINISHED') return false;
-      if(m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
-      return true;
-    });
-    renderFixtures(visibleMatches);
-    updateFbStats(visibleMatches); // stats now reflect only what's actually shown, matching the deleted-finished-matches behavior
+    renderFixtures(matches);
+    updateFbStats(matches);
     // No need to trigger analysis manually — the backend's scheduler already
     // analyzes any match missing odds, automatically, in the background.
-    // We just need to keep checking back until it's done — see
-    // scheduleAutoPoll() below, which silently re-calls loadFixtures().
-    scheduleAutoPoll(visibleMatches);
 
   }catch(e){
     document.getElementById('fixturesList').innerHTML =
@@ -2807,26 +2393,6 @@ async function loadFixtures(silent){
       + '<div style="font-size:11px;color:var(--t2);line-height:1.6">Make sure <code>node server.js</code> is running at <code>' + JUANAI_BACKEND_URL + '</code>, then click Refresh.</div>'
       + '</div>';
   }
-}
-
-// ── Auto-poll: no manual "Generate AI Odds" clicking needed ──────────────
-// The scheduler in scheduler.js is already analyzing matches in the
-// background at its own pace (paced to respect free-tier API limits, so it
-// can take a couple minutes per match). This just quietly re-fetches the
-// fixtures view every 20s, ONLY while at least one visible match is still
-// waiting on odds, and stops once everything's analyzed — so there's no
-// endless polling once the page is fully up to date.
-var fbAutoPollTimer = null;
-function scheduleAutoPoll(matches){
-  if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
-  // Finished matches are excluded here — there's nothing to analyze for a
-  // game that's already over, so one lacking odds (e.g. it ended before the
-  // scheduler got to it) shouldn't keep the page silently polling forever.
-  var stillWaiting = (matches||[]).some(function(m){ return !m.aiOdds && m.status !== 'FINISHED'; });
-  if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
-  fbAutoPollTimer = setTimeout(function(){
-    loadFixtures(true); // silent refresh — no spinner reset, no user action needed
-  }, 20000);
 }
 
 function updateFbStats(matches){
@@ -2855,28 +2421,10 @@ function renderFixtures(matches){
     byComp[cn].matches.push(m);
   });
 
-  // Sort matches within each competition chronologically (soonest kickoff first)
-  Object.keys(byComp).forEach(function(cn){
-    byComp[cn].matches.sort(function(a,b){
-      var ta = a.utcDate ? new Date(a.utcDate).getTime() : Infinity;
-      var tb = b.utcDate ? new Date(b.utcDate).getTime() : Infinity;
-      return ta - tb;
-    });
-  });
-
-  // Order the competition groups themselves by their earliest kickoff, so the
-  // whole page reads top-to-bottom as "what's coming up soonest" rather than
-  // whatever order the API happened to return competitions in.
-  var compOrder = Object.keys(byComp).sort(function(cnA,cnB){
-    var earliestA = byComp[cnA].matches[0] && byComp[cnA].matches[0].utcDate ? new Date(byComp[cnA].matches[0].utcDate).getTime() : Infinity;
-    var earliestB = byComp[cnB].matches[0] && byComp[cnB].matches[0].utcDate ? new Date(byComp[cnB].matches[0].utcDate).getTime() : Infinity;
-    return earliestA - earliestB;
-  });
-
   var html = '';
   var days = document.getElementById('fbDays').value;
 
-  compOrder.forEach(function(compName){
+  Object.keys(byComp).forEach(function(compName){
     var group = byComp[compName];
     html += '<div style="margin-bottom:20px">';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:10px;border:1px solid var(--bdr)">'
@@ -2886,19 +2434,13 @@ function renderFixtures(matches){
       + '</div>';
 
     group.matches.forEach(function(m){
-      // aiOdds comes straight from the backend's /internal/fixtures-view response,
-      // which is the scheduler's real, freshly-analyzed data. We do NOT read any
-      // cached localStorage odds here anymore — a stale browser cache from
-      // earlier testing could otherwise silently override real server data with
-      // old/fake-looking odds, which is exactly the kind of mismatch that made
-      // matches look wrong. The server is the single source of truth.
+      // aiOdds comes directly from the backend's fixture data (real bookmaker
+      // odds + AI analysis merged server-side) — no localStorage involved.
       var savedOdds = m.aiOdds || null;
 
       var statusLabel = getMatchStatus(m);
       var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : 'var(--acc)';
-      var kickoffDate = m.utcDate ? new Date(m.utcDate).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
-      var kickoffTime = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
-      var kickoff = kickoffDate ? (kickoffDate + ' · ' + kickoffTime) : kickoffTime;
+      var kickoff = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
       var score = m.score && m.score.fullTime && m.score.fullTime.home !== null
         ? m.score.fullTime.home + ' - ' + m.score.fullTime.away
         : m.score && m.score.halfTime && m.score.halfTime.home !== null
@@ -2917,13 +2459,17 @@ function renderFixtures(matches){
         + '<div style="flex:1;font-size:13px;font-weight:700;text-align:center">' + esc(m.awayTeam&&m.awayTeam.shortName||m.awayTeam&&m.awayTeam.name||'TBD') + '</div>'
         + '</div>';
 
-      // AI Odds
+      // Real odds + AI analysis
       if(savedOdds){
         html += renderOddsBlock(savedOdds, m.id, days);
+      }else if(m.oddsUnavailable){
+        html += '<div style="text-align:center;padding:8px;font-size:11px;color:var(--tm)" id="odds_loading_' + m.id + '">'
+          + '<i class="fa-solid fa-clock" style="opacity:.5;margin-right:5px"></i>No bookmaker odds posted for this match yet'
+          + '<div style="margin-top:6px"><button onclick="analyzeMatch(\'' + m.id + '\',\'' + days + '\')" style="background:none;border:1px solid var(--bdr);color:var(--tm);border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-solid fa-rotate-right"></i> Check again</button></div>'
+          + '</div>';
       }else{
-        html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" id="odds_loading_' + m.id + '">'
-          + '<div class="img-gen-spin" style="width:16px;height:16px"></div>'
-          + '<div style="font-size:10px;color:var(--t2)">AI analyzing automatically&hellip;</div>'
+        html += '<div style="display:flex;justify-content:center;gap:8px" id="odds_loading_' + m.id + '">'
+          + '<button onclick="analyzeMatch(\'' + m.id + '\',\'' + days + '\')" style="background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif;display:flex;align-items:center;gap:5px"><i class="fa-solid fa-chart-line"></i> Get Real Odds + Analysis</button>'
           + '</div>';
       }
 
@@ -2937,42 +2483,23 @@ function renderFixtures(matches){
 }
 
 function renderOddsBlock(odds, matchId, days){
-  var liveBadge = odds.isLiveRepriced
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,79,107,.15);color:var(--err);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800"><span style="width:5px;height:5px;border-radius:50%;background:var(--err);display:inline-block;animation:pulse 1.5s infinite"></span> LIVE-PRICED' + (odds.liveAt && odds.liveAt.minute ? ' · ' + odds.liveAt.minute + "'" : '') + '</span>'
-    : '';
-  var marginBadge = (odds.marginApplied != null)
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(16,217,160,.12);color:var(--ok);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800">+' + (odds.marginApplied * 100).toFixed(0) + '% MARGIN</span>'
-    : '';
-  // Real market odds (from SharpAPI) get a distinct green header instead of
-  // the AI-estimate warning — these are genuine sportsbook prices, not a
-  // model's guess, so the disclaimer language is different and more
-  // reassuring. Live-repriced odds always fall back to the AI warning since
-  // live repricing never uses real odds (see analyzeMatch in ai.js).
-  var headerHtml = (odds.isRealMarketOdds && !odds.isLiveRepriced)
-    ? '<div style="font-size:9px;color:var(--ok);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ Real Market Odds' + (odds.realOddsSource ? ' (' + esc(odds.realOddsSource) + ')' : '') + marginBadge + '</div>'
-    : '<div style="font-size:9px;color:var(--warn);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ AI Estimate — NOT Safe for Real-Money Bets' + marginBadge + liveBadge + '</div>';
+  var sourceLabel = odds.source ? ('Real Odds · ' + esc(odds.source)) : 'Real Bookmaker Odds';
   var html = '<div style="margin-top:6px">'
-    + headerHtml
+    + '<div style="font-size:9px;color:var(--tm);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ ' + sourceLabel + ' · AI Analysis</div>'
     // 1X2
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
     + oddsBtn('1', odds.homeWin, '#6366f1')
     + oddsBtn('X', odds.draw, '#ffb800')
     + oddsBtn('2', odds.awayWin, '#ff4f6b')
     + '</div>'
-    // Over/Under + BTTS — only shown when actually available. SharpAPI's
-    // free tier only covers moneyline (1X2), so real-odds matches won't have
-    // these; showing '?' placeholders for markets we simply don't have data
-    // for is more confusing than just omitting the row.
-    + ((odds.over25 || odds.btts) ? (
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
-      + oddsBtn('O2.5', odds.over25, '#10d9a0')
-      + oddsBtn('U2.5', odds.under25, '#38bdf8')
-      + oddsBtn('BTTS', odds.btts, '#a855f7')
-      + oddsBtn('No', odds.bttsNo, '#8896b0')
-      + '</div>'
-    ) : '')
-    // Double Chance — always shown, since these are derived directly from
-    // the real (or AI) 1X2 odds and are always computable.
+    // Over/Under + BTTS
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
+    + oddsBtn('O2.5', odds.over25, '#10d9a0')
+    + oddsBtn('U2.5', odds.under25, '#38bdf8')
+    + oddsBtn('BTTS', odds.btts, '#a855f7')
+    + oddsBtn('No', odds.bttsNo, '#8896b0')
+    + '</div>'
+    // Double Chance
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px">'
     + oddsBtn('1X', odds.dc_home_draw, '#6366f1')
     + oddsBtn('12', odds.dc_home_away, '#ff4f6b')
@@ -2988,7 +2515,6 @@ function renderOddsBlock(odds, matchId, days){
       + '<span style="font-weight:700;color:' + confColor + '">' + odds.confidence + '% confident</span>'
       + '</div>'
       + (odds.valueBet ? '<div style="color:var(--warn);font-weight:700;margin-bottom:4px">💡 Value Bet: ' + esc(odds.valueBet) + '</div>' : '')
-      + (odds.consistencyWarning ? '<div style="color:var(--err);font-weight:700;margin-bottom:4px;font-size:11px">⚠️ ' + esc(odds.consistencyWarning) + '</div>' : '')
       + (odds.analysis ? '<div style="color:var(--t2);line-height:1.5;margin-top:4px">' + esc(odds.analysis.substring(0,180)) + (odds.analysis.length>180?'...':'') + '</div>' : '')
       + '</div>';
   }
@@ -3013,36 +2539,12 @@ function getMatchStatus(m){
   var s = m.status;
   if(s==='SCHEDULED') return 'Upcoming';
   if(s==='TIMED') return 'Scheduled';
+  if(s==='IN_PLAY') return '🔴 LIVE';
   if(s==='PAUSED') return '⏸ Half Time';
   if(s==='FINISHED') return 'FT';
   if(s==='POSTPONED') return 'Postponed';
   if(s==='CANCELLED') return 'Cancelled';
-  if(s==='IN_PLAY'){
-    var minuteInfo = getDisplayMinute(m);
-    return minuteInfo ? ('🔴 ' + minuteInfo) : '🔴 LIVE';
-  }
   return s || 'Unknown';
-}
-
-// Returns a display string for the current match minute, e.g. "62'" — real
-// minute data when football-data.org provides it (source !== 'odds-api.io'),
-// or a rough estimate from kickoff time otherwise, clearly marked with a
-// "~" since odds-api.io doesn't expose a true match clock (no stoppage time,
-// half-time break, or extra time accounted for — it's just wall-clock time
-// since kickoff, so it will drift from the real minute as a match goes on).
-function getDisplayMinute(m){
-  // The server now computes this directly (see footballData.js's
-  // estimateMatchMinute, which properly accounts for half-time — the old
-  // client-side version here used raw elapsed time with no half-time
-  // adjustment, which is exactly what caused matches to show impossible
-  // values like "111'"). Real minute from football-data.org, or a
-  // half-time-aware estimate for odds-api.io matches — either way, this
-  // field is now the single source of truth, also exposed via /api/fixtures
-  // so external sites like BetaKE see the same value.
-  if(m.minute != null){
-    return (m.minuteIsEstimated ? '~' : '') + m.minute + "'";
-  }
-  return null;
 }
 
 function getCompFlag(areaName){
@@ -3070,7 +2572,7 @@ function getCompFlag(areaName){
 async function analyzeMatch(matchId, days){
   var el = document.getElementById('odds_loading_' + matchId);
   var matchEl = document.getElementById('match_' + matchId);
-  if(el) el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px;color:var(--t2);font-size:11px"><div class="img-gen-spin" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div>Analyzing with AI...</div>';
+  if(el) el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px;color:var(--t2);font-size:11px"><div class="img-gen-spin" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div>Fetching real odds + AI analysis...</div>';
 
   try{
     var resp = await fetch(JUANAI_BACKEND_URL + '/internal/analyze-now', {
@@ -3078,8 +2580,20 @@ async function analyzeMatch(matchId, days){
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ matchId: matchId, days: days })
     });
-    if(!resp.ok) throw new Error('Backend returned ' + resp.status);
     var data = await resp.json();
+
+    if(resp.status === 409){
+      // No real bookmaker odds posted yet — honest state, not an error to retry blindly.
+      if(el) el.innerHTML = '<div style="text-align:center;padding:8px;font-size:11px;color:var(--tm)">'
+        + '<i class="fa-solid fa-clock" style="opacity:.5;margin-right:5px"></i>' + esc(data.error || 'No bookmaker odds posted yet')
+        + '<div style="margin-top:6px"><button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:1px solid var(--bdr);color:var(--tm);border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-solid fa-rotate-right"></i> Check again</button></div>'
+        + '</div>';
+      var mUnavail = fbMatches.find(function(mm){ return String(mm.id) === String(matchId); });
+      if(mUnavail) mUnavail.oddsUnavailable = true;
+      return;
+    }
+    if(!resp.ok) throw new Error(data.error || ('Backend returned ' + resp.status));
+
     var odds = data.odds;
     if(!odds) throw new Error('No odds in backend response');
 
@@ -3088,11 +2602,11 @@ async function analyzeMatch(matchId, days){
       if(oddsDiv) oddsDiv.outerHTML = renderOddsBlock(odds, matchId, days);
     }
     var m = fbMatches.find(function(mm){ return String(mm.id) === String(matchId); });
-    if(m){ m.aiOdds = odds; m.aiPrediction = odds.prediction; m.aiConfidence = odds.confidence; }
+    if(m){ m.aiOdds = odds; m.aiPrediction = odds.prediction; m.aiConfidence = odds.confidence; m.oddsUnavailable = false; }
     updateFbStats(fbMatches);
 
   }catch(e){
-    if(el) el.innerHTML = '<div style="color:var(--err);font-size:11px;padding:6px">❌ Analysis failed (' + esc(e.message) + '). <button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:none;color:var(--acc);cursor:pointer;font-weight:700;font-family:\'Inter\',sans-serif">Retry</button></div>';
+    if(el) el.innerHTML = '<div style="color:var(--err);font-size:11px;padding:6px">❌ ' + esc(e.message) + '. <button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:none;color:var(--acc);cursor:pointer;font-weight:700;font-family:\'Inter\',sans-serif">Retry</button></div>';
   }
 }
 
@@ -3156,27 +2670,11 @@ async function renderApiKeys(){
     el.innerHTML = '<div style="color:var(--err);font-size:12px">⚠️ Can\'t reach JuanAi backend at <code>' + JUANAI_BACKEND_URL + '</code>. Run <code>node server.js</code> (see README) then refresh this panel.</div>';
     return;
   }
-
-  var storageBanner = '';
-  try{
-    var statusResp = await fetch(JUANAI_BACKEND_URL + '/api/status');
-    if(statusResp.ok){
-      var status = await statusResp.json();
-      var mongo = status.apiKeyStorage;
-      if(mongo && !mongo.connected){
-        storageBanner = '<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--err)">'
-          + '⚠️ <b>Keys will NOT survive a restart:</b> ' + esc(mongo.note || 'MongoDB not connected') + '. '
-          + (mongo.configured ? 'Check MONGO_URI is correct and Atlas Network Access allows this server\'s IP.' : 'Set MONGO_URI in Render\'s Environment tab.')
-          + '</div>';
-      }
-    }
-  }catch(e){ /* status check is best-effort — don't block the panel on it */ }
-
   if(!keys.length){
-    el.innerHTML = storageBanner + '<div style="color:var(--tm);font-size:12px">No API keys yet. Generate one above.</div>';
+    el.innerHTML = '<div style="color:var(--tm);font-size:12px">No API keys yet. Generate one above.</div>';
     return;
   }
-  el.innerHTML = storageBanner + keys.map(function(k){
+  el.innerHTML = keys.map(function(k){
     return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:12px;margin-bottom:8px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
       + '<div style="font-size:13px;font-weight:700">' + esc(k.name) + '</div>'
