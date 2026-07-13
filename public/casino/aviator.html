@@ -806,7 +806,16 @@ function startFlight(elapsedMs){
   // opened the page. Defaults to 0 for the normal case (this client saw
   // the round go from 'waiting' to 'flying' itself, so there's nothing
   // to catch up on).
-  flightActive=true;flyStart=performance.now()-(elapsedMs||0);
+  //
+  // SANITY CAP: the server already guards against reporting an
+  // unreasonable elapsedMs (see casino.js's MAX_REASONABLE_FLIGHT_SEC),
+  // but this client-side cap is a second, independent safety net — if a
+  // huge value ever did arrive here for any reason, Math.exp() of it
+  // would render as an astronomically large, unreadable number on screen
+  // instead of a normal multiplier. No legitimate round takes anywhere
+  // near 120 seconds to resolve, so capping to that is always safe.
+  const cappedElapsedMs=Math.min(elapsedMs||0,120000);
+  flightActive=true;flyStart=performance.now()-cappedElapsedMs;
   localMulti=1.00;pathPts=[];lastTickM=0;
   startJet(false);
   updBtns(); // switch any placed-bet buttons to the enabled "Cash Out" state now that flight has begun
@@ -817,7 +826,13 @@ function animLoop(ts){
   // Always redraw — keeps propeller spinning even during wait
   if(flightActive&&flyStart!==null){
     const elapsed=(ts-flyStart)/1000;
-    localMulti=Math.exp(0.09*elapsed);
+    // Display-layer safety net: the real game never has a crash point
+    // above 50x (see casino.js's rollCrashPoint), so there's no legitimate
+    // reason this local animation value should ever need to show more
+    // than that. Without this cap, any upstream bug that lets a huge
+    // elapsed value through would render as a giant unreadable number
+    // instead of a normal multiplier.
+    localMulti=Math.min(Math.exp(0.09*elapsed),60);
     const mv=document.getElementById('mv');
     mv.className='mval fly';
     mv.textContent=localMulti.toFixed(2)+'x';

@@ -476,6 +476,15 @@ app.get('/internal/fixtures-view', async (req, res) => {
   res.json(bucket || { matches: [], fetchedAt: null });
 });
 
+// GET /internal/casino/exposure — read-only risk monitoring: current
+// round's total staked amount vs the configured MAX_ROUND_EXPOSURE cap
+// (see casino.js). Same-origin admin UI, no key required — this is
+// house-side risk data, deliberately NOT exposed via the public
+// /api/casino/* or /api/aviator/* endpoints.
+app.get('/internal/casino/exposure', (req, res) => {
+  res.json(casino.getRoundExposure());
+});
+
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,
 // triggered manually from the UI. The scheduler already does this automatically on
 // a timer; this just lets you force a refresh for one match immediately.

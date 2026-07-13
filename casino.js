@@ -58,6 +58,19 @@ const ROUND_WAIT_MS = 5000;       // "STARTING IN" countdown before each round
 const GROWTH_RATE = 0.09;         // multiplier = e^(GROWTH_RATE * elapsedSeconds) — matches the client's own animation curve so the two stay visually in sync
 const MIN_BET = 10;
 const MAX_BET = 100000;
+// MAX_ROUND_EXPOSURE: the hard ceiling on total stakes this round will
+// accept, across every bettor. This exists because a single round's
+// worst-case payout liability is bounded by (total staked this round) ×
+// (the round's own crash point) IF every single bettor managed to cash
+// out at the very top tick before it crashed — vanishingly unlikely in
+// practice for a full room, but not impossible, and risk management means
+// planning for the unlikely case, not the average one. Once this many
+// total stakes have been accepted in a round, further bet attempts are
+// rejected with a clear message rather than silently accepted — this
+// keeps the house's worst-case liability for any single round bounded and
+// known in advance, rather than growing unboundedly with however many
+// people happen to be playing at once.
+const MAX_ROUND_EXPOSURE = 2000000; // KES 2,000,000 total stakes per round — adjust based on real bankroll/risk appetite once real traffic volume is known
 const STARTING_BALANCE = 1000;
 const HISTORY_LEN = 30;
 
@@ -132,7 +145,16 @@ function rollCrashPoint() {
 function currentMultiplier() {
   if (!round || round.status !== 'flying') return round ? round.crashPoint || 1 : 1;
   const elapsed = (Date.now() - round.startedAt) / 1000;
-  return Math.min(Math.exp(GROWTH_RATE * elapsed), round.crashPoint);
+  // Same reasoning as tick()'s MAX_REASONABLE_FLIGHT_SEC guard: cap the
+  // elapsed time used in the exponential BEFORE computing it, not after —
+  // Math.exp() of a huge number can produce a value so large that even
+  // Math.min(..., round.crashPoint) below doesn't save it from briefly
+  // existing as a garbage intermediate (e.g. in a variable a caller reads
+  // before this function returns). This function is called from several
+  // places (getPublicState, placeBetCore, cashOutCore) so the guard
+  // belongs here directly, not only in tick().
+  const cappedElapsed = Math.min(elapsed, 120);
+  return Math.min(Math.exp(GROWTH_RATE * cappedElapsed), round.crashPoint);
 }
 
 function startNewRound() {
@@ -144,6 +166,7 @@ function startNewRound() {
     waitEndsAt: Date.now() + ROUND_WAIT_MS,
     crashPoint: rollCrashPoint(), // rolled NOW, but never exposed to clients until status==='crashed'
     crashedAt: null,
+    totalStaked: 0, // sum of all accepted bets this round — see MAX_ROUND_EXPOSURE below
   };
   // Clear all sessions' bets for the new round — a bet only ever applies
   // to the round it was placed in.
@@ -156,6 +179,31 @@ function tick() {
     round.status = 'flying';
     round.startedAt = Date.now();
   } else if (round.status === 'flying') {
+    const elapsedSec = (Date.now() - round.startedAt) / 1000;
+    // SANITY GUARD: on Render's free tier (or any host that can suspend
+    // the process when idle), this server can be asleep for anywhere from
+    // seconds to several minutes. If that happens mid-flight, the next
+    // tick() to run sees a huge elapsedSec gap all at once. The crash
+    // point itself was already rolled and committed when the round
+    // started (see rollCrashPoint() in startNewRound) — nothing here
+    // changes as a RESULT of the sleep, so this isn't a fairness issue.
+    // But without this guard, currentMultiplier() would briefly compute
+    // an astronomically large exponential value (e.g. 10^15×) before the
+    // next check below catches it, and that raw huge number could reach a
+    // polling client for one frame (this is exactly what produced the
+    // giant unreadable number a user reported seeing). Capping elapsedSec
+    // to a sane ceiling before computing anything means the round
+    // resolves as crashed at its already-decided crash point cleanly, with
+    // no intermediate garbage value ever computed or exposed.
+    const MAX_REASONABLE_FLIGHT_SEC = 120; // no legitimate crash point (max 50x) takes anywhere near this long to reach at GROWTH_RATE=0.09
+    if (elapsedSec > MAX_REASONABLE_FLIGHT_SEC) {
+      round.status = 'crashed';
+      round.crashedAt = Date.now();
+      history.unshift(round.crashPoint);
+      history = history.slice(0, HISTORY_LEN);
+      setTimeout(startNewRound, 2500);
+      return;
+    }
     const mult = currentMultiplier();
     if (mult >= round.crashPoint) {
       round.status = 'crashed';
@@ -213,9 +261,13 @@ function placeBetCore(sessionKey, slot, stake) {
   if (stake > MAX_BET) return { success: false, message: `Maximum bet is KES ${MAX_BET}` };
   if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
   if (round.status !== 'waiting') return { success: false, message: 'Betting is closed for this round' };
+  if (round.totalStaked + stake > MAX_ROUND_EXPOSURE) {
+    return { success: false, message: 'This round has reached its maximum total stake limit — try the next round' };
+  }
   const s = getSession(sessionKey);
   if (s.bets[slot]) return { success: false, message: 'Bet already placed for this slot' };
   s.bets[slot] = { stake, cashedOut: false, roundId: round.id };
+  round.totalStaked += stake;
   return { success: true, roundId: round.id };
 }
 
@@ -336,5 +388,19 @@ function getPlayersView() {
   return rows;
 }
 
-module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution };
+// getRoundExposure: internal-only risk visibility — NOT included in
+// getPublicState's response (see that function's comment for why: this is
+// house-side risk data, not something end users need or should see).
+// Exposed via server.js's /internal/* routes for ops/admin monitoring.
+function getRoundExposure() {
+  return {
+    roundId: round.id,
+    status: round.status,
+    totalStaked: round.totalStaked,
+    maxRoundExposure: MAX_ROUND_EXPOSURE,
+    percentOfCap: Math.round((round.totalStaked / MAX_ROUND_EXPOSURE) * 100),
+  };
+}
+
+module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution, getRoundExposure };
 
