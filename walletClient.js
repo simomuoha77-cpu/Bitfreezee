@@ -125,7 +125,7 @@ function requestJson(method, urlStr, headers, bodyObj, timeoutMs = 5000) {
   });
 }
 
-// Makes a signed call to path (e.g. '/api/casino/debit') on the partner's
+// Makes a signed call to path (e.g. '/api/casino/wallet/debit') on the partner's
 // registered wallet base URL. Returns { success, ...partnerResponseBody }
 // on a clean 2xx response, or { success: false, message } on any failure
 // (network error, timeout, non-2xx, partner explicitly returned success:false).
@@ -186,15 +186,15 @@ async function callPartnerWalletGet(apiKey, path) {
 // ── High-level wallet operations used by casinoIntegration.js ──────────
 
 async function debit(apiKey, userId, amount, roundId) {
-  return callPartnerWallet(apiKey, '/api/casino/debit', { userId, amount, roundId });
+  return callPartnerWallet(apiKey, '/api/casino/wallet/debit', { userId, amount, roundId });
 }
 
 async function credit(apiKey, userId, amount, roundId) {
-  return callPartnerWallet(apiKey, '/api/casino/credit', { userId, amount, roundId });
+  return callPartnerWallet(apiKey, '/api/casino/wallet/credit', { userId, amount, roundId });
 }
 
 async function getBalance(apiKey, userId) {
-  return callPartnerWalletGet(apiKey, `/api/casino/balance?userId=${encodeURIComponent(userId)}`);
+  return callPartnerWalletGet(apiKey, `/api/casino/wallet/balance?userId=${encodeURIComponent(userId)}`);
 }
 
 module.exports = { registerPartnerWallet, getPartnerWallet, getPartnerWalletSync, loadWalletsFromDb, debit, credit, getBalance, sign };

@@ -182,12 +182,15 @@ below.
    ```
 2. On SafariBet's backend, implement 3 endpoints for JuanAi to call
    (JuanAi calls SafariBet, never the other way around):
-   - `POST /api/casino/debit` — body `{userId, amount, roundId}`, return
-     `{success: true, newBalance}` or `{success: false, message}` if the
-     user doesn't have enough balance.
-   - `POST /api/casino/credit` — body `{userId, amount, roundId}`, return
-     `{success: true, newBalance}`.
-   - `GET /api/casino/balance?userId=X` — return `{success: true, balance}`.
+   - `POST /api/casino/wallet/debit` — body `{userId, amount, roundId}`,
+     return `{success: true, newBalance}` or `{success: false, message}`
+     if the user doesn't have enough balance.
+   - `POST /api/casino/wallet/credit` — body `{userId, amount, roundId}`,
+     return `{success: true, newBalance}`. Also used for rollbacks (when a
+     debit succeeded but the bet itself couldn't be placed) — reversing a
+     debit is just a credit for the same amount, so there's no separate
+     rollback endpoint to implement.
+   - `GET /api/casino/wallet/balance?userId=X` — return `{success: true, balance}`.
    Every request from JuanAi carries `X-JuanAi-Timestamp` and
    `X-JuanAi-Signature` headers — verify these using the SAME shared
    secret from step 1 before trusting the request (see `walletClient.js`'s
@@ -195,13 +198,17 @@ below.
    side: `HMAC_SHA256(secret, method + "\n" + path + "\n" + timestamp +
    "\n" + bodyJson)`, where `path` includes the query string exactly as
    sent, and reject any request more than a minute or two old to prevent
-   replay).
+   replay). Do NOT rely on a static shared-secret header (like a fixed
+   `x-casino-secret` value) instead of this signature — a static secret
+   sent on every request is a standing liability if it's ever logged or
+   leaked, whereas the HMAC signature is never transmitted itself and each
+   one is only valid for the single request it was made for.
 3. Register SafariBet's wallet with JuanAi (do this once, or again after
    any restart if you're not yet on MongoDB — see `MONGO_URI` note above):
    ```
    curl -X POST https://your-juanai-url.onrender.com/internal/wallet \
      -H "Content-Type: application/json" \
-     -d '{"apiKey":"jsk_xxx","baseUrl":"https://safaribet.com","secret":"THE_SAME_SHARED_SECRET"}'
+     -d '{"apiKey":"jsk_xxx","baseUrl":"https://safaribet.onrender.com","secret":"THE_SAME_SHARED_SECRET"}'
    ```
 4. When a real logged-in user wants to play Aviator, SafariBet's backend
    calls JuanAi's session endpoint to get a signed token for that user —
@@ -217,7 +224,7 @@ below.
    { "success": true, "utoken": "VALID_TOKEN", "balance": 500 }
    ```
    (`balance` is the user's current real balance, fetched live from
-   SafariBet's own `/api/casino/balance` endpoint in the same call — no
+   SafariBet's own `/api/casino/wallet/balance` endpoint in the same call — no
    extra round-trip needed before launching. `username` is accepted but
    not currently used server-side; safe to keep sending it.)
 

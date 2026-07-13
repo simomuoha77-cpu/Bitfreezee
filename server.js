@@ -590,8 +590,20 @@ app.post('/internal/wallet', async (req, res) => {
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: false,
   lastModified: false,
-  setHeaders: (res) => {
+  setHeaders: (res, filePath) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    // Allow the casino game pages (e.g. aviator.html) to be embedded in an
+    // iframe on a partner site like SafariBet. Scoped to /casino/ only —
+    // not applied site-wide — since nothing else here (the admin panel,
+    // etc.) needs or should allow arbitrary framing. Without this, most
+    // browsers refuse to render the page inside an iframe at all.
+    if (filePath.includes(`${path.sep}casino${path.sep}`)) {
+      // Modern browsers respect frame-ancestors and ignore X-Frame-Options
+      // when both are present; X-Frame-Options is kept only for older
+      // browsers that don't understand CSP frame-ancestors yet.
+      res.setHeader('Content-Security-Policy', 'frame-ancestors *');
+      res.removeHeader('X-Frame-Options'); // ALLOWALL isn't a valid value browsers recognize — omitting it entirely (rather than sending an invalid value) is what actually allows framing
+    }
   },
 }));
 
