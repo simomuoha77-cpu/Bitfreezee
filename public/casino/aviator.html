@@ -82,7 +82,7 @@ body.fs .btable{display:none}
 /* ── GAME CANVAS — default constrained height, expandable ── */
 .game-wrap{
   position:relative;width:100%;
-  height:46vh;flex-shrink:0;
+  height:30vh;flex-shrink:0;
   background:radial-gradient(120% 90% at 50% 100%,#1a1330 0%,#100c1c 45%,#0a0812 100%);
   overflow:hidden;transition:height .25s ease;
 }
@@ -175,7 +175,7 @@ body.fs .game-wrap{
 .mtabs2{
   display:flex;background:#100e19;
   border-radius:20px;padding:3px;
-  margin-bottom:7px;border:1px solid #221e30;
+  margin-bottom:5px;border:1px solid #221e30;
 }
 .mtab2{
   flex:1;padding:5px 0;border-radius:16px;font-size:11px;font-weight:700;
@@ -211,7 +211,7 @@ body.fs .game-wrap{
 .abtn.bauto:active{transform:scale(.97)}
 
 /* Two slots side by side */
-.slots{display:flex;gap:8px}
+.slots{display:flex;flex-direction:column;gap:8px}
 .slot{flex:1;background:#1c1830;border-radius:10px;padding:8px 8px 7px;border:1px solid #24203a}
 
 .srow{display:flex;align-items:center;gap:6px;margin-bottom:6px}
@@ -229,7 +229,7 @@ body.fs .game-wrap{
   font-family:'Rajdhani',sans-serif;
 }
 .abtn{
-  width:100%;height:54px;border-radius:10px;border:none;
+  width:100%;height:46px;border-radius:10px;border:none;
   font-size:16px;font-weight:700;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;
   justify-content:center;line-height:1.2;
@@ -266,7 +266,7 @@ body.fs .game-wrap{
 /* ── BETS TABLE ── */
 .btable{
   background:#120f1c;border-top:1px solid #1e1a2b;
-  flex-shrink:0;max-height:160px;overflow:hidden;
+  flex:1 1 auto;min-height:0;max-height:130px;overflow:hidden;
   display:flex;flex-direction:column;
 }
 .btabs2{display:flex;border-bottom:1px solid #1e1a2b;flex-shrink:0}
@@ -796,8 +796,15 @@ function drawPlane(c,crashed){
 // ══════════════════════════════════════
 //  FLIGHT ENGINE (rAF — 60fps)
 // ══════════════════════════════════════
-function startFlight(){
-  flightActive=true;flyStart=performance.now();
+function startFlight(elapsedMs){
+  // elapsedMs lets a client that just loaded the page (or reconnected)
+  // JOIN a round that's already flying, instead of restarting the local
+  // animation clock at 0 — this is what keeps every viewer's multiplier
+  // in sync with the one true server-side round, however late they
+  // opened the page. Defaults to 0 for the normal case (this client saw
+  // the round go from 'waiting' to 'flying' itself, so there's nothing
+  // to catch up on).
+  flightActive=true;flyStart=performance.now()-(elapsedMs||0);
   localMulti=1.00;pathPts=[];lastTickM=0;
   startJet(false);
   updBtns(); // switch any placed-bet buttons to the enabled "Cash Out" state now that flight has begun
@@ -913,8 +920,7 @@ async function poll(){
     } else if(ST==='flying'){
       wo.classList.remove('on');mv.style.display='block';
       if(!flightActive){
-        flyStart=performance.now()-(d.elapsedMs||0);
-        startFlight();
+        startFlight(d.elapsedMs||0);
       }
     } else if(ST==='crashed'){
       if(flightActive) stopFlight();
