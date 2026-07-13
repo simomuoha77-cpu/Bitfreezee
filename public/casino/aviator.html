@@ -254,11 +254,13 @@ body.fs .game-wrap{
 .abtn.bplaced{background:#1c1830;border:1px solid #342c4d;color:#8a83a3}
 .abtn:disabled{opacity:.4;cursor:not-allowed;animation:none;box-shadow:none}
 
-.qrow{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-bottom:6px}
+.qrow{display:flex;justify-content:space-between;gap:6px;margin-bottom:5px}
 .qs{
-  background:#100e19;border:1px solid #24203a;border-radius:6px;
-  padding:4px 1px;font-size:11px;font-weight:700;color:#6b6480;
+  background:#100e19;border:1px solid #24203a;border-radius:8px;
+  width:40px;height:40px;flex-shrink:0;
+  font-size:11px;font-weight:700;color:#6b6480;
   cursor:pointer;text-align:center;font-family:'Rajdhani',sans-serif;
+  display:flex;align-items:center;justify-content:center;
   transition:all .1s;
 }
 .qs:active{background:#2a2440;color:#e8e2f5}
