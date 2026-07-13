@@ -22,10 +22,13 @@
 // (different email each time) and set FDORG_KEY as a comma-separated list,
 // e.g. FDORG_KEY=key1,key2,key3
 
-const FDORG_KEYS = (process.env.FDORG_KEY || '881689e6b5a341c6bdd557bfa6c55834')
+const FDORG_KEYS = (process.env.FDORG_KEY || '')
   .split(',')
   .map(k => k.trim())
   .filter(Boolean);
+if (FDORG_KEYS.length === 0) {
+  console.warn('[footballData] FDORG_KEY is not set — fixture fetching from football-data.org will fail until it is configured. See .env.example.');
+}
 const FDORG_BASE = 'https://api.football-data.org/v4';
 
 // Free tier = 10 requests/minute PER KEY. Keep a healthy margin below that.
