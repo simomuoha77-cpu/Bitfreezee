@@ -578,7 +578,22 @@ app.post('/internal/wallet', async (req, res) => {
 // ── Serve the JuanAi frontend itself (optional, convenient) ────────
 // Put JuanAi-1.html in the same folder as this file, renamed to index.html,
 // and it'll be served automatically at http://localhost:3000/
-app.use(express.static(path.join(__dirname, 'public')));
+//
+// CACHING: explicitly disabled here. Without this, Express's default
+// static-file caching (ETag-based) combined with mobile Chrome's own
+// aggressive page cache can make a freshly-deployed change (like a CSS
+// tweak to aviator.html) invisible even after a real deploy — the phone
+// just keeps showing what it cached from the last time that exact URL was
+// opened, no error, no obvious sign anything's wrong. Since this app is
+// actively iterated on and correctness matters more than shaving a few KB
+// of repeat-request bandwidth, always serve fresh copies instead.
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  },
+}));
 
 app.listen(PORT, () => {
   console.log(`JuanAi backend running on http://localhost:${PORT}`);
