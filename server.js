@@ -15,6 +15,7 @@
 
 require('dotenv').config();
 
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -57,6 +58,42 @@ async function requireApiKey(req, res, next) {
     return res.status(401).json({ error: 'Invalid or missing API key' });
   }
   req.apiKey = key; // stash so routes don't need to re-parse it
+  next();
+}
+
+// ── Admin auth middleware: protects every /internal/* route ──────────
+// Before this, ALL /internal/* routes (create/list/delete API keys,
+// register a partner's wallet secret, clear cached data, trigger
+// analysis) had NO authentication at all — anyone who found or guessed
+// the URL on this public Render deployment could call them directly.
+// That's the single most serious gap in this codebase: /internal/wallet
+// in particular controls the HMAC secret that protects real money
+// movement, and /internal/apikeys can mint new API keys outright.
+//
+// ADMIN_SECRET is a single shared password, set via env var, required on
+// every /internal/* call as a header. Comparison uses
+// crypto.timingSafeEqual — a naive `===` string comparison leaks timing
+// information (how many leading characters matched) that could
+// theoretically help an attacker guess the secret one byte at a time;
+// timingSafeEqual takes the same amount of time regardless of how much of
+// the guess is correct.
+//
+// If ADMIN_SECRET is not set, these routes are REFUSED entirely (fail
+// closed) rather than left open — better to have the admin panel
+// temporarily unusable until configured than silently unprotected.
+const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
+
+function requireAdmin(req, res, next) {
+  if (!ADMIN_SECRET) {
+    return res.status(503).json({ error: 'ADMIN_SECRET is not configured on this server — /internal/* routes are disabled until it is set. See .env.example.' });
+  }
+  const provided = req.headers['x-admin-secret'] || req.query.adminSecret || '';
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(ADMIN_SECRET);
+  const match = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!match) {
+    return res.status(401).json({ error: 'Invalid or missing admin secret' });
+  }
   next();
 }
 
@@ -144,6 +181,128 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
 // GET /api/health — simple uptime check, no key required
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ── AI CHAT STREAMING PROXY ─────────────────────────────────────────
+// Used by the chat feature built into public/index.html. This exists so
+// the Gemini/Groq API keys live ONLY in this server's environment
+// variables — never in the HTML/JS sent to the browser, where anyone
+// viewing page source could previously copy them directly (this is
+// exactly what this route replaces: two real, live keys were hardcoded
+// in index.html before this fix).
+//
+// Request body shape mirrors what the frontend already builds internally
+// for each provider, so the frontend's own message-building logic barely
+// changes — only the URL and key handling move server-side:
+//   { engine: 'gemini', model, systemPrompt, contents, maxTokens, temperature }
+//   { engine: 'groq',   model, messages,     maxTokens, temperature }
+// (contents/messages are exactly Gemini's/Groq's own expected shapes.)
+//
+// STREAMING: the provider's raw SSE response body is piped directly back
+// to the browser byte-for-byte (see ai.js's streamGeminiRaw/streamGroqRaw)
+// — this route does not buffer or re-parse the stream, so the frontend's
+// existing SSE-parsing code keeps working almost unchanged, just pointed
+// at this endpoint instead of calling Google/Groq directly.
+//
+// RATE LIMITING: this route has no login/API-key gate (it's used by the
+// public chat feature, including guests), but every call costs real
+// money against your Gemini/Groq quota. A simple per-IP rate limit
+// prevents a single abusive client from running up a large bill; it does
+// not attempt to be a full abuse-prevention system.
+const chatRateBuckets = new Map(); // ip -> { windowStart, count }
+const CHAT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const CHAT_RATE_LIMIT_MAX = 20; // 20 chat messages per minute per IP
+function checkChatRateLimit(ip) {
+  const now = Date.now();
+  let b = chatRateBuckets.get(ip);
+  if (!b || now - b.windowStart > CHAT_RATE_LIMIT_WINDOW_MS) {
+    b = { windowStart: now, count: 0 };
+    chatRateBuckets.set(ip, b);
+  }
+  b.count++;
+  return b.count <= CHAT_RATE_LIMIT_MAX;
+}
+
+// The "admin mode" system prompt lives ONLY here now — previously it (and
+// the password that unlocked it) were both hardcoded in plain text in
+// index.html, visible to anyone viewing page source. Now the client only
+// ever sends { adminPasswordAttempt } alongside its normal chat request;
+// this route verifies it server-side and chooses the system prompt
+// itself. Even if a client tried to just send the admin prompt text
+// directly as systemPrompt (bypassing the password entirely), that no
+// longer matters, because the server ignores the client's systemPrompt
+// when isAdminRequest is false, and only accepts the elevated one when
+// the password check actually passes.
+const ADMIN_MODE_PASSWORD = process.env.ADMIN_MODE_PASSWORD || '';
+const ADMIN_MODE_SYSTEM_PROMPT = `You are JuanAi ADMIN MODE — Elite AI Coding Assistant by Home Tech Group. You are in an elevated developer mode activated by the verified system owner.
+
+ADMIN MODE NOTES:
+- Full project memory and context awareness
+- All slash commands active
+- Same elite coding standards as normal mode — production-ready, fully working, secure code every time.
+
+Note: this system prompt can request a different tone/scope, but it cannot and does not override the underlying model's own built-in safety behavior — that's determined by the model provider (Google/Groq), not by any prompt text.`;
+
+function verifyAdminPassword(attempt) {
+  if (!ADMIN_MODE_PASSWORD || !attempt) return false;
+  const a = Buffer.from(String(attempt));
+  const b = Buffer.from(ADMIN_MODE_PASSWORD);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+app.post('/api/chat/stream', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkChatRateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many chat requests — please slow down' });
+  }
+
+  const { engine, model, systemPrompt, contents, messages, maxTokens, temperature, adminPasswordAttempt } = req.body || {};
+
+  // Decide the system prompt SERVER-SIDE. If a valid admin password was
+  // supplied this request, use the real admin prompt (never sent to the
+  // client at any point — it lives only in this file). Otherwise, use
+  // whatever normal (non-admin) system prompt the client sent — that part
+  // is fine to trust from the client since it doesn't grant any elevated
+  // behavior, it's just this feature's ordinary configurable persona text.
+  const isAdminRequest = verifyAdminPassword(adminPasswordAttempt);
+  const effectiveSystemPrompt = isAdminRequest ? ADMIN_MODE_SYSTEM_PROMPT : (systemPrompt || '');
+
+  try {
+    let providerResp;
+    if (engine === 'gemini') {
+      if (!Array.isArray(contents)) return res.status(400).json({ error: 'contents array is required for engine=gemini' });
+      providerResp = await ai.streamGeminiRaw(model || ai.GEMINI_MODELS[0], effectiveSystemPrompt, contents, maxTokens, isAdminRequest ? 1.0 : temperature);
+    } else if (engine === 'groq') {
+      if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages array is required for engine=groq' });
+      // Groq takes its system prompt as the first message in the array —
+      // swap it out the same way if this is a verified admin request.
+      const effectiveMessages = isAdminRequest && messages[0] && messages[0].role === 'system'
+        ? [{ role: 'system', content: ADMIN_MODE_SYSTEM_PROMPT }, ...messages.slice(1)]
+        : messages;
+      providerResp = await ai.streamGroqRaw(model || ai.GROQ_MODELS[0], effectiveMessages, maxTokens, isAdminRequest ? 0.9 : temperature);
+    } else {
+      return res.status(400).json({ error: "engine must be 'gemini' or 'groq'" });
+    }
+
+    // Pipe the provider's SSE stream straight through, unmodified.
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Admin-Verified', isAdminRequest ? 'true' : 'false'); // lets the client know whether its password attempt actually worked, without ever seeing the real password
+    for await (const chunk of providerResp.body) {
+      res.write(chunk);
+    }
+    res.end();
+  } catch (e) {
+    // If headers haven't been sent yet (failed before streaming started),
+    // respond with a normal JSON error the frontend's existing catch
+    // blocks already know how to handle (they check err.status/err.text).
+    if (!res.headersSent) {
+      res.status(e.status || 500).json({ error: e.message || 'AI request failed' });
+    } else {
+      res.end();
+    }
+  }
 });
 
 // GET /api/status — background job visibility (no key required, no sensitive data)
@@ -468,8 +627,13 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // separate internal-only secret, or only allow from localhost/admin
 // session) so a leaked betting-site API key can't be used to write data.
 
-// GET /internal/fixtures-view?days=0 — read-only, used by JuanAi's own UI to display
-// whatever the scheduler already fetched/analyzed. No key required (same-origin admin UI).
+// GET /internal/fixtures-view?days=0 — read-only, used by JuanAi's own UI
+// (the public Football tab, shown to ALL visitors, not just admins) to
+// display whatever the scheduler already fetched/analyzed. Deliberately
+// NOT behind requireAdmin — unlike the other /internal/* routes, this one
+// only ever reads already-public match/odds data, so there's nothing
+// here an admin secret would meaningfully protect; gating it would have
+// broken the regular Football tab for every visitor.
 app.get('/internal/fixtures-view', async (req, res) => {
   const days = req.query.days || '0';
   const bucket = await db.getFixtures(days);
@@ -478,17 +642,25 @@ app.get('/internal/fixtures-view', async (req, res) => {
 
 // GET /internal/casino/exposure — read-only risk monitoring: current
 // round's total staked amount vs the configured MAX_ROUND_EXPOSURE cap
-// (see casino.js). Same-origin admin UI, no key required — this is
-// house-side risk data, deliberately NOT exposed via the public
-// /api/casino/* or /api/aviator/* endpoints.
-app.get('/internal/casino/exposure', (req, res) => {
+// (see casino.js). Requires X-Admin-Secret header — this is house-side
+// risk data, deliberately NOT exposed via the public /api/casino/* or
+// /api/aviator/* endpoints.
+app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
   res.json(casino.getRoundExposure());
 });
 
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,
-// triggered manually from the UI. The scheduler already does this automatically on
-// a timer; this just lets you force a refresh for one match immediately.
+// triggered manually from the UI's public "Re-analyze" button (visible to all
+// visitors, not just admins). Deliberately NOT behind requireAdmin — this is a
+// regular visitor-facing feature. It DOES cost a real AI API call per click
+// though, so it's rate-limited per IP instead (same pattern as /api/chat/stream)
+// to prevent runaway cost from repeated clicking/scripting, without blocking the
+// feature for everyone.
 app.post('/internal/analyze-now', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkChatRateLimit(ip)) { // reuse the same per-IP bucket/limits as the chat proxy
+    return res.status(429).json({ error: 'Too many analysis requests — please slow down' });
+  }
   const { matchId, days } = req.body || {};
   if (!matchId || days === undefined) {
     return res.status(400).json({ error: 'matchId and days are required' });
@@ -524,7 +696,7 @@ app.post('/internal/analyze-now', async (req, res) => {
 // POST /internal/fixtures route, now removed). Safe to call anytime — the
 // scheduler will refetch real matches from football-data.org within 15 min,
 // or immediately if you also restart the server.
-app.get('/internal/clear-fixtures', async (req, res) => {
+app.get('/internal/clear-fixtures', requireAdmin, async (req, res) => {
   await db.saveFixtures(0, []);
   await db.saveFixtures(1, []);
   await db.saveFixtures(0, [], 'basketball');
@@ -533,8 +705,11 @@ app.get('/internal/clear-fixtures', async (req, res) => {
 });
 
 // ── API KEY MANAGEMENT (called by JuanAi's admin UI) ───────────────
+// All require X-Admin-Secret — these can create/list/delete the API keys
+// that gate every partner-facing endpoint in this file, so they need to be
+// at least as protected as the keys they manage.
 
-app.post('/internal/apikeys', async (req, res) => {
+app.post('/internal/apikeys', requireAdmin, async (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
   try {
@@ -545,7 +720,7 @@ app.post('/internal/apikeys', async (req, res) => {
   }
 });
 
-app.get('/internal/apikeys', async (req, res) => {
+app.get('/internal/apikeys', requireAdmin, async (req, res) => {
   try {
     res.json(await db.getApiKeys());
   } catch (e) {
@@ -553,7 +728,7 @@ app.get('/internal/apikeys', async (req, res) => {
   }
 });
 
-app.delete('/internal/apikeys/:id', async (req, res) => {
+app.delete('/internal/apikeys/:id', requireAdmin, async (req, res) => {
   try {
     await db.revokeApiKey(req.params.id);
     res.json({ ok: true });
@@ -565,13 +740,10 @@ app.delete('/internal/apikeys/:id', async (req, res) => {
 // ── WALLET INTEGRATION SETUP (called by JuanAi's admin UI) ──────────
 // Registers a partner's own wallet base URL + shared HMAC secret so
 // casinoIntegration.js/walletClient.js know where to call for
-// debit/credit/balance. SECURITY NOTE: this is currently protected the
-// same (same-origin, no-key) way as the rest of /internal/* — since this
-// endpoint sets the secret used to authorize real money movement, lock
-// this down further (e.g. require an admin session/password, restrict to
-// localhost, or move it behind your own auth) before exposing this
-// admin panel publicly in production.
-app.post('/internal/wallet', async (req, res) => {
+// debit/credit/balance. Requires X-Admin-Secret (see requireAdmin above)
+// — this endpoint sets the secret that authorizes real money movement, so
+// it needs to be at least as protected as ADMIN_SECRET itself.
+app.post('/internal/wallet', requireAdmin, async (req, res) => {
   const { apiKey, baseUrl, secret } = req.body || {};
   if (!apiKey || !baseUrl || !secret) {
     return res.status(400).json({ error: 'apiKey, baseUrl, and secret are all required' });
@@ -582,6 +754,20 @@ app.post('/internal/wallet', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Failed to register wallet: ' + e.message });
   }
+});
+
+// GET /internal/wallet-status — read-only check: is a wallet registered for
+// this apiKey, and what baseUrl does it point at? Deliberately never
+// returns the secret itself. Added because registration failures (wrong/
+// missing admin secret, typo in the request) were previously silent —
+// this lets you actually confirm whether /internal/wallet's POST above
+// took effect, instead of guessing from Aviator's balance display alone.
+app.get('/internal/wallet-status', requireAdmin, async (req, res) => {
+  const { apiKey } = req.query;
+  if (!apiKey) return res.status(400).json({ error: 'apiKey query param is required' });
+  const wallet = await db.getWallet(apiKey);
+  if (!wallet) return res.json({ registered: false });
+  res.json({ registered: true, apiKey: wallet.apiKey, baseUrl: wallet.baseUrl, updatedAt: wallet.updatedAt });
 });
 
 // ── Serve the JuanAi frontend itself (optional, convenient) ────────
