@@ -185,12 +185,12 @@ async function callPartnerWalletGet(apiKey, path) {
 
 // ── High-level wallet operations used by casinoIntegration.js ──────────
 
-async function debit(apiKey, userId, amount, roundId, gameId) {
-  return callPartnerWallet(apiKey, '/api/casino/wallet/debit', { userId, amount, roundId, gameId });
+async function debit(apiKey, userId, amount, roundId) {
+  return callPartnerWallet(apiKey, '/api/casino/wallet/debit', { userId, amount, roundId });
 }
 
-async function credit(apiKey, userId, amount, roundId, gameId) {
-  return callPartnerWallet(apiKey, '/api/casino/wallet/credit', { userId, amount, roundId, gameId });
+async function credit(apiKey, userId, amount, roundId) {
+  return callPartnerWallet(apiKey, '/api/casino/wallet/credit', { userId, amount, roundId });
 }
 
 async function getBalance(apiKey, userId) {

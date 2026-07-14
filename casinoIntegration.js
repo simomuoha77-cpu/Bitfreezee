@@ -111,7 +111,7 @@ async function placeBet(apiKey, userId, gameId, slot, stake) {
   // STEP 1: confirm the debit BEFORE the bet is allowed to exist at all.
   // If this fails (insufficient balance, wallet unreachable, etc.), no bet
   // is ever recorded — nothing to roll back.
-  const debitResult = await wallet.debit(apiKey, userId, Number(stake), provisionalRef, gameId);
+  const debitResult = await wallet.debit(apiKey, userId, Number(stake), provisionalRef);
   if (!debitResult.success) {
     return { success: false, message: debitResult.message || 'Debit failed' };
   }
@@ -127,7 +127,7 @@ async function placeBet(apiKey, userId, gameId, slot, stake) {
     // using the SAME reference, so the partner's ledger can treat this as
     // an idempotent reversal of that exact debit rather than a new,
     // unrelated credit.
-    const refund = await wallet.credit(apiKey, userId, Number(stake), provisionalRef, gameId);
+    const refund = await wallet.credit(apiKey, userId, Number(stake), provisionalRef);
     if (!refund.success) {
       // This is the one truly bad outcome: money left the user's balance
       // and the automatic refund also failed. Surface this loudly rather
@@ -205,7 +205,7 @@ async function getBetResult(apiKey, betId) {
 // cashOut's manual path funnel through here.
 async function creditWinOnce(bet) {
   if (bet.creditedAt) return { success: true }; // already credited, nothing to do
-  const result = await wallet.credit(bet.apiKey, bet.userId, bet.won, bet.betId, bet.gameId);
+  const result = await wallet.credit(bet.apiKey, bet.userId, bet.won, bet.betId);
   if (result.success) {
     bet.creditedAt = Date.now();
   } else {
