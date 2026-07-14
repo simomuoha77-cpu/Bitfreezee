@@ -993,7 +993,7 @@ function renderBL(){
 // ══════════════════════════════════════
 async function hbet(s){
   getAC();
-  if(!localStorage.getItem('token')||!localStorage.getItem('utoken')){showT('Missing session — reload with ?key=jsk_xxx&utoken=...','ti');return;}
+  if(!localStorage.getItem('token')||!sessionStorage.getItem('utoken')){showT('Missing session — reload with ?key=jsk_xxx&utoken=...','ti');return;}
   const bet=s===1?BET1:BET2;
   const btn=document.getElementById('b'+s);
   if(btn.disabled) return;
@@ -1009,7 +1009,7 @@ async function doBet(s){
   if(!stake||stake<10) return showT('Min bet KES 10','tl');
   if(stake>100000) return showT('Max bet KES 100,000','tl');
   const tok=localStorage.getItem('token');
-  const utoken=localStorage.getItem('utoken');
+  const utoken=sessionStorage.getItem('utoken');
   if(!tok){showT('Session expired — reload with ?key=jsk_xxx&utoken=...','tl');return;}
   if(!utoken){showT('Missing signed session — reload with ?utoken=... from SafariBet','tl');return;}
   playBet();
@@ -1035,7 +1035,7 @@ async function doCash(s){
   bet.cashedOut=true;
   const btn=document.getElementById('b'+s);btn.disabled=true;
   const tok=localStorage.getItem('token');
-  const utoken=localStorage.getItem('utoken');
+  const utoken=sessionStorage.getItem('utoken');
   try{
     const r=await fetch('/api/casino/play/bet/'+encodeURIComponent(bet.betId)+'/cashout',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
@@ -1107,7 +1107,7 @@ function toggleAuto(s){
   const a=AUTO[s];
   const btn=document.getElementById('ba'+s);
   if(!a.running){
-    if(!localStorage.getItem('token')||!localStorage.getItem('utoken')){showT('Missing session — reload with ?key=jsk_xxx&utoken=...','ti');return;}
+    if(!localStorage.getItem('token')||!sessionStorage.getItem('utoken')){showT('Missing session — reload with ?key=jsk_xxx&utoken=...','ti');return;}
     clampAuto(s);
     a.running=true;
     btn.textContent='Stop Autobet';
@@ -1135,7 +1135,7 @@ function updBal(){if(USER)document.getElementById('bv').textContent=parseFloat(U
 // ONLY source of truth for the balance shown in this game — there is no
 // separate "aviator balance" anymore.
 async function refreshBalance(){
-  const tok=localStorage.getItem('token'),utoken=localStorage.getItem('utoken');
+  const tok=localStorage.getItem('token'),utoken=sessionStorage.getItem('utoken');
   if(!tok||!utoken) return;
   try{
     const r=await fetch('/api/casino/play/balance?utoken='+encodeURIComponent(utoken),{
@@ -1168,13 +1168,26 @@ window.addEventListener('DOMContentLoaded',()=>{
   // mints utoken itself — it only carries along whatever SafariBet's
   // server already signed, which is what makes it safe to trust
   // server-side (see server.js's /api/casino/play/* routes).
+  //
+  // IMPORTANT: utoken is NOT persisted to localStorage across page loads
+  // anymore. It used to be — but that meant if this page ever reloaded
+  // without a fresh ?utoken= in the URL (browser back/forward on a cached
+  // page, a stale bookmarked link, an iframe refresh that doesn't
+  // re-append the query string, etc.), the OLD token from a previous
+  // session would silently keep being used — showing whatever balance
+  // belonged to whoever was last logged in on this device, not
+  // necessarily the current real user. Requiring a fresh utoken in the
+  // URL on every load closes that gap: no stale identity can ever leak
+  // into a new session.
   const params=new URLSearchParams(location.search);
   const urlKey=params.get('key');
   const urlUtoken=params.get('utoken');
-  if(urlKey) localStorage.setItem('token',urlKey);
-  if(urlUtoken) localStorage.setItem('utoken',urlUtoken);
+  if(urlKey) localStorage.setItem('token',urlKey); // the API key itself is not per-user, safe to persist
+  if(urlUtoken){
+    sessionStorage.setItem('utoken',urlUtoken); // sessionStorage, not localStorage — cleared when the tab closes, never silently reused across a different launch
+  }
 
-  const t=localStorage.getItem('token'),ut=localStorage.getItem('utoken');
+  const t=localStorage.getItem('token'),ut=sessionStorage.getItem('utoken');
   if(t&&ut){
     USER={balance:0}; // placeholder until refreshBalance() below fills in the real SafariBet balance
     refreshBalance();

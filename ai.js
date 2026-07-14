@@ -18,6 +18,7 @@ const GEMINI_KEYS = (process.env.GEMINI_KEY || '').split(',').map(k => k.trim())
 const GROQ_KEYS = (process.env.GROQ_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 const GEMINI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash']; // both confirmed live/current as of this build — the previous list (gemini-2.0-flash, gemini-1.5-flash) were BOTH shut down by Google (2.0-flash on June 1 2026, all 1.5 models earlier), which is why every call was 404ing. If these ever start 404ing too, check https://ai.google.dev/gemini-api/docs/models for the current model list before assuming it's a quota issue.
 const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const GROQ_VISION_MODEL = 'llama-3.2-11b-vision-preview';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // Independent rotation state per key, per provider — a bad/exhausted key on
@@ -80,6 +81,72 @@ async function callGemini(model, systemPrompt, userPrompt, maxTokens) {
   const txt = parts.map(p => p.text || '').join('').trim();
   if (!txt) throw new Error('Gemini: empty text');
   return txt;
+}
+
+// ── Streaming variants, for the chat-proxy route (server.js's
+// /api/chat/stream) ──────────────────────────────────────────────────
+// These return the raw fetch Response (not parsed text) so the server
+// route can pipe the provider's own SSE stream straight through to the
+// browser byte-for-byte — no need to re-parse and re-emit the stream
+// format server-side, which would be extra complexity for no benefit
+// since the frontend already knows how to parse each provider's SSE
+// shape. Same key rotation/cooldown state as the non-streaming
+// callGemini/callGroq above — a key blocked for one still counts as
+// blocked for the other, since it's the same underlying key.
+
+async function streamGeminiRaw(model, systemPrompt, contents, maxTokens, temperature) {
+  const idxRef = { value: nextGeminiKeyIndex };
+  const state = pickAvailableKey(geminiKeyState, idxRef);
+  nextGeminiKeyIndex = idxRef.value;
+  if (!state) throw new Error('All ' + geminiKeyState.length + ' Gemini key(s) currently blocked/cooling down');
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${state.key}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents,
+      generationConfig: { maxOutputTokens: maxTokens || 8192, temperature: temperature != null ? temperature : 0.7 }
+    })
+  });
+  if (!resp.ok) {
+    if (resp.status === 401) { state.blockedUntil = Date.now() + AUTH_FAILURE_COOLDOWN_MS; state.blockedReason = '401 Unauthorized'; }
+    else if (resp.status === 429) { state.blockedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS; state.blockedReason = '429 Rate limited'; }
+    const errText = await resp.text().catch(() => '');
+    const err = new Error('Gemini HTTP ' + resp.status + ': ' + errText);
+    err.status = resp.status;
+    throw err;
+  }
+  return resp; // caller (server.js) pipes resp.body straight to the client
+}
+
+async function streamGroqRaw(model, messages, maxTokens, temperature) {
+  const idxRef = { value: nextGroqKeyIndex };
+  const state = pickAvailableKey(groqKeyState, idxRef);
+  nextGroqKeyIndex = idxRef.value;
+  if (!state) throw new Error('All ' + groqKeyState.length + ' Groq key(s) currently blocked/cooling down');
+
+  const resp = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.key },
+    body: JSON.stringify({
+      model,
+      messages,
+      max_tokens: maxTokens || 4096,
+      temperature: temperature != null ? temperature : 0.7,
+      stream: true
+    })
+  });
+  if (!resp.ok) {
+    if (resp.status === 401) { state.blockedUntil = Date.now() + AUTH_FAILURE_COOLDOWN_MS; state.blockedReason = '401 Unauthorized'; }
+    else if (resp.status === 429) { state.blockedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS; state.blockedReason = '429 Rate limited'; }
+    const errText = await resp.text().catch(() => '');
+    const err = new Error('Groq HTTP ' + resp.status + ': ' + errText);
+    err.status = resp.status;
+    throw err;
+  }
+  return resp;
 }
 
 async function callGroq(model, systemPrompt, userPrompt, maxTokens) {
@@ -513,4 +580,4 @@ function getAiKeyPoolStatus() {
   return { gemini: summarize(geminiKeyState), groq: summarize(groqKeyState) };
 }
 
-module.exports = { analyzeMatch, aiOnce, applyMargin, DEFAULT_MARGIN, getAiKeyPoolStatus };
+module.exports = { analyzeMatch, aiOnce, applyMargin, DEFAULT_MARGIN, getAiKeyPoolStatus, streamGeminiRaw, streamGroqRaw, GEMINI_MODELS, GROQ_MODELS, GROQ_VISION_MODEL };
