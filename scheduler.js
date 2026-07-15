@@ -337,4 +337,32 @@ function start() {
   }, EXPIRY_CHECK_INTERVAL_MS);
 }
 
-module.exports = { start: start };
+// Callable on-demand from server.js's /api/fixtures route, for days=0
+// (today) specifically — this is what makes live match data feel
+// genuinely real-time instead of only ever updating on the fixed
+// setInterval tick. Without this, a request arriving right after a
+// refresh could still wait up to TODAY_REFRESH_INTERVAL_MS for the next
+// scheduled tick even though the data IS due for a refresh — there was no
+// way for an incoming request to "poke" the scheduler early. This reuses
+// the exact same due-time check (Date.now() - last >= interval) as the
+// timer-driven loop, so it can never over-fetch beyond what the rate
+// limit already allows — it just means the FIRST request after a refresh
+// becomes due triggers it immediately, rather than that request getting
+// stale data and a later, unrelated timer tick eventually catching up.
+// Guards against multiple concurrent requests all seeing "a refresh is
+// due" at the same instant and each independently kicking one off — only
+// the first one actually fetches; the rest just wait for it (or move on
+// immediately once it's known to already be in flight).
+let todayRefreshInFlight = null;
+
+async function refreshTodayIfDue() {
+  const last = lastFixtureRefresh[0] || 0;
+  if (Date.now() - last >= TODAY_REFRESH_INTERVAL_MS) {
+    if (!todayRefreshInFlight) {
+      todayRefreshInFlight = refreshFixturesForDay(0).finally(() => { todayRefreshInFlight = null; });
+    }
+    await todayRefreshInFlight;
+  }
+}
+
+module.exports = { start: start, refreshTodayIfDue };

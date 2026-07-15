@@ -117,6 +117,27 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   // keeps working identically without needing to add this param at all.
   // Pass ?sport=basketball for basketball fixtures instead.
   const sport = req.query.sport === 'basketball' ? 'basketball' : 'football';
+
+  // REAL-TIME TRIGGER: for today's football fixtures specifically, poke
+  // the scheduler to refresh right now if one is already due, instead of
+  // only ever waiting for the next fixed setInterval tick (which could be
+  // up to TODAY_REFRESH_INTERVAL_MS away even though fresh data was
+  // needed right now). Deliberately NOT awaited — the actual outbound
+  // fetch to football-data.org/odds-api.io takes real network time, and
+  // blocking every single caller (including partner sites needing a fast
+  // response) on that would trade one kind of lag for a worse one. This
+  // request still gets whatever's currently cached (at most
+  // TODAY_REFRESH_INTERVAL_MS stale, same as before), but it also kicks
+  // off the refresh that the NEXT request moments later will benefit
+  // from — in practice, for a page that polls repeatedly (like a live
+  // match view), this means live data catches up within roughly one
+  // polling cycle of becoming due, not up to a full 60s of dead time
+  // beforehand. sport==='football' guard since basketball has its own
+  // separate refresh timer (see scheduler.js) not covered by this trigger.
+  if (sport === 'football' && String(days) === '0') {
+    scheduler.refreshTodayIfDue().catch(() => {}); // errors already logged inside refreshFixturesForDay itself
+  }
+
   const bucket = await db.getFixtures(days, sport);
   if (!bucket) {
     return res.json({ matches: [], fetchedAt: null, note: 'No fixtures loaded for this day yet — background refresh runs on a schedule, try again shortly' });
@@ -163,6 +184,18 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     }
     return true;
   });
+
+  // LIVE MINUTE RECOMPUTATION: see recomputeLiveMinutes() above (shared
+  // with /internal/fixtures-view) for the full reasoning — short version:
+  // estimateMatchMinute() used to only run once per match at
+  // background-refresh time, so the served minute could be however stale
+  // that refresh cycle was (or stuck far longer if a refresh failed).
+  // Recomputing live here, using only the match's own stored kickoff
+  // time, means every caller — JuanAi's own dashboard and any partner
+  // site like BetaKE — sees the exact same correct estimate, no matter
+  // when either one asks.
+  recomputeLiveMinutes(matches);
+
   res.json({
     matches,
     sport,
@@ -627,6 +660,23 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // separate internal-only secret, or only allow from localhost/admin
 // session) so a leaked betting-site API key can't be used to write data.
 
+// Shared by both /api/fixtures and /internal/fixtures-view — see the full
+// reasoning comment at the /api/fixtures call site below. Kept as one
+// function so the two routes can never silently drift apart in behavior.
+function recomputeLiveMinutes(matches) {
+  matches.forEach(m => {
+    if (m.minuteIsEstimated && m.utcDate) {
+      const est = footballData.estimateMatchMinute(m.utcDate);
+      if (est) {
+        m.minute = est.minute;
+        m.isHalftime = est.isHalftime;
+        m.status = est.isHalftime ? 'PAUSED' : 'IN_PLAY';
+      }
+    }
+  });
+  return matches;
+}
+
 // GET /internal/fixtures-view?days=0 — read-only, used by JuanAi's own UI
 // (the public Football tab, shown to ALL visitors, not just admins) to
 // display whatever the scheduler already fetched/analyzed. Deliberately
@@ -637,6 +687,13 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 app.get('/internal/fixtures-view', async (req, res) => {
   const days = req.query.days || '0';
   const bucket = await db.getFixtures(days);
+  if (bucket && Array.isArray(bucket.matches)) {
+    // Same live recomputation as /api/fixtures — without this, JuanAi's
+    // own dashboard would show a DIFFERENT (staler, refresh-cycle-baked)
+    // minute than /api/fixtures now does, which would make the two sides
+    // disagree in a NEW way instead of fixing the original mismatch.
+    recomputeLiveMinutes(bucket.matches);
+  }
   res.json(bucket || { matches: [], fetchedAt: null });
 });
 
