@@ -236,6 +236,16 @@ body.fs .game-wrap{
   font-family:'Rajdhani',sans-serif;letter-spacing:.3px;
   transition:all .18s;margin-top:5px;
 }
+/* The Bet/Cash Out button now sits INSIDE .srow, alongside the −/input/+
+   stepper (matches Spribe's own layout), so it needs to be small and
+   square instead of a full-width bar — this overrides the shared .abtn
+   defaults above just for that placement. .bauto (Start Autobet) stays
+   full-width/bar-shaped since it's a separate row on its own. */
+.srow .abtn{
+  width:56px;height:44px;flex-shrink:0;margin-top:0;
+  font-size:13px;border-radius:8px;
+}
+.srow .abtn .sub{font-size:8px}
 .abtn .sub{font-size:10px;font-weight:600;opacity:.85}
 .abtn.bbet{
   background:linear-gradient(160deg,#1fae4c,#2fd964);
@@ -403,10 +413,10 @@ body.fs .game-wrap{
           <button class="sbtn" onclick="chg(1,-10)">−</button>
           <input class="sinp" id="s1" type="number" value="10" min="10"/>
           <button class="sbtn" onclick="chg(1,10)">+</button>
+          <button class="abtn bbet" id="b1" onclick="hbet(1)">
+            Bet<br><span class="sub" id="b1s">10.00 KES</span>
+          </button>
         </div>
-        <button class="abtn bbet" id="b1" onclick="hbet(1)">
-          Bet<br><span class="sub" id="b1s">10.00 KES</span>
-        </button>
       </div>
 
       <!-- Auto bet panel -->
@@ -446,10 +456,10 @@ body.fs .game-wrap{
           <button class="sbtn" onclick="chg(2,-10)">−</button>
           <input class="sinp" id="s2" type="number" value="10" min="10"/>
           <button class="sbtn" onclick="chg(2,10)">+</button>
+          <button class="abtn bbet" id="b2" onclick="hbet(2)">
+            Bet<br><span class="sub" id="b2s">10.00 KES</span>
+          </button>
         </div>
-        <button class="abtn bbet" id="b2" onclick="hbet(2)">
-          Bet<br><span class="sub" id="b2s">10.00 KES</span>
-        </button>
       </div>
 
       <!-- Auto bet panel -->
@@ -527,7 +537,19 @@ function getAC(){ /* kept as no-op for compatibility with existing call sites */
 
 function startJet(instant){
   try{
-    flySound.currentTime = 0;
+    // Only restart the engine sound from the beginning when this is a
+    // genuinely fresh round start (instant===false, called from
+    // startFlight with elapsedMs near 0). When "instant" is true, this is
+    // either the audio-unlock touch handler catching up on an
+    // already-flying round, or some other resume path — in both cases we
+    // should NOT reset currentTime to 0, since that makes the engine
+    // sound restart abruptly (perceived as a short "blip" then silence if
+    // the round crashes moments later, exactly the reported bug). Letting
+    // it continue from wherever it already was (or starting cleanly if it
+    // was never playing) sounds much more natural.
+    if(!instant){
+      flySound.currentTime = 0;
+    }
     flySound.play().catch(()=>{});
   }catch(e){}
 }
