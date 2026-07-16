@@ -188,19 +188,23 @@ function isTrackedLeague(leagueName) {
 // more closely than raw elapsed time did.
 function estimateMatchMinute(kickoffIso) {
   if (!kickoffIso) return null;
-  // KICKOFF-DELAY BUFFER: real matches consistently kick off a few minutes
-  // AFTER their scheduled/listed time (warm-ups, anthem, ref delays, minor
-  // overruns) — confirmed against real user reports of this estimate
-  // running a consistent ~8 minutes ahead of actual match time, which is
-  // the signature of a fixed forward bias (not random noise): every match
-  // is being timed from a kickoff moment that's earlier than when the ball
-  // actually started moving. Subtracting a buffer from elapsed time before
-  // doing anything else corrects that offset at the source, rather than
-  // trying to patch it further down in the half/stoppage logic.
-  const KICKOFF_DELAY_BUFFER_MIN = 8;
+  // NO KICKOFF-DELAY BUFFER (removed): an earlier version of this function
+  // subtracted a fixed 8 minutes from elapsed time, based on a prior report
+  // that the estimate ran ahead of real match time. That buffer has since
+  // been checked against TWO independent real sources at once (Betika —
+  // an established real betting site — and SafariBet, both showing ~43'
+  // for the same live matches) and found to overshoot: with the buffer
+  // applied, this function was reporting ~33' for those same matches,
+  // roughly 10 minutes BEHIND both independent sources, not ahead. Rather
+  // than guess at a new buffer value without further real-world
+  // verification, this now uses raw elapsed time directly, which is what
+  // actually matched the two independent sources in that comparison. If a
+  // consistent systematic offset is observed again in the future, verify
+  // it against an independent source (not just one side of a two-party
+  // disagreement) before reintroducing any correction.
   const rawElapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
   if (rawElapsedMin < 0) return null; // hasn't kicked off yet
-  const elapsedMin = Math.max(0, rawElapsedMin - KICKOFF_DELAY_BUFFER_MIN);
+  const elapsedMin = rawElapsedMin;
 
   const HALF_TIME_BREAK_MIN = 15;
   const FIRST_HALF_MIN = 45;
