@@ -63,6 +63,18 @@ const CACHE_MS = 5 * 60 * 1000; // 5 min — real odds don't need to be fresher
 let sharpApiCache = { data: null, fetchedAt: 0 };
 // (per-sport odds-api.io events cache now lives as oddsApiIoCacheBySport, defined near fetchOddsApiIoEvents)
 
+// Per-EVENT odds cache — this was the actual gap that let the same match's
+// odds get re-fetched from odds-api.io repeatedly within a short window
+// (e.g. one request from /api/fixtures, another moments later from the
+// scheduler's own pass, another from a different day-bucket's overlapping
+// check) even though nothing about that match's price had any reason to
+// have changed yet. The event LIST was already cached (see CACHE_MS above)
+// but the per-match odds lookup was not — every single distinct call site
+// asking about the same match paid for its own fresh API hit. Reusing the
+// same CACHE_MS window here directly cuts real call volume without making
+// any single request wait longer than it already would have.
+const oddsApiIoOddsCacheByEvent = {}; // eventId -> { data, fetchedAt }
+
 const MIN_MS_BETWEEN_CALLS = 5500; // ~10.9 req/min ceiling, under SharpAPI's 12/min cap
 let lastSharpApiCallAt = 0;
 async function throttleSharpApi() {
@@ -191,11 +203,21 @@ async function fetchOddsApiIoEvents(sport) {
   return data;
 }
 
-// Fetches real odds for a specific event ID from odds-api.io. Not cached
-// per-event (would need a cache entry per match, low reuse value) — but
-// still throttled and rotated against the shared key pool.
+// Fetches real odds for a specific event ID from odds-api.io. Cached per-
+// event for CACHE_MS (see oddsApiIoOddsCacheByEvent above) — this is what
+// actually stops the same match's odds being re-fetched many times an hour
+// by different, overlapping call sites (a page load, the scheduler's own
+// pass, an overlapping day-bucket check, etc.) when nothing about the
+// price had any reason to have changed since the last check.
 async function fetchOddsApiIoOddsForEvent(eventId) {
-  return oaioFetch('/odds?eventId=' + eventId + '&bookmakers=' + encodeURIComponent(ODDSAPIIO_BOOKMAKER));
+  const now = Date.now();
+  const cached = oddsApiIoOddsCacheByEvent[eventId];
+  if (cached && (now - cached.fetchedAt) < CACHE_MS) {
+    return cached.data;
+  }
+  const data = await oaioFetch('/odds?eventId=' + eventId + '&bookmakers=' + encodeURIComponent(ODDSAPIIO_BOOKMAKER));
+  oddsApiIoOddsCacheByEvent[eventId] = { data, fetchedAt: now };
+  return data;
 }
 
 // Normalizes a team name for fuzzy matching — SharpAPI and football-data.org
