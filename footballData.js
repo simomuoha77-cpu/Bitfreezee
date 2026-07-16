@@ -246,22 +246,42 @@ function convertOddsApiIoEvent(e) {
   // faster live-repricing cadence both apply correctly.
   let estimatedMinute = null;
   let isHalftime = false;
+
+  // Does this event actually carry a real, usable final/current score right
+  // now? Checked once here so both branches below can rely on it — this is
+  // the exact fact that was missing before, which is how a match got
+  // marked FINISHED while still showing a stale/wrong 0-0.
+  const hasRealScore = !!(e.scores && (
+    (e.scores.periods && e.scores.periods.ft && e.scores.periods.ft.home != null && e.scores.periods.ft.away != null) ||
+    (e.scores.home != null && e.scores.away != null)
+  ));
+
+  if (status === 'FINISHED' && !hasRealScore) {
+    // odds-api.io says settled/cancelled, but sent no usable score. Rather
+    // than call this FINISHED with nothing (which downstream code could
+    // still misread as "0-0, over"), fall through to the same
+    // AWAITING_RESULT handling below as a stale-live match with no score —
+    // it's the same underlying problem (we don't actually know the result
+    // yet), just reached via a different signal.
+    status = 'SCHEDULED';
+  }
+
   if (status === 'SCHEDULED' && e.date && new Date(e.date).getTime() < Date.now()) {
-    // STALE-LIVE CUTOFF: odds-api.io's "settled" flag is often delayed or
-    // simply missing for lower/regional leagues, so relying on it alone
-    // left matches stuck showing IN_PLAY indefinitely — real time kept
-    // passing but estimateMatchMinute() has a hard ceiling (98, regulation
-    // + stoppage both halves), so every match that ran past that ceiling
-    // displayed the SAME frozen minute forever instead of ever finishing.
-    // That's what produced dozens of unrelated matches all showing ~90'
-    // simultaneously. A real football match (even with extra time) is
-    // essentially always over within 130 real minutes of kickoff, so treat
-    // anything still unsettled past that point as finished rather than
-    // leaving it live and frozen.
-    const REALISTIC_MAX_LIVE_MIN = 130;
+    const REALISTIC_MAX_LIVE_MIN = 130; // even with extra time, a real match is essentially always decided within this window
     const elapsedMin = Math.floor((Date.now() - new Date(e.date).getTime()) / 60000);
     if (elapsedMin > REALISTIC_MAX_LIVE_MIN) {
-      status = 'FINISHED';
+      // THE ACTUAL FIX: a match well past any realistic duration is
+      // presumably over, but if odds-api.io never sent a real score for
+      // it, we must NOT claim FINISHED — that previously locked in
+      // whatever stale score happened to be cached (in one real case, a
+      // FIFA World Cup semifinal got stuck at "FT: 0-0" long after the
+      // actual 1-2 final score existed everywhere else, because this
+      // exact code path fired before a real score ever arrived). Using a
+      // distinct status here means any consumer checking specifically for
+      // status==='FINISHED' (e.g. a betting site settling wagers) will
+      // correctly NOT treat this as a confirmed result, instead of
+      // silently paying out (or rejecting) based on a guess.
+      status = hasRealScore ? 'FINISHED' : 'AWAITING_RESULT';
     } else {
       const est = estimateMatchMinute(e.date);
       estimatedMinute = est ? est.minute : null;
@@ -292,11 +312,11 @@ function convertOddsApiIoEvent(e) {
     awayTeam: { name: e.away },
     competition: { name: e.league && e.league.name || 'Unknown League' },
     area: { name: null }, // odds-api.io doesn't provide a country/flag field the same way football-data.org does
-    score: e.scores ? {
+    score: hasRealScore ? {
       fullTime: e.scores.periods && e.scores.periods.ft
         ? { home: e.scores.periods.ft.home, away: e.scores.periods.ft.away }
-        : (e.scores.home != null ? { home: e.scores.home, away: e.scores.away } : null)
-    } : null,
+        : { home: e.scores.home, away: e.scores.away }
+    } : null, // explicitly null (not a stale/guessed score) whenever hasRealScore is false — this is the second half of the actual fix
     source: 'odds-api.io' // transparency field — lets callers know this didn't come from football-data.org
   };
 }

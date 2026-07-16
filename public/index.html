@@ -2667,7 +2667,7 @@ function renderFixtures(matches){
       var savedOdds = m.aiOdds || null;
 
       var statusLabel = getMatchStatus(m);
-      var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : 'var(--acc)';
+      var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : m.status==='AWAITING_RESULT' ? '#e8a33d' : 'var(--acc)';
       var kickoffDate = m.utcDate ? new Date(m.utcDate).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
       var kickoffTime = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
       var kickoff = kickoffDate ? (kickoffDate + ' · ' + kickoffTime) : kickoffTime;
@@ -2787,6 +2787,7 @@ function getMatchStatus(m){
   if(s==='TIMED') return 'Scheduled';
   if(s==='PAUSED') return '⏸ Half Time';
   if(s==='FINISHED') return 'FT';
+  if(s==='AWAITING_RESULT') return '⏳ Result Pending'; // match should be over by now, but no confirmed final score has arrived yet — see footballData.js's convertOddsApiIoEvent for why this exists as its own state instead of guessing FINISHED with a possibly-wrong score
   if(s==='POSTPONED') return 'Postponed';
   if(s==='CANCELLED') return 'Cancelled';
   if(s==='IN_PLAY'){
