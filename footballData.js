@@ -101,9 +101,51 @@ async function fdFetch(endpoint) {
 // universally-supported filter shape across every endpoint in the docs, so
 // switching to it is the safer fix rather than debugging the single-date
 // filter further.
+// Normalizes football-data.org's real score shape onto the SAME field names
+// odds-api.io's converted matches already use (home/away, not homeTeam/
+// awayTeam) — see convertOddsApiIoEvent's score.fullTime a bit further down
+// in this file. Without this, every real football-data.org match (Premier
+// League, La Liga, Bundesliga, Champions League, World Cup, etc.) had its
+// score silently broken wherever code read score.fullTime.home/.away,
+// because football-data.org's REAL field names are score.fullTime.homeTeam
+// /.awayTeam (confirmed against football-data.org's own official v4 docs).
+// This was a real, separate bug from the odds-api.io FINISHED-status issue
+// fixed earlier — it affected THREE places: the frontend's own score
+// display, getHeadToHead's recentMatches score string (always showed
+// "undefined-undefined"), and getTeamRecentForm's W/D/L calculation (always
+// fell through to 'D' since gf/ga were always undefined) — the latter
+// directly degrading AI analysis quality, since ai.js uses that recent-form
+// guide as real input. Also normalizes halfTime the same way, which is
+// needed for the half-time-score feature below (SafariBet asked whether
+// half-time data is available to safely support First Half markets — it
+// turns out football-data.org already sends it in every response, we just
+// weren't reading it).
+function normalizeFdScore(rawScore) {
+  if (!rawScore) return null;
+  const conv = (period) => {
+    const p = rawScore[period];
+    if (!p || p.homeTeam == null || p.awayTeam == null) return null;
+    return { home: p.homeTeam, away: p.awayTeam };
+  };
+  return {
+    winner: rawScore.winner || null,
+    duration: rawScore.duration || null,
+    fullTime: conv('fullTime'),
+    halfTime: conv('halfTime'),
+    extraTime: conv('extraTime'),
+    penalties: conv('penalties')
+  };
+}
+
 async function getMatchesForDate(dateStr) {
   const data = await fdFetch('/matches?dateFrom=' + dateStr + '&dateTo=' + dateStr);
-  return data.matches || [];
+  const matches = data.matches || [];
+  // Normalize score field names in place — every other field on these raw
+  // football-data.org match objects (status, utcDate, homeTeam.name,
+  // competition.name, etc.) is passed through completely unchanged; only
+  // the score sub-object's internal key names are touched.
+  matches.forEach(m => { m.score = normalizeFdScore(m.score); });
+  return matches;
 }
 
 // ── odds-api.io as a SECOND fixtures source ────────────────────────────
@@ -315,7 +357,18 @@ function convertOddsApiIoEvent(e) {
     score: hasRealScore ? {
       fullTime: e.scores.periods && e.scores.periods.ft
         ? { home: e.scores.periods.ft.home, away: e.scores.periods.ft.away }
-        : { home: e.scores.home, away: e.scores.away }
+        : { home: e.scores.home, away: e.scores.away },
+      // Half-time score: odds-api.io's own docs advertise "period scores
+      // for every period (half-time, 90min, overtime)" and this codebase
+      // already confirmed the "ft" (full-time) key works in production —
+      // "ht" here follows that same established naming convention, but has
+      // NOT been independently verified against a live response the way
+      // "ft" was. If half-time data doesn't actually appear for odds-api.io
+      // matches after this ships, check the real key name in an actual API
+      // response rather than assuming this guess was correct.
+      halfTime: (e.scores.periods && e.scores.periods.ht && e.scores.periods.ht.home != null && e.scores.periods.ht.away != null)
+        ? { home: e.scores.periods.ht.home, away: e.scores.periods.ht.away }
+        : null
     } : null, // explicitly null (not a stale/guessed score) whenever hasRealScore is false — this is the second half of the actual fix
     source: 'odds-api.io' // transparency field — lets callers know this didn't come from football-data.org
   };
@@ -422,11 +475,12 @@ async function getHeadToHead(matchId, limit) {
       awayTeamWins: data.aggregates && data.aggregates.awayTeam && data.aggregates.awayTeam.wins || 0,
       draws: data.aggregates && data.aggregates.homeTeam && data.aggregates.homeTeam.draws || 0,
       recentMatches: (data.matches || []).slice(0, 5).map(function(m) {
+        const score = normalizeFdScore(m.score);
         return {
           date: m.utcDate,
           home: m.homeTeam && m.homeTeam.name,
           away: m.awayTeam && m.awayTeam.name,
-          score: m.score && m.score.fullTime ? (m.score.fullTime.home + '-' + m.score.fullTime.away) : 'N/A',
+          score: score && score.fullTime ? (score.fullTime.home + '-' + score.fullTime.away) : 'N/A',
           competition: m.competition && m.competition.name
         };
       })
@@ -445,8 +499,9 @@ async function getTeamRecentForm(teamId, count) {
     const data = await fdFetch('/teams/' + teamId + '/matches?status=FINISHED&limit=' + (count || 5));
     return (data.matches || []).slice(0, count || 5).map(function(m) {
       const isHome = m.homeTeam && m.homeTeam.id === teamId;
-      const gf = m.score && m.score.fullTime ? (isHome ? m.score.fullTime.home : m.score.fullTime.away) : null;
-      const ga = m.score && m.score.fullTime ? (isHome ? m.score.fullTime.away : m.score.fullTime.home) : null;
+      const score = normalizeFdScore(m.score);
+      const gf = score && score.fullTime ? (isHome ? score.fullTime.home : score.fullTime.away) : null;
+      const ga = score && score.fullTime ? (isHome ? score.fullTime.away : score.fullTime.home) : null;
       let result = 'D';
       if (gf !== null && ga !== null) result = gf > ga ? 'W' : gf < ga ? 'L' : 'D';
       return {

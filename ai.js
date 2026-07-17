@@ -542,6 +542,24 @@ async function analyzeMatch(match, history, liveState) {
     odds.realOddsSource = realOddsData.sportsbook;
     odds.realOddsProvider = realOddsData.provider;
     odds.realOddsFetchedAt = realOddsData.fetchedAt;
+    // REAL HANDICAP (added on request from a partner site that was
+    // previously estimating this themselves from our 1X2 odds, since we
+    // had no handicap field at all before this). Only ever present when
+    // odds-api.io actually returned a Spread market for this match — see
+    // realOdds.js's getFromOddsApiIo. There is no AI-estimated fallback
+    // for this field by design: JuanAi never had a handicap estimate to
+    // begin with, so leaving it null/absent when unavailable is more
+    // honest than inventing one now, especially since partners already
+    // have their own reasonable estimate to fall back on.
+    if (realOddsData.handicap) {
+      const [hHome, hAway] = applyMarginToGroup([realOddsData.handicap.home, realOddsData.handicap.away], DEFAULT_MARGIN);
+      odds.handicap = {
+        line: realOddsData.handicap.line,
+        home: hHome,
+        away: hAway,
+        isRealMarketOdds: true
+      };
+    }
   } else {
     // Apply bookmaker-style margin — this is what actually gives the platform
     // a structural edge, distinct from the AI's raw "fair" probability guess.

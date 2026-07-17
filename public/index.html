@@ -645,16 +645,32 @@ async function getJuanAiFixtures(days) {<br>
 }<br><br>
 // Each match has:<br>
 // match.homeTeam, match.awayTeam<br>
-// match.utcDate, match.status<br>
+// match.utcDate, match.status — one of SCHEDULED, IN_PLAY, PAUSED,<br>
+//   FINISHED, or AWAITING_RESULT (match should be over by now, but no<br>
+//   confirmed final score has arrived yet — do NOT treat this the same as<br>
+//   FINISHED for settlement purposes; match.score will be null while in<br>
+//   this state, precisely so it can't be mistaken for a real result)<br>
 // match.minute — current match minute if IN_PLAY (null otherwise)<br>
 // match.minuteIsEstimated — true if match.minute is an ESTIMATE (odds-api.io<br>
 //   sourced matches don't have a real match clock, only kickoff time — see<br>
 //   note below). false/absent means it's a real minute from football-data.org.<br>
 //   Show a "~" prefix or similar when true, so users know it's approximate.<br>
 // match.competition<br>
+// match.score.fullTime.home, match.score.fullTime.away — final/current score<br>
+// match.score.halfTime.home, match.score.halfTime.away — half-time score,<br>
+//   when available. Present for football-data.org matches once the match<br>
+//   reaches half-time (null before then). For odds-api.io matches this is<br>
+//   populated on a best-effort basis and may be null more often — always<br>
+//   check for null before using it to settle a First Half market.<br>
 // match.aiOdds.homeWin, match.aiOdds.draw, match.aiOdds.awayWin<br>
 // match.aiOdds.over25, match.aiOdds.under25<br>
 // match.aiOdds.btts, match.aiOdds.bttsNo<br>
+// match.aiOdds.dc_home_draw, match.aiOdds.dc_home_away, match.aiOdds.dc_draw_away<br>
+// match.aiOdds.handicap — { line, home, away, isRealMarketOdds } or absent.<br>
+//   ONLY ever present when a real bookmaker (odds-api.io) actually priced a<br>
+//   handicap/spread line for this match — there is no AI-estimated fallback<br>
+//   for this field. Absent/undefined means no real handicap is available<br>
+//   for this match right now; don't assume one exists.<br>
 // match.aiPrediction, match.aiConfidence<br>
 // match.aiAnalysis, match.aiXG, match.aiValueBet<br>
 // match.aiOdds.isRealMarketOdds — true = real bookmaker price (safe for<br>

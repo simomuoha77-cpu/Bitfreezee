@@ -333,6 +333,30 @@ async function getFromOddsApiIo(homeTeam, awayTeam, sport) {
     const mlMarket = (oddsData.bookmakers[bookmakerKey] || []).find(m => m.name === 'ML');
     if (!mlMarket || !mlMarket.odds || !mlMarket.odds[0]) return null;
 
+    // REAL HANDICAP — odds-api.io's own response for this event already
+    // includes a "Spread" market alongside "ML" (confirmed via odds-api.io's
+    // own published documentation example: a single /odds call returns ML,
+    // Spread, Totals, and many more markets together in one response). This
+    // was previously being fetched and then thrown away, since the code
+    // only ever looked for market.name === 'ML'. Extracting it here costs
+    // ZERO additional API calls — it's already sitting in oddsData from the
+    // fetch above. This replaces JuanAi's own mathematically-ESTIMATED
+    // handicap (derived from 1X2 odds) with an actual bookmaker line
+    // whenever one is available for this match.
+    const spreadMarket = (oddsData.bookmakers[bookmakerKey] || []).find(m => m.name === 'Spread');
+    let handicap = null;
+    if (spreadMarket && spreadMarket.odds && spreadMarket.odds[0]) {
+      const sp = spreadMarket.odds[0];
+      if (sp.hdp != null && sp.home != null && sp.away != null) {
+        handicap = {
+          line: parseFloat(sp.hdp), // e.g. -1, 0, +0.5 — from the home team's perspective, matching odds-api.io's own convention
+          home: parseFloat(sp.home),
+          away: parseFloat(sp.away),
+          isRealMarketOdds: true // matches the SAME flag name/meaning as aiOdds.isRealMarketOdds elsewhere in this codebase — true = real bookmaker price, safe for real-money use
+        };
+      }
+    }
+
     const prices = mlMarket.odds[0];
     if (!prices.home || !prices.away) return null; // incomplete — don't guess
     const hasDraw = prices.draw != null; // absent for 2-way sports like basketball, present for football/soccer
@@ -344,6 +368,7 @@ async function getFromOddsApiIo(homeTeam, awayTeam, sport) {
         draw: null,
         awayWin: parseFloat(prices.away),
         isTwoWay: true, // flag so ai.js / the frontend know not to expect a draw price for this sport
+        handicap,
         sportsbook: bookmakerKey.replace(/\s*\(no latency\)\s*/i, ''),
         provider: 'odds-api.io',
         fetchedAt: Date.now()
@@ -355,6 +380,7 @@ async function getFromOddsApiIo(homeTeam, awayTeam, sport) {
       draw: parseFloat(prices.draw),
       awayWin: parseFloat(prices.away),
       isTwoWay: false,
+      handicap,
       sportsbook: bookmakerKey.replace(/\s*\(no latency\)\s*/i, ''), // clean up SharpAPI-style latency suffix if present
       provider: 'odds-api.io',
       fetchedAt: Date.now()
