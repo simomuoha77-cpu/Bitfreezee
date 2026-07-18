@@ -665,7 +665,23 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // function so the two routes can never silently drift apart in behavior.
 function recomputeLiveMinutes(matches) {
   matches.forEach(m => {
-    if (m.minuteIsEstimated && m.utcDate) {
+    // CRITICAL GUARD: only recompute minute/status for a match that is
+    // CURRENTLY still IN_PLAY or PAUSED. Without this guard, this function
+    // would blindly force status back to IN_PLAY/PAUSED on every single
+    // request — including for a match the background scheduler had
+    // already correctly moved to AWAITING_RESULT or FINISHED (see
+    // convertOddsApiIoEvent's 130-minute cutoff logic). Since this
+    // function runs on every incoming /api/fixtures and
+    // /internal/fixtures-view call (far more often than the scheduler's
+    // 60s refresh), that meant a match could be correctly marked
+    // AWAITING_RESULT by the scheduler and then immediately get reverted
+    // back to "IN_PLAY, ~98'" the very next time anyone actually looked at
+    // it — which is exactly the reported bug: matches appearing stuck
+    // showing "live" at the estimate's hard cap (98') long after they
+    // should have been recognized as over. AWAITING_RESULT/FINISHED are
+    // more authoritative determinations than this live-estimate recompute
+    // and must never be silently clobbered by it.
+    if ((m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.minuteIsEstimated && m.utcDate) {
       const est = footballData.estimateMatchMinute(m.utcDate);
       if (est) {
         m.minute = est.minute;
