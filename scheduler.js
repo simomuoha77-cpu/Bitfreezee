@@ -152,7 +152,35 @@ function needsAnalysis(match) {
 const MAX_MATCHES_PER_ANALYSIS_PASS = 6; // reduced from 15 — even with 11 total AI keys (6 Gemini + 5 Groq), demanding 15 matches every 90s (~10/min) was structurally more than the combined free-tier pool could sustain CONTINUOUSLY, so keys never had a moment to look "available" even though each one really was recovering every few minutes behind the scenes. This isn't about rotation failing — it's about demand exceeding supply on an ongoing basis. Slowing our own request rate down is the actual fix.
 const MAX_LIVE_MATCHES_PER_PASS = 25; // live matches are processed uncapped up to this generous safety ceiling — should never realistically be hit, it's just a guard against an unusual spike in simultaneous live matches overwhelming the AI pool in one pass
 
+// RE-ENTRANCY GUARD: setInterval fires on a fixed schedule regardless of
+// whether the PREVIOUS analysisPass() call has actually finished yet. With
+// live matches processed uncapped (up to MAX_LIVE_MATCHES_PER_PASS) and
+// each match paced ANALYSIS_PACE_MS apart, a single pass can legitimately
+// take several minutes during a busy period (e.g. 25 live + 6 non-live
+// matches × 8s pacing ≈ 4 minutes) — LONGER than the 90-second interval
+// between scheduled triggers. Without this guard, a new pass could start
+// while a previous one was still mid-flight, running TWO OR MORE analysis
+// loops concurrently, each independently hitting the same shared AI
+// (Gemini/Groq) and real-odds (odds-api.io) key pools — multiplying actual
+// call volume well beyond what the pacing constants were designed for,
+// and a very plausible root cause of "entire key pool blocked" errors
+// appearing despite the pacing looking conservative on paper.
+let analysisPassRunning = false;
+
 async function analysisPass() {
+  if (analysisPassRunning) {
+    console.log('[scheduler] Skipping this analysisPass trigger — a previous pass is still running (prevents overlapping concurrent passes from multiplying API call volume)');
+    return;
+  }
+  analysisPassRunning = true;
+  try {
+    await analysisPassInner();
+  } finally {
+    analysisPassRunning = false;
+  }
+}
+
+async function analysisPassInner() {
   // Collect everything needing analysis across all day-buckets first, then
   // sort so LIVE matches always jump the queue, and everything else is
   // ordered by soonest kickoff first — a match kicking off in an hour

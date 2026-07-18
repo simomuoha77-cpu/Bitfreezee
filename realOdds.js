@@ -89,8 +89,27 @@ async function throttleSharpApi() {
 // simple inter-call spacing isn't enough. Each key in the pool gets its OWN
 // independent sliding-hour budget and its OWN cooldown if it gets rate-
 // limited, mirroring the football-data.org key-rotation design.
-const ODDSAPIIO_HOURLY_BUDGET_PER_KEY = 90; // stay under 100 with a safety margin, per key
-const ODDSAPIIO_MIN_MS_BETWEEN_CALLS = 3000; // still space individual calls out a little, even within budget
+// PACING — REVISED based on real observed evidence, not the original
+// assumption. A live status check showed all 7 configured keys blocked
+// simultaneously, each having made only ~6 calls in the preceding hour
+// (nowhere near the old 90/hour assumption), each reporting almost the
+// exact same "~11 minutes until available." Three keys independently
+// exhausting at nearly the same moment with nearly the same remaining
+// cooldown is not consistent with 7 genuinely independent per-key limits —
+// it strongly suggests odds-api.io enforces its real rate limit per
+// account (or per source IP), not per individual key string, and that the
+// real limit is much stricter than 90/hour. The 3-second minimum gap
+// between calls let a single key fire up to 20 requests/minute, which is
+// almost certainly what triggered the block after only ~6 real calls.
+// These values are a conservative correction based on that evidence, not a
+// number pulled from odds-api.io's own documented limits (their docs
+// weren't checked for this fix, since the discrepancy was severe enough to
+// require an immediate, safe correction rather than waiting on that) — if
+// you have access to the actual plan/dashboard for these keys, check the
+// real documented rate limit there and adjust these two constants to match
+// it precisely rather than relying on this estimate indefinitely.
+const ODDSAPIIO_HOURLY_BUDGET_PER_KEY = 30; // was 90 — cut well below the ~36/hour ceiling implied by "6 calls before a ~10min block", even before considering the possible shared-across-keys limit
+const ODDSAPIIO_MIN_MS_BETWEEN_CALLS = 20000; // was 3000 — spaces calls out enough that even a single key alone stays under a "6 per ~10min" style limit (20s gap = max 3/min = 30/hour per key, matching the budget above)
 
 const oddsApiIoKeyState = ODDSAPIIO_KEYS.map(key => ({
   key,
@@ -99,6 +118,18 @@ const oddsApiIoKeyState = ODDSAPIIO_KEYS.map(key => ({
   blockedUntil: 0 // set when this specific key hits a real rate-limit error
 }));
 let nextOddsApiIoKeyIndex = 0;
+
+// GLOBAL (account-wide) pacing — separate from each key's own individual
+// gap above. This exists specifically because of the "maybe the real limit
+// is shared across all keys, not independent per key" possibility raised
+// by the evidence in the comment above. Rotating through 7 keys that each
+// only respect their OWN gap could still let calls hit odds-api.io in
+// rapid succession overall (e.g. 7 different keys firing one after another
+// within a couple seconds), which would defeat the point of the per-key
+// gap entirely if the account/IP-level theory is correct. This global gap
+// protects against that regardless of which theory turns out to be true.
+let lastOddsApiIoCallAtGlobal = 0;
+const ODDSAPIIO_GLOBAL_MIN_MS_BETWEEN_CALLS = 2000;
 
 function pickAvailableOddsApiIoKey() {
   const now = Date.now();
@@ -117,7 +148,14 @@ function pickAvailableOddsApiIoKey() {
 async function throttleOddsApiIoKey(state) {
   const gapWait = ODDSAPIIO_MIN_MS_BETWEEN_CALLS - (Date.now() - state.lastCallAt);
   if (gapWait > 0) await new Promise(r => setTimeout(r, gapWait));
+  // Global gap check happens AFTER the per-key wait, using a fresh
+  // Date.now() — this way if two calls (to different keys) land close
+  // together, the second one still respects the account-wide minimum gap
+  // even though its own key's individual timer had nothing to wait for.
+  const globalGapWait = ODDSAPIIO_GLOBAL_MIN_MS_BETWEEN_CALLS - (Date.now() - lastOddsApiIoCallAtGlobal);
+  if (globalGapWait > 0) await new Promise(r => setTimeout(r, globalGapWait));
   state.lastCallAt = Date.now();
+  lastOddsApiIoCallAtGlobal = state.lastCallAt;
   state.callTimestamps.push(state.lastCallAt);
 }
 
