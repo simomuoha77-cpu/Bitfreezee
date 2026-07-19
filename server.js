@@ -682,6 +682,32 @@ function recomputeLiveMinutes(matches) {
     // more authoritative determinations than this live-estimate recompute
     // and must never be silently clobbered by it.
     if ((m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.minuteIsEstimated && m.utcDate) {
+      // SECOND, INDEPENDENT SAFETY CHECK — this is the actual fix for a
+      // real, exploitable gap: the 130-minute cutoff that normally ends a
+      // stale match only runs inside the BACKGROUND fixture refresh (see
+      // footballData.js's REALISTIC_MAX_LIVE_MIN comment for the full
+      // reasoning). If that background refresh has been failing — e.g.
+      // odds-api.io's key pool exhausted for an extended period — a
+      // match's status can stay frozen at IN_PLAY indefinitely, while
+      // THIS function keeps recomputing a live-looking minute on every
+      // request regardless (since that part doesn't depend on the
+      // background refresh at all), capping at the display ceiling and
+      // sitting there — presenting a stale, possibly hours-old match as
+      // still live and still worth pricing. That's a real risk: anyone who
+      // already knows the real-world result from elsewhere could bet
+      // against odds computed for a match that's actually long over.
+      // Checking the RAW (uncapped) elapsed time here, independent of
+      // whether the background refresh is currently healthy, closes that
+      // gap — a stale match can never keep presenting as live past a
+      // realistic match duration, no matter what state the background
+      // pipeline is in.
+      const rawElapsedMin = Math.floor((Date.now() - new Date(m.utcDate).getTime()) / 60000);
+      if (rawElapsedMin > footballData.REALISTIC_MAX_LIVE_MIN) {
+        m.status = 'AWAITING_RESULT';
+        m.minute = null;
+        m.isHalftime = false;
+        return; // don't fall through to the normal live recompute below
+      }
       const est = footballData.estimateMatchMinute(m.utcDate);
       if (est) {
         m.minute = est.minute;

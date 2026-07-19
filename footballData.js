@@ -31,6 +31,33 @@ if (FDORG_KEYS.length === 0) {
 }
 const FDORG_BASE = 'https://api.football-data.org/v4';
 
+// Shared, single-source-of-truth constant: even with extra time, a real
+// football match is essentially always decided within this many minutes of
+// kickoff. Used in TWO places that must never drift apart: (1) here in
+// footballData.js, when the background fixture refresh converts an
+// odds-api.io event and decides whether a still-unsettled match should be
+// treated as FINISHED/AWAITING_RESULT rather than staying live forever;
+// and (2) in server.js's recomputeLiveMinutes, as an INDEPENDENT safety
+// check that runs at actual request time — this second check exists
+// because the first one only ever runs when the background refresh
+// actually succeeds. If odds-api.io's key pool is exhausted (which does
+// happen — see realOdds.js's pacing comments) and stays exhausted for a
+// while, the background refresh can silently fail for an extended period,
+// during which the match's status stays frozen at whatever it was last
+// successfully fetched as (e.g. IN_PLAY) — see scheduler.js's "keeping
+// existing fixtures rather than wiping them" fallback. Meanwhile the
+// DISPLAYED minute still climbs live on every request (that part doesn't
+// depend on the background refresh succeeding), capping out and sitting at
+// the display ceiling — which looks exactly like a genuinely live match
+// still worth pricing/betting on, even though the underlying data could be
+// hours stale by that point. That combination is a real, exploitable gap:
+// anyone who already knows the real-world result (from another source)
+// could bet against JuanAi's stale "still live" odds with certainty. The
+// fix is for BOTH places to independently enforce this same cutoff, so a
+// stale match can never keep presenting as live/bettable regardless of
+// whether the background data pipeline happens to be healthy right now.
+const REALISTIC_MAX_LIVE_MIN = 130;
+
 // Free tier = 10 requests/minute PER KEY. Keep a healthy margin below that.
 const MIN_MS_BETWEEN_CALLS = 6500; // ~9.2 req/min ceiling, per key
 
@@ -309,7 +336,6 @@ function convertOddsApiIoEvent(e) {
   }
 
   if (status === 'SCHEDULED' && e.date && new Date(e.date).getTime() < Date.now()) {
-    const REALISTIC_MAX_LIVE_MIN = 130; // even with extra time, a real match is essentially always decided within this window
     const elapsedMin = Math.floor((Date.now() - new Date(e.date).getTime()) / 60000);
     if (elapsedMin > REALISTIC_MAX_LIVE_MIN) {
       // THE ACTUAL FIX: a match well past any realistic duration is
@@ -536,4 +562,4 @@ function getKeyPoolStatus() {
   };
 }
 
-module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute };
+module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute, REALISTIC_MAX_LIVE_MIN };
