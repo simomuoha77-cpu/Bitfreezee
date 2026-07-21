@@ -56,7 +56,8 @@ const ODDSAPIIO_BOOKMAKER = process.env.ODDSAPIIO_BOOKMAKER || 'Bet365';
 // Cache: keyed by a rounded-to-the-minute cache bucket, so multiple calls
 // within the same short window reuse one fetch instead of burning either
 // provider's rate limit on every single match lookup during a scheduler pass.
-const CACHE_MS = 5 * 60 * 1000; // 5 min — real odds don't need to be fresher
+const CACHE_MS = 5 * 60 * 1000; // 5 min — real ODDS don't need to be fresher (see EVENTS_LIST_CACHE_MS below for the separate, much shorter duration used for live score/status data)
+const EVENTS_LIST_CACHE_MS = 30 * 1000; // 30s — the events list carries LIVE SCORE/STATUS, which needs to be much fresher than odds; roughly half of scheduler.js's TODAY_REFRESH_INTERVAL_MS so a fresh fetch is essentially always available whenever the scheduler wants to check
                                  // than this for pre-match markets, and it
                                  // keeps us comfortably under both rate
                                  // limits even with many matches per cycle.
@@ -111,7 +112,34 @@ async function throttleSharpApi() {
 const ODDSAPIIO_HOURLY_BUDGET_PER_KEY = 30; // was 90 — cut well below the ~36/hour ceiling implied by "6 calls before a ~10min block", even before considering the possible shared-across-keys limit
 const ODDSAPIIO_MIN_MS_BETWEEN_CALLS = 20000; // was 3000 — spaces calls out enough that even a single key alone stays under a "6 per ~10min" style limit (20s gap = max 3/min = 30/hour per key, matching the budget above)
 
-const oddsApiIoKeyState = ODDSAPIIO_KEYS.map(key => ({
+// PRIORITY LANE FOR THE EVENTS LIST — this is the fix for a real, measured
+// bug: comparing JuanAi's live scores against Betika/SportPesa/Google for
+// the same match showed JuanAi lagging the real score by MANY REAL
+// MINUTES (not seconds) — e.g. a goal at minute 3 wasn't reflected until
+// minute 22 on JuanAi, while Betika already showed it by minute 3:38. The
+// events list (fetchOddsApiIoEvents) is the ONLY source of live
+// score/status/minute data in this whole pipeline, yet it was sharing the
+// exact same throttled key pool and pacing gaps as the much higher-volume,
+// far less time-sensitive PER-MATCH odds lookups (fetchOddsApiIoOddsForEvent)
+// — meaning a backlog of pending odds lookups could make the
+// score-critical events call sit and wait its turn in the same queue.
+// Fix: reserve ONE key exclusively for events-list calls, tracked with its
+// own separate state/gap, completely decoupled from the per-match odds
+// lookup pool below. Events only need roughly one call per minute (see
+// TODAY_REFRESH_INTERVAL_MS in scheduler.js), a tiny, predictable slice of
+// usage — reserving one key for it guarantees OUR OWN code never makes
+// this critical fetch wait behind anything else, regardless of how busy
+// the per-match odds-lookup queue is. (If odds-api.io's real limit turns
+// out to be account-wide rather than per-key — see the pacing comment
+// above — this can't guarantee the upstream server itself never rate
+// limits it too, but it does eliminate every bit of AVOIDABLE delay that
+// our own code was otherwise adding.)
+const EVENTS_LIST_RESERVED_KEY = ODDSAPIIO_KEYS.length > 1 ? ODDSAPIIO_KEYS[0] : null;
+const oddsLookupKeys = EVENTS_LIST_RESERVED_KEY ? ODDSAPIIO_KEYS.slice(1) : ODDSAPIIO_KEYS;
+const eventsListKeyState = EVENTS_LIST_RESERVED_KEY ? { key: EVENTS_LIST_RESERVED_KEY, lastCallAt: 0, blockedUntil: 0 } : null;
+const EVENTS_LIST_MIN_MS_BETWEEN_CALLS = 5000; // generous vs. its own real usage (~once/minute) — this is just a sanity floor, not a meaningful constraint in practice
+
+const oddsApiIoKeyState = oddsLookupKeys.map(key => ({
   key,
   callTimestamps: [], // sliding window of call times within the last hour, for THIS key
   lastCallAt: 0,
@@ -190,10 +218,44 @@ async function fetchSharpApiOdds() {
 // retries on the NEXT available key, same rotation pattern as
 // footballData.js. Only throws once every key in the pool is either
 // blocked or has exhausted its hourly budget.
-async function oaioFetch(path) {
+//
+// isEventsListCall: when true, routes through the RESERVED key (see
+// EVENTS_LIST_RESERVED_KEY above) with its own separate, much lighter
+// throttle — completely bypassing the shared per-match odds-lookup pool
+// and its pacing, so a busy backlog of odds lookups can never delay this
+// critical, low-volume, time-sensitive call. Falls back to the normal
+// shared pool if no key was set aside (e.g. only one key configured total).
+async function oaioFetch(path, isEventsListCall) {
   if (!ODDSAPIIO_KEYS.length) {
     throw new Error('No ODDSAPIIO_KEY configured');
   }
+
+  if (isEventsListCall && eventsListKeyState) {
+    const gapWait = EVENTS_LIST_MIN_MS_BETWEEN_CALLS - (Date.now() - eventsListKeyState.lastCallAt);
+    if (gapWait > 0) await new Promise(r => setTimeout(r, gapWait));
+    if (Date.now() < eventsListKeyState.blockedUntil) {
+      // The reserved key itself is (rarely) blocked — fall through to the
+      // shared pool just this once rather than failing the whole live-score
+      // refresh outright. Score freshness matters more here than which key
+      // technically serves the request.
+    } else {
+      eventsListKeyState.lastCallAt = Date.now();
+      const separator = path.includes('?') ? '&' : '?';
+      const res = await fetch(ODDSAPIIO_BASE + path + separator + 'apiKey=' + eventsListKeyState.key);
+      const json = await res.json().catch(() => null);
+      if (json && json.error) {
+        const minutesMatch = /resets in (\d+) minutes/i.exec(json.error);
+        const backoffMs = minutesMatch ? (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000 : 15 * 60 * 1000;
+        eventsListKeyState.blockedUntil = Date.now() + backoffMs;
+        // Fall through to the shared pool below for this one retry.
+      } else if (!res.ok) {
+        throw new Error('odds-api.io request failed: ' + res.status + ' ' + JSON.stringify(json).slice(0, 200));
+      } else {
+        return json;
+      }
+    }
+  }
+
   const state = pickAvailableOddsApiIoKey();
   if (!state) {
     throw new Error('All ' + oddsApiIoKeyState.length + ' odds-api.io key(s) are currently blocked or have used their hourly budget');
@@ -210,7 +272,7 @@ async function oaioFetch(path) {
     state.blockedUntil = Date.now() + backoffMs;
     // Retry on the next available key rather than failing the whole
     // request — this is the actual point of having a key pool.
-    return oaioFetch(path);
+    return oaioFetch(path, isEventsListCall);
   }
   if (!res.ok) {
     throw new Error('odds-api.io request failed: ' + res.status + ' ' + JSON.stringify(json).slice(0, 200));
@@ -232,10 +294,24 @@ async function fetchOddsApiIoEvents(sport) {
   sport = sport || 'football';
   const now = Date.now();
   const cached = oddsApiIoCacheBySport[sport];
-  if (cached && (now - cached.fetchedAt) < CACHE_MS) {
+  // EVENTS_LIST_CACHE_MS (short) instead of the general CACHE_MS (5 min) —
+  // this is deliberately separate. CACHE_MS was designed for per-match
+  // ODDS, which are genuinely fine to be a few minutes stale (see that
+  // constant's own comment). This events list carries the LIVE SCORE and
+  // STATUS for every match, which is exactly the opposite: comparing
+  // JuanAi's live scores against Betika/SportPesa/Google for the same real
+  // match showed goals not reflected for many real minutes. Reusing the
+  // 5-minute odds-cache duration for this fundamentally more time-critical
+  // data was a real, separate contributor to that delay — a live score
+  // being up to 5 minutes stale from caching ALONE, before any fetch
+  // scheduling delay is even considered, is a serious problem for a
+  // real-money betting product. This should stay roughly aligned with how
+  // often the scheduler actually wants fresh live data (see
+  // TODAY_REFRESH_INTERVAL_MS in scheduler.js).
+  if (cached && (now - cached.fetchedAt) < EVENTS_LIST_CACHE_MS) {
     return cached.data;
   }
-  const json = await oaioFetch('/events?sport=' + encodeURIComponent(sport));
+  const json = await oaioFetch('/events?sport=' + encodeURIComponent(sport), true); // true = priority lane, see EVENTS_LIST_RESERVED_KEY above
   const data = Array.isArray(json) ? json : [];
   oddsApiIoCacheBySport[sport] = { data, fetchedAt: now };
   return data;

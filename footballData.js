@@ -275,10 +275,31 @@ function estimateMatchMinute(kickoffIso) {
   if (rawElapsedMin < 0) return null; // hasn't kicked off yet
   const elapsedMin = rawElapsedMin;
 
-  const HALF_TIME_BREAK_MIN = 15;
+  const HALF_TIME_BREAK_MIN = 16; // was 15 — real broadcast half-time breaks commonly run slightly past the strict 15-minute rule
   const FIRST_HALF_MIN = 45;
   const SECOND_HALF_MIN = 45;
-  const MAX_STOPPAGE_PER_HALF = 8; // generous allowance for stoppage time
+  const MAX_STOPPAGE_PER_HALF = 9; // was 8 — modern IFAB directives (timing goal celebrations, subs, VAR reviews) have pushed typical added time up in recent seasons
+
+  // HONEST LIMITATION, not a bug fix claim: this whole function estimates
+  // the match minute from kickoff time alone, because odds-api.io (the
+  // source for these matches) does not provide a genuine live match clock
+  // — confirmed by checking their own API docs, which expose period
+  // SCORES (half-time/full-time results) but no live "elapsed minutes"
+  // field the way some premium sports-data providers do. Real stoppage
+  // time varies match-to-match and simply cannot be known in advance from
+  // kickoff time alone — a match with a red card or long injury stoppage
+  // will always run further ahead of this estimate than one without,
+  // regardless of how these constants are tuned. The values above are a
+  // modest, real-world-grounded adjustment (not a large speculative jump —
+  // a previous, more aggressive correction attempt in this exact function
+  // had to be fully reverted after being measured against real independent
+  // sources and found to overshoot in the OTHER direction), aimed at
+  // reducing the systematic "estimate runs ahead of reality after
+  // half-time" drift, not eliminating it outright. If this needs further
+  // tuning, calibrate it against a REAL independent source (e.g. Google's
+  // live score box, or a competitor site known to use real match-clock
+  // data) at a specific moment well after half-time, the same way the
+  // kickoff-delay buffer above was correctly diagnosed and removed.
 
   if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF) {
     // Still in the first half (or its stoppage time) — no adjustment needed.
@@ -294,8 +315,8 @@ function estimateMatchMinute(kickoffIso) {
     return { minute: FIRST_HALF_MIN, isHalftime: true };
   }
   // Second half: subtract the half-time break from elapsed wall-clock time.
-  const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - HALF_TIME_BREAK_MIN;
-  const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
+  const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - MAX_STOPPAGE_PER_HALF - HALF_TIME_BREAK_MIN;
+  const cappedSecondHalf = Math.min(Math.max(0, secondHalfElapsed), SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
   return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
 }
 
