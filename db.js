@@ -201,7 +201,7 @@ async function getFixtures(days, sport) {
             m.status = clock.isBreak ? 'PAUSED' : 'IN_PLAY';
           }
         } else {
-          const est = footballData.estimateMatchMinute(m.utcDate);
+          const est = footballData.estimateMatchMinute(m.utcDate, m.htObservedAt || null);
           if (est) {
             m.minute = est.minute;
             m.isHalftime = est.isHalftime;

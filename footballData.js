@@ -255,7 +255,7 @@ function isTrackedLeague(leagueName) {
 // live minute field), so this is necessarily an ESTIMATE — flagged with a
 // "~" prefix wherever displayed — but it should track the real minute much
 // more closely than raw elapsed time did.
-function estimateMatchMinute(kickoffIso) {
+function estimateMatchMinute(kickoffIso, htObservedAt) {
   if (!kickoffIso) return null;
   // NO KICKOFF-DELAY BUFFER (removed): an earlier version of this function
   // subtracted a fixed 8 minutes from elapsed time, based on a prior report
@@ -273,33 +273,51 @@ function estimateMatchMinute(kickoffIso) {
   // disagreement) before reintroducing any correction.
   const rawElapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
   if (rawElapsedMin < 0) return null; // hasn't kicked off yet
-  const elapsedMin = rawElapsedMin;
 
   const HALF_TIME_BREAK_MIN = 16; // was 15 — real broadcast half-time breaks commonly run slightly past the strict 15-minute rule
   const FIRST_HALF_MIN = 45;
   const SECOND_HALF_MIN = 45;
   const MAX_STOPPAGE_PER_HALF = 9; // was 8 — modern IFAB directives (timing goal celebrations, subs, VAR reviews) have pushed typical added time up in recent seasons
 
-  // HONEST LIMITATION, not a bug fix claim: this whole function estimates
-  // the match minute from kickoff time alone, because odds-api.io (the
-  // source for these matches) does not provide a genuine live match clock
-  // — confirmed by checking their own API docs, which expose period
-  // SCORES (half-time/full-time results) but no live "elapsed minutes"
-  // field the way some premium sports-data providers do. Real stoppage
-  // time varies match-to-match and simply cannot be known in advance from
-  // kickoff time alone — a match with a red card or long injury stoppage
-  // will always run further ahead of this estimate than one without,
-  // regardless of how these constants are tuned. The values above are a
-  // modest, real-world-grounded adjustment (not a large speculative jump —
-  // a previous, more aggressive correction attempt in this exact function
-  // had to be fully reverted after being measured against real independent
-  // sources and found to overshoot in the OTHER direction), aimed at
-  // reducing the systematic "estimate runs ahead of reality after
-  // half-time" drift, not eliminating it outright. If this needs further
-  // tuning, calibrate it against a REAL independent source (e.g. Google's
-  // live score box, or a competitor site known to use real match-clock
-  // data) at a specific moment well after half-time, the same way the
-  // kickoff-delay buffer above was correctly diagnosed and removed.
+  // THE ACTUAL FIX for "runs ahead of reality after half-time": when we
+  // have a real, provider-confirmed half-time checkpoint (htObservedAt —
+  // see htObservedAtCache in convertOddsApiIoEvent), anchor the second-half
+  // clock to THAT real moment instead of a fixed 16-minute guess measured
+  // from kickoff. This is what actually varies match-to-match (broadcast
+  // delays, extended breaks) and is exactly what a fixed formula can never
+  // get right — using the real checkpoint sidesteps the guess entirely for
+  // any match where the provider has reported it.
+  if (htObservedAt) {
+    const minSinceHtObserved = Math.floor((Date.now() - htObservedAt) / 60000);
+    // Deliberately shorter than HALF_TIME_BREAK_MIN: htObservedAt marks
+    // when WE first detected the real half-time score, which is itself a
+    // few minutes after it actually happened (our own ~60-90s poll cadence
+    // plus the provider's own reporting lag). Treating detection time as
+    // if it were the exact start of the break would double-count that lag
+    // on top of the buffer and push the clock ahead again — the same bug
+    // in a new spot. If this still runs ahead after deploying, verify
+    // against a real independent source and shorten this further rather
+    // than reverting to the fixed-formula approach.
+    const RESUME_BUFFER_MIN = 10;
+    if (minSinceHtObserved < RESUME_BUFFER_MIN) {
+      return { minute: FIRST_HALF_MIN, isHalftime: true };
+    }
+    const secondHalfElapsed = minSinceHtObserved - RESUME_BUFFER_MIN;
+    const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
+    return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
+  }
+
+  // HONEST LIMITATION, not a bug fix claim: below this point (no real
+  // half-time checkpoint observed yet — either genuinely still in the
+  // first half, or this competition never sends odds-api.io a half-time
+  // score at all) we're back to estimating from kickoff time alone, since
+  // odds-api.io does not provide a genuine live match clock — confirmed by
+  // checking their own API docs, which expose period SCORES (half-time/
+  // full-time results) but no live "elapsed minutes" field the way some
+  // premium sports-data providers do. The values below are a modest,
+  // real-world-grounded adjustment, not a fix for match-to-match variance
+  // in stoppage time, which simply cannot be known in advance.
+  const elapsedMin = rawElapsedMin;
 
   if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF) {
     // Still in the first half (or its stoppage time) — no adjustment needed.
@@ -314,16 +332,41 @@ function estimateMatchMinute(kickoffIso) {
     // since both looked like the exact same bare number.
     return { minute: FIRST_HALF_MIN, isHalftime: true };
   }
-  // Second half: subtract the half-time break from elapsed wall-clock time.
+  // Past the half-time window and STILL no real htObservedAt checkpoint —
+  // fall back to the old formulaic estimate as a last resort. This is the
+  // one remaining case that can still run ahead of reality (same root
+  // cause as before), because there's no real signal to anchor to for
+  // this specific match.
   const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - MAX_STOPPAGE_PER_HALF - HALF_TIME_BREAK_MIN;
   const cappedSecondHalf = Math.min(Math.max(0, secondHalfElapsed), SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
   return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
 }
 
+// REAL FIX for "minute runs ahead of reality after half-time": the old
+// estimateMatchMinute() assumed a fixed 16-minute half-time break measured
+// from kickoff time alone. Real broadcast half-time breaks routinely run
+// longer than that (delays, extended breaks, second-half kickoff delays),
+// and since this was a pure formula with no real-world checkpoint, the
+// clock would immediately start overshooting the instant it crossed the
+// fixed threshold — and the error only compounds for the rest of the
+// match, exactly matching the "matches fine in 1st half, loses control
+// after half-time" symptom reported in production.
+//
+// odds-api.io DOES send a real signal we weren't using: the actual
+// half-time score (scores.periods.ht), populated only once the real first
+// half has genuinely ended. The first TIME we observe that field for a
+// given match is a real, provider-confirmed checkpoint — far more reliable
+// than any fixed-duration guess. This cache records that moment per match
+// (in-memory; also persisted onto the match doc as htObservedAt so
+// db.js/server.js's re-computation on every read can reuse the same
+// anchor instead of falling back to the old formula).
+const htObservedAtCache = new Map(); // matchId -> timestamp ms of first observation
+
 function convertOddsApiIoEvent(e) {
   // Maps odds-api.io's event shape onto football-data.org's match shape,
   // so the rest of the pipeline (scheduler.js, ai.js, the frontend) can
   // treat both sources identically without any special-casing.
+  const matchId = 'oaio_' + e.id;
   let status = 'SCHEDULED';
   if (e.status === 'settled') status = 'FINISHED';
   else if (e.status === 'cancelled') status = 'FINISHED'; // hide cancelled matches same as finished ones — nothing to bet on
@@ -345,6 +388,13 @@ function convertOddsApiIoEvent(e) {
     (e.scores.periods && e.scores.periods.ft && e.scores.periods.ft.home != null && e.scores.periods.ft.away != null) ||
     (e.scores.home != null && e.scores.away != null)
   ));
+
+  // Real half-time checkpoint (see comment on htObservedAtCache above).
+  const htPresent = !!(e.scores && e.scores.periods && e.scores.periods.ht && e.scores.periods.ht.home != null && e.scores.periods.ht.away != null);
+  if (htPresent && !htObservedAtCache.has(matchId)) {
+    htObservedAtCache.set(matchId, Date.now());
+  }
+  const htObservedAt = htObservedAtCache.get(matchId) || null;
 
   if (status === 'FINISHED' && !hasRealScore) {
     // odds-api.io says settled/cancelled, but sent no usable score. Rather
@@ -372,7 +422,7 @@ function convertOddsApiIoEvent(e) {
       // silently paying out (or rejecting) based on a guess.
       status = hasRealScore ? 'FINISHED' : 'AWAITING_RESULT';
     } else {
-      const est = estimateMatchMinute(e.date);
+      const est = estimateMatchMinute(e.date, htObservedAt);
       estimatedMinute = est ? est.minute : null;
       isHalftime = est ? est.isHalftime : false;
       // PAUSED matches football-data.org's own convention for half-time —
@@ -397,6 +447,7 @@ function convertOddsApiIoEvent(e) {
     minute: estimatedMinute,
     minuteIsEstimated: estimatedMinute !== null, // transparency flag: this is NOT a real match clock, see note above
     isHalftime, // explicit flag: true means the clock is PAUSED at half-time, not still running — fixes matches appearing to "keep counting" through the break
+    htObservedAt, // persisted so db.js/server.js's live re-computation on every read can reuse this real checkpoint instead of falling back to the fixed-duration formula — see htObservedAtCache above
     homeTeam: { name: e.home },
     awayTeam: { name: e.away },
     competition: { name: e.league && e.league.name || 'Unknown League' },

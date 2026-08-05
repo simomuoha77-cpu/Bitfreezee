@@ -708,7 +708,7 @@ function recomputeLiveMinutes(matches) {
         m.isHalftime = false;
         return; // don't fall through to the normal live recompute below
       }
-      const est = footballData.estimateMatchMinute(m.utcDate);
+      const est = footballData.estimateMatchMinute(m.utcDate, m.htObservedAt || null);
       if (est) {
         m.minute = est.minute;
         m.isHalftime = est.isHalftime;
