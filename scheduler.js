@@ -320,16 +320,19 @@ function start() {
   fixtureRefreshLoop();
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
 
-  // Basketball: same interval, entirely independent state (lastBasketballRefresh),
-  // so a slow/failing football-data.org call can never delay basketball
-  // updates or vice versa. Staggered 5s after football's initial kick-off
-  // (not the recurring interval, just the first call) purely so their
-  // startup log lines don't interleave confusingly — has no effect on
-  // steady-state behavior since setInterval runs independently after that.
-  setTimeout(function(){
-    basketballFixtureRefreshLoop();
-    setInterval(basketballFixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
-  }, 5 * 1000);
+  // Basketball: DISABLED — odds-api.io is rejecting sport=nba with "Invalid
+  // sport slug" for this account (confirmed in production logs, not a code
+  // bug — likely the plan doesn't include basketball access, or the
+  // provider's accepted slug value changed). Since every cycle just fails
+  // anyway, there's no point spending a request on it every 60s; turned off
+  // at the source instead of leaving it to fail loudly forever. Re-enable
+  // by uncommenting below once the odds-api.io account/slug issue is
+  // resolved on their end.
+  //
+  // setTimeout(function(){
+  //   basketballFixtureRefreshLoop();
+  //   setInterval(basketballFixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
+  // }, 5 * 1000);
 
   // Give the first fixture refresh a head start before the first analysis pass.
   setTimeout(function(){
