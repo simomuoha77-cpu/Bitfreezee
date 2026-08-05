@@ -46,8 +46,7 @@ const ODDSAPIIO_KEYS = (process.env.ODDSAPIIO_KEY || '')
   .split(',')
   .map(k => k.trim())
   .filter(Boolean);
-const ODDSAPIIO_BASE = 'https://api.odds-api.io/v3';
-// odds-api.io free tier only unlocks 2 bookmakers; Bet365 was confirmed
+const ODDSAPIIO_BASE = 'https://api.odds-api.io/v3';// odds-api.io free tier only unlocks 2 bookmakers; Bet365 was confirmed
 // working in real testing. If your account has different books enabled,
 // change this — there's no single endpoint that tells us which books a
 // given free key can actually query without trial and error.
@@ -175,6 +174,28 @@ let nextOddsApiIoKeyIndex = 0;
 let lastOddsApiIoCallAtGlobal = 0;
 const ODDSAPIIO_GLOBAL_MIN_MS_BETWEEN_CALLS = 2000;
 
+// REAL BUG FIX: not every {error} response from odds-api.io means "you're
+// rate limited, back off and try another key." Some errors are permanent
+// and deterministic — e.g. "Invalid sport slug" for a bad `sport` param —
+// meaning the SAME request will fail on every single key, forever, no
+// matter how many times it's retried. The old code treated every error
+// identically: block this key, recurse to the next one. For a permanent
+// error, that recursion burns through the ENTIRE key pool in a handful of
+// milliseconds (each key gets the exact same deterministic rejection),
+// leaving every key falsely marked "blocked" for the next 11+ minutes —
+// which then starves the completely unrelated, working football live-score
+// calls that share this same pool. This was confirmed happening in
+// production logs: a basketball request with sport=nba failing with
+// "Invalid sport slug" cascaded through all 6 keys and knocked out live
+// football scores too. Only genuine rate-limit-shaped errors (the ones
+// that mention a reset time, or otherwise look like a quota/limit message)
+// should trigger a block-and-retry; anything else should fail immediately
+// without touching any key's state, since retrying it anywhere is pointless.
+function isRateLimitError(errorMsg) {
+  if (!errorMsg) return false;
+  return /resets in|rate limit|too many requests|quota|throttl/i.test(errorMsg);
+}
+
 function pickAvailableOddsApiIoKey() {
   const now = Date.now();
   for (let i = 0; i < oddsApiIoKeyState.length; i++) {
@@ -267,6 +288,13 @@ async function oaioFetch(path, isEventsListCall) {
       const res = await fetch(ODDSAPIIO_BASE + path + separator + 'apiKey=' + eventsListKeyState.key);
       const json = await res.json().catch(() => null);
       if (json && json.error) {
+        if (!isRateLimitError(json.error)) {
+          // Permanent/deterministic error (bad param, unsupported sport,
+          // etc.) — do NOT block this key, and do NOT fall through to burn
+          // through the rest of the pool. It'll fail identically everywhere.
+          console.error('[realOdds] events-list call failed with a non-rate-limit error (key left untouched): ' + json.error);
+          throw new Error('odds-api.io error: ' + json.error);
+        }
         // Prefer the provider's own stated reset time when it gives one
         // (now also matching a "seconds" form, not just "minutes" — using
         // whichever unit it actually returns recovers faster than always
@@ -302,6 +330,15 @@ async function oaioFetch(path, isEventsListCall) {
   const json = await res.json().catch(() => null);
 
   if (json && json.error) {
+    if (!isRateLimitError(json.error)) {
+      // Same fix as the reserved-key branch above: a permanent error like
+      // "Invalid sport slug" will fail on every key identically — blocking
+      // this key and recursing to the next one just cascades through the
+      // ENTIRE pool in milliseconds for a request that was never going to
+      // succeed anywhere. Fail once, immediately, key untouched.
+      console.error('[realOdds] request failed with a non-rate-limit error (key left untouched): ' + json.error);
+      throw new Error('odds-api.io error: ' + json.error);
+    }
     const minutesMatch = /resets in (\d+) minutes/i.exec(json.error);
     const backoffMs = minutesMatch ? (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000 : 15 * 60 * 1000;
     state.blockedUntil = Date.now() + backoffMs;
