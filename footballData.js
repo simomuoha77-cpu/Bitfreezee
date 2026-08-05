@@ -362,7 +362,7 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
 // anchor instead of falling back to the old formula).
 const htObservedAtCache = new Map(); // matchId -> timestamp ms of first observation
 
-function convertOddsApiIoEvent(e) {
+function convertOddsApiIoEvent(e, liveClock) {
   // Maps odds-api.io's event shape onto football-data.org's match shape,
   // so the rest of the pipeline (scheduler.js, ai.js, the frontend) can
   // treat both sources identically without any special-casing.
@@ -379,6 +379,7 @@ function convertOddsApiIoEvent(e) {
   // faster live-repricing cadence both apply correctly.
   let estimatedMinute = null;
   let isHalftime = false;
+  let minuteIsRealClock = false; // true when sourced from odds-api.io's real /events/live clock, not the kickoff-time estimate
 
   // Does this event actually carry a real, usable final/current score right
   // now? Checked once here so both branches below can rely on it — this is
@@ -422,9 +423,26 @@ function convertOddsApiIoEvent(e) {
       // silently paying out (or rejecting) based on a guess.
       status = hasRealScore ? 'FINISHED' : 'AWAITING_RESULT';
     } else {
-      const est = estimateMatchMinute(e.date, htObservedAt);
-      estimatedMinute = est ? est.minute : null;
-      isHalftime = est ? est.isHalftime : false;
+      // THE ACTUAL FIX for matching Betika/SportPesa exactly: if odds-
+      // api.io's real /events/live clock is available for this match, use
+      // it directly instead of the kickoff-time estimate below — this is
+      // the provider's own authoritative minute, not a guess, so it's what
+      // "matching Betika/SportPesa" actually requires. `running === false`
+      // covers halftime AND any other moment the clock isn't advancing
+      // (red card stoppage, etc.), which is a more complete pause signal
+      // than the old halftime-only estimate could ever provide. Falls
+      // through to the estimate below only when this endpoint has no data
+      // for this specific match yet (just went live this cycle, or this
+      // competition isn't covered by the live-clock feed).
+      if (liveClock && typeof liveClock.minute === 'number') {
+        estimatedMinute = liveClock.minute;
+        isHalftime = liveClock.running === false;
+      } else {
+        const est = estimateMatchMinute(e.date, htObservedAt);
+        estimatedMinute = est ? est.minute : null;
+        isHalftime = est ? est.isHalftime : false;
+      }
+      minuteIsRealClock = !!(liveClock && typeof liveClock.minute === 'number');
       // PAUSED matches football-data.org's own convention for half-time —
       // using it here (instead of leaving status as IN_PLAY) means any
       // consumer already handling football-data.org's real PAUSED status
@@ -445,7 +463,8 @@ function convertOddsApiIoEvent(e) {
     // /api/fixtures automatically. This is what makes it visible to
     // external sites like BetaKE, not just JuanAi's own UI.
     minute: estimatedMinute,
-    minuteIsEstimated: estimatedMinute !== null, // transparency flag: this is NOT a real match clock, see note above
+    minuteIsEstimated: estimatedMinute !== null && !minuteIsRealClock, // true only when this is the kickoff-time guess — false (not an estimate) when sourced from odds-api.io's real live clock
+    minuteIsRealClock, // transparency flag in the other direction: true means this IS a genuine provider-reported clock value, safe to treat as authoritative
     isHalftime, // explicit flag: true means the clock is PAUSED at half-time, not still running — fixes matches appearing to "keep counting" through the break
     htObservedAt, // persisted so db.js/server.js's live re-computation on every read can reuse this real checkpoint instead of falling back to the fixed-duration formula — see htObservedAtCache above
     homeTeam: { name: e.home },
@@ -480,7 +499,18 @@ function convertOddsApiIoEvent(e) {
 async function getOddsApiIoMatchesForDate(dateStr, isTodayBucket) {
   if (!realOdds.isOddsApiIoConfigured()) return [];
   try {
-    const events = await realOdds.fetchOddsApiIoEvents();
+    // Fetched together: /events gives the day's schedule + settled scores,
+    // /events/live gives the REAL match clock (minute/period/running) for
+    // whatever's currently in play — see fetchOddsApiIoLiveClocks in
+    // realOdds.js. Only actually calls out for the live-clock map when
+    // this is the today-bucket refresh (isTodayBucket), since that's the
+    // only bucket where anything can actually be live right now — this
+    // avoids spending daily budget on a live-clock call while refreshing
+    // days=1/2/etc, which can never have live matches by definition.
+    const [events, liveClocks] = await Promise.all([
+      realOdds.fetchOddsApiIoEvents(),
+      isTodayBucket ? realOdds.fetchOddsApiIoLiveClocks() : Promise.resolve(new Map())
+    ]);
     return events
       .filter(e => {
         // League allowlist first — cuts total volume down to a realistically
@@ -512,7 +542,7 @@ async function getOddsApiIoMatchesForDate(dateStr, isTodayBucket) {
         }
         return false;
       })
-      .map(convertOddsApiIoEvent);
+      .map(e => convertOddsApiIoEvent(e, liveClocks.get(String(e.id))));
   } catch (e) {
     console.error('[footballData] odds-api.io fixtures fetch failed for ' + dateStr + ': ' + e.message);
     return []; // real failure — log it, but don't block football-data.org's matches from showing

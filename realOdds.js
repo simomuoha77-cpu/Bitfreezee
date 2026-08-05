@@ -154,6 +154,39 @@ const EVENTS_LIST_MIN_MS_BETWEEN_CALLS = 5000; // generous vs. its own real usag
 const EVENTS_LIST_HOURLY_BUDGET = 45; // raised from 34 — user reports 6 separate odds-api.io accounts (not 6 keys on 1 account), so real available budget may be much higher than the original single-account testing suggested. Kept below the naive "6 accounts x 30-36/hr" ceiling deliberately, since the ORIGINAL evidence for a ~30-36/hr real limit came from testing that may have shared one server IP regardless of account count — if odds-api.io enforces per-IP rather than per-account, more accounts won't actually raise the ceiling. Watch server logs for "[realOdds] events-list reserved key blocked" after deploying this: if it reappears, the per-IP theory is confirmed and this should come back down; if it stays clear, it can go higher.
 let eventsListCallTimestamps = [];
 
+// THE REAL CAUSE of the "hit the free plan's daily limit of 500 requests"
+// errors seen in production: odds-api.io's free plan is capped per DAY
+// (confirmed directly in their own error message and doc index — "Rate
+// Limits: 5,000 requests/hour" applies to paid plans; the free plan's
+// actual ceiling is 500/day, account-wide, covering EVERY call type —
+// events discovery, live clocks, and per-match odds lookups alike). None
+// of the throttling above tracks anything past a 1-hour window, so a
+// perfectly well-paced 45/hour reserved-key rate still blows through the
+// whole day's 500-request allowance in well under 12 hours, then goes
+// completely dark for the rest of the day until the midnight UTC reset —
+// exactly the pattern seen in the logs (fine most of the day, hits the
+// wall mid-afternoon, nothing until midnight). This tracks and gates
+// against that real daily ceiling, GLOBALLY across every odds-api.io call
+// (not just the reserved key), so usage gets paced across the full 24
+// hours instead of front-loaded and then going silent for the evening's
+// matches.
+const ODDSAPIIO_DAILY_BUDGET = 470; // just under the confirmed 500/day free-plan ceiling, leaving headroom for calls made outside this tracker's own count (e.g. before a restart)
+let dailyCallCount = 0;
+let dailyResetAtMs = nextUtcMidnightMs();
+function nextUtcMidnightMs() {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
+}
+function checkAndCountDailyBudget() {
+  if (Date.now() >= dailyResetAtMs) {
+    dailyCallCount = 0;
+    dailyResetAtMs = nextUtcMidnightMs();
+  }
+  if (dailyCallCount >= ODDSAPIIO_DAILY_BUDGET) return false;
+  dailyCallCount++;
+  return true;
+}
+
 const oddsApiIoKeyState = oddsLookupKeys.map(key => ({
   key,
   callTimestamps: [], // sliding window of call times within the last hour, for THIS key
@@ -265,6 +298,17 @@ async function fetchSharpApiOdds() {
 async function oaioFetch(path, isEventsListCall) {
   if (!ODDSAPIIO_KEYS.length) {
     throw new Error('No ODDSAPIIO_KEY configured');
+  }
+
+  // Gate EVERY call (both lanes) against the real daily ceiling before
+  // spending any per-key throttle time on it — see ODDSAPIIO_DAILY_BUDGET
+  // above for why this exists. Failing fast here, without even attempting
+  // a request, is deliberate: the provider will reject it anyway, and this
+  // avoids burning the gapWait/backoff timing below on a call that has no
+  // chance of succeeding until the UTC reset.
+  if (!checkAndCountDailyBudget()) {
+    const minsUntilReset = Math.ceil((dailyResetAtMs - Date.now()) / 60000);
+    throw new Error('odds-api.io daily budget (' + ODDSAPIIO_DAILY_BUDGET + '/day) exhausted for this process — resets in ~' + minsUntilReset + ' min (midnight UTC)');
   }
 
   if (isEventsListCall && eventsListKeyState) {
@@ -406,6 +450,46 @@ async function fetchOddsApiIoEvents(sport) {
     }
     console.error('[realOdds] events fetch failed with no cache to fall back on (' + sport + '): ' + e.message);
     return [];
+  }
+}
+
+// THE REAL FIX for matching Betika/SportPesa exactly: odds-api.io actually
+// has a genuine live match-clock endpoint (GET /events/live) that returns
+// real minute/period/running data straight from their feed — not an
+// estimate. This was never being called before; only /events (schedule +
+// scores, no clock) was used, which is why estimateMatchMinute() existed
+// at all. Cached briefly (same window as the events list) since it's a
+// single call that covers every live match across every sport at once —
+// cheap relative to per-match polling, and shares the same daily budget
+// tracked in oaioFetch above.
+let liveClocksCache = null; // { data: Map<eventId, clock>, fetchedAt }
+const LIVE_CLOCKS_CACHE_MS = 30 * 1000;
+async function fetchOddsApiIoLiveClocks() {
+  const now = Date.now();
+  if (liveClocksCache && (now - liveClocksCache.fetchedAt) < LIVE_CLOCKS_CACHE_MS) {
+    return liveClocksCache.data;
+  }
+  try {
+    const json = await oaioFetch('/events/live', true); // true = priority lane — this is exactly the kind of call that lane exists for
+    const list = Array.isArray(json) ? json : (json && Array.isArray(json.events) ? json.events : []);
+    const byId = new Map();
+    list.forEach(ev => {
+      if (ev && ev.id != null && ev.clock) byId.set(String(ev.id), ev.clock);
+    });
+    liveClocksCache = { data: byId, fetchedAt: now };
+    return byId;
+  } catch (e) {
+    // Same principle as fetchOddsApiIoEvents: never let a failed call here
+    // silently wipe out every match's real clock. Falling back to the old
+    // kickoff-time estimate for this cycle (handled by the caller when this
+    // returns an empty/stale map) is strictly better than throwing and
+    // losing score display entirely.
+    if (liveClocksCache) {
+      console.warn('[realOdds] live-clocks fetch failed (' + e.message + ') — serving cached clock data that is ' + Math.round((now - liveClocksCache.fetchedAt) / 1000) + 's old');
+      return liveClocksCache.data;
+    }
+    console.warn('[realOdds] live-clocks fetch failed with no cache to fall back on: ' + e.message + ' — matches will use the kickoff-time estimate instead');
+    return new Map();
   }
 }
 
@@ -650,4 +734,4 @@ function getOddsApiIoKeyPoolStatus() {
   return status;
 }
 
-module.exports = { isConfigured, getRealOddsForMatch, teamsMatch, normalizeTeamName, fetchOddsApiIoEvents, isOddsApiIoConfigured: () => ODDSAPIIO_KEYS.length > 0, getOddsApiIoKeyPoolStatus };
+module.exports = { isConfigured, getRealOddsForMatch, teamsMatch, normalizeTeamName, fetchOddsApiIoEvents, fetchOddsApiIoLiveClocks, isOddsApiIoConfigured: () => ODDSAPIIO_KEYS.length > 0, getOddsApiIoKeyPoolStatus };
