@@ -183,7 +183,17 @@ const ODDSAPIIO_GLOBAL_MIN_MS_BETWEEN_CALLS = 2000;
 // without touching any key's state, since retrying it anywhere is pointless.
 function isRateLimitError(errorMsg) {
   if (!errorMsg) return false;
-  return /resets in|rate limit|too many requests|quota|throttl/i.test(errorMsg);
+  // "daily limit" / "resets at midnight" added after a real production bug:
+  // odds-api.io's actual daily-cap message ("You've hit the free plan's
+  // daily limit of 500 requests. It resets at midnight UTC.") matched NONE
+  // of the original patterns below — it doesn't say "rate limit", "too
+  // many requests", "quota", "throttl", or "resets in X minutes". That
+  // meant this very common, totally recoverable condition was being
+  // classified as a PERMANENT error: the key never got marked blocked, the
+  // code never fell through to try any OTHER key (including newly-added
+  // ones), and it just threw immediately every single time — which is
+  // exactly why adding more keys appeared to do nothing.
+  return /resets in|resets at|rate limit|too many requests|quota|throttl|daily limit|hourly limit/i.test(errorMsg);
 }
 
 // isPriority: for the events-list / live-clock calls, pick whichever key
@@ -302,17 +312,31 @@ async function oaioFetch(path, isEventsListCall) {
       console.error('[realOdds] request failed with a non-rate-limit error (key left untouched): ' + json.error);
       throw new Error('odds-api.io error: ' + json.error);
     }
-    // Prefer the provider's own stated reset time when it gives one (also
-    // matches a "seconds" form, not just "minutes"). Falls back to 11
-    // minutes when no explicit reset time is given, matching the real
-    // ~10-11 minute cooldowns observed in testing.
+    // Prefer the provider's own stated reset time when it gives one.
+    // "resets in X minutes/seconds" gets that exact countdown. "resets at
+    // midnight UTC" (the actual daily-cap message) gets the real time
+    // until the next UTC midnight — NOT the old blind 11-minute guess,
+    // which would have retried this same exhausted key roughly 130 times
+    // before the real reset ever happened. Falls back to 11 minutes only
+    // when the message gives no timing information at all.
     const minutesMatch = /resets in (\d+) minutes?/i.exec(json.error);
     const secondsMatch = /resets in (\d+) seconds?/i.exec(json.error);
+    const midnightMatch = /resets at midnight/i.exec(json.error);
     let backoffMs;
     if (minutesMatch) backoffMs = (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000;
     else if (secondsMatch) backoffMs = parseInt(secondsMatch[1], 10) * 1000 + 5000;
+    else if (midnightMatch) backoffMs = nextUtcMidnightMs() - Date.now();
     else backoffMs = 11 * 60 * 1000;
     state.blockedUntil = Date.now() + backoffMs;
+    // Also mark this key's daily budget as fully used in our own tracking
+    // — without this, our next pickAvailableOddsApiIoKey() call could
+    // still see this key as having plenty of "remaining" daily budget by
+    // OUR count (e.g. only 8/480 calls tracked) even though the PROVIDER
+    // says it's genuinely exhausted, and pick it again next cycle only to
+    // hit the exact same wall. blockedUntil already prevents that until
+    // reset, but setting dailyCount explicitly too keeps our own reporting
+    // (getOddsApiIoKeyPoolStatus) honest about this key's real state.
+    if (midnightMatch) state.dailyCount = ODDSAPIIO_DAILY_BUDGET_PER_KEY;
     console.error('[realOdds] key ' + state.key.slice(0, 6) + '... blocked for ' + Math.round(backoffMs / 1000) + 's: ' + json.error);
     // Retry on the next available key rather than failing the whole
     // request — this is the actual point of having a key pool.
