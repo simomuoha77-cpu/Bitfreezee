@@ -589,7 +589,7 @@ function getAiKeyPoolStatus() {
       totalKeys: keyState.length,
       availableKeys: keyState.filter(s => now >= s.blockedUntil).length,
       blockedKeys: keyState.filter(s => now < s.blockedUntil).map(s => ({
-        keyPreview: s.key.slice(0, 8) + '...',
+        keyPreview: s.key.slice(0, 8) + '...' + s.key.slice(-4), // widened from a plain 8-char prefix — Gemini's newer key format apparently shares a longer fixed prefix across genuinely different keys (confirmed: 11 separate-account keys all showed identical "AQ.Ab8RN..." with only 8 chars), so a prefix-only preview couldn't actually distinguish them. Adding the last 4 characters (which are far more likely to differ) makes this diagnostic actually useful for confirming keys are genuinely distinct rather than duplicates.
         reason: s.blockedReason || 'unknown',
         availableInMinutes: Math.ceil((s.blockedUntil - now) / 60000)
       }))
