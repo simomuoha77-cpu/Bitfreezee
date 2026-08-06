@@ -108,92 +108,49 @@ async function throttleSharpApi() {
 // you have access to the actual plan/dashboard for these keys, check the
 // real documented rate limit there and adjust these two constants to match
 // it precisely rather than relying on this estimate indefinitely.
-const ODDSAPIIO_HOURLY_BUDGET_PER_KEY = 30; // was 90 — cut well below the ~36/hour ceiling implied by "6 calls before a ~10min block", even before considering the possible shared-across-keys limit
-const ODDSAPIIO_MIN_MS_BETWEEN_CALLS = 20000; // was 3000 — spaces calls out enough that even a single key alone stays under a "6 per ~10min" style limit (20s gap = max 3/min = 30/hour per key, matching the budget above)
-
-// PRIORITY LANE FOR THE EVENTS LIST — this is the fix for a real, measured
-// bug: comparing JuanAi's live scores against Betika/SportPesa/Google for
-// the same match showed JuanAi lagging the real score by MANY REAL
-// MINUTES (not seconds) — e.g. a goal at minute 3 wasn't reflected until
-// minute 22 on JuanAi, while Betika already showed it by minute 3:38. The
-// events list (fetchOddsApiIoEvents) is the ONLY source of live
-// score/status/minute data in this whole pipeline, yet it was sharing the
-// exact same throttled key pool and pacing gaps as the much higher-volume,
-// far less time-sensitive PER-MATCH odds lookups (fetchOddsApiIoOddsForEvent)
-// — meaning a backlog of pending odds lookups could make the
-// score-critical events call sit and wait its turn in the same queue.
-// Fix: reserve ONE key exclusively for events-list calls, tracked with its
-// own separate state/gap, completely decoupled from the per-match odds
-// lookup pool below. Events only need roughly one call per minute (see
-// TODAY_REFRESH_INTERVAL_MS in scheduler.js), a tiny, predictable slice of
-// usage — reserving one key for it guarantees OUR OWN code never makes
-// this critical fetch wait behind anything else, regardless of how busy
-// the per-match odds-lookup queue is. (If odds-api.io's real limit turns
-// out to be account-wide rather than per-key — see the pacing comment
-// above — this can't guarantee the upstream server itself never rate
-// limits it too, but it does eliminate every bit of AVOIDABLE delay that
-// our own code was otherwise adding.)
-const EVENTS_LIST_RESERVED_KEY = ODDSAPIIO_KEYS.length > 1 ? ODDSAPIIO_KEYS[0] : null;
-const oddsLookupKeys = EVENTS_LIST_RESERVED_KEY ? ODDSAPIIO_KEYS.slice(1) : ODDSAPIIO_KEYS;
-const eventsListKeyState = EVENTS_LIST_RESERVED_KEY ? { key: EVENTS_LIST_RESERVED_KEY, lastCallAt: 0, blockedUntil: 0 } : null;
-const EVENTS_LIST_MIN_MS_BETWEEN_CALLS = 5000; // generous vs. its own real usage (~once/minute) — this is just a sanity floor, not a meaningful constraint in practice
-
-// REAL FIX for "score frozen for 10+ minutes": the reserved events-list key
-// was being called every 60s (matching scheduler.js's old
-// TODAY_REFRESH_INTERVAL_MS) with NO hourly budget tracking of its own —
-// unlike the per-match odds pool, it just fired on a timer. 60 calls/hour
-// against a real measured account ceiling of roughly 30-36/hour (see the
-// pacing comment above ODDSAPIIO_HOURLY_BUDGET_PER_KEY) meant this call was
-// GUARANTEED to trip odds-api.io's block roughly every 30-40 minutes, and
-// once blocked, live scores went completely silent for the full 10-15min
-// cooldown — exactly the symptom being reported. Tracking below keeps this
-// key's own usage under the real evidenced ceiling so it stops tripping the
-// block in the first place, which produces a much better real-world
-// average freshness than a faster nominal interval that spends a third of
-// each hour blacked out.
-const EVENTS_LIST_HOURLY_BUDGET = 45; // raised from 34 — user reports 6 separate odds-api.io accounts (not 6 keys on 1 account), so real available budget may be much higher than the original single-account testing suggested. Kept below the naive "6 accounts x 30-36/hr" ceiling deliberately, since the ORIGINAL evidence for a ~30-36/hr real limit came from testing that may have shared one server IP regardless of account count — if odds-api.io enforces per-IP rather than per-account, more accounts won't actually raise the ceiling. Watch server logs for "[realOdds] events-list reserved key blocked" after deploying this: if it reappears, the per-IP theory is confirmed and this should come back down; if it stays clear, it can go higher.
-let eventsListCallTimestamps = [];
-
-// THE REAL CAUSE of the "hit the free plan's daily limit of 500 requests"
-// errors seen in production: odds-api.io's free plan is capped per DAY
-// (confirmed directly in their own error message and doc index — "Rate
-// Limits: 5,000 requests/hour" applies to paid plans; the free plan's
-// actual ceiling is 500/day, account-wide, covering EVERY call type —
-// events discovery, live clocks, and per-match odds lookups alike). None
-// of the throttling above tracks anything past a 1-hour window, so a
-// perfectly well-paced 45/hour reserved-key rate still blows through the
-// whole day's 500-request allowance in well under 12 hours, then goes
-// completely dark for the rest of the day until the midnight UTC reset —
-// exactly the pattern seen in the logs (fine most of the day, hits the
-// wall mid-afternoon, nothing until midnight). This tracks and gates
-// against that real daily ceiling, GLOBALLY across every odds-api.io call
-// (not just the reserved key), so usage gets paced across the full 24
-// hours instead of front-loaded and then going silent for the evening's
-// matches.
-const ODDSAPIIO_DAILY_BUDGET = 470; // just under the confirmed 500/day free-plan ceiling, leaving headroom for calls made outside this tracker's own count (e.g. before a restart)
-let dailyCallCount = 0;
-let dailyResetAtMs = nextUtcMidnightMs();
+// UNIFIED PER-KEY BUDGET TRACKING — replaces the old split between a
+// single "reserved" key (for events/live-clock calls) and a separate pool
+// for per-match odds lookups, plus a global daily counter shared across
+// everything regardless of key. That older design meant adding more keys
+// (e.g. from separate odds-api.io accounts) didn't actually buy any extra
+// daily capacity — the reserved key was still just one key, and the daily
+// cap was one shared number no matter how many keys existed. This tracks
+// EVERY key's own real budget independently: 100 requests/hour AND 500/day
+// each (odds-api.io's own documented free-plan limits, confirmed directly
+// from their docs — https://docs.odds-api.io/ — not an estimate this
+// time). If you're running N separate odds-api.io accounts, this is what
+// makes that actually worth N x the daily capacity instead of just 1x.
+const ODDSAPIIO_HOURLY_BUDGET_PER_KEY = 90; // just under the documented 100/hour, per key
+const ODDSAPIIO_DAILY_BUDGET_PER_KEY = 480; // just under the documented 500/day, per key
+const ODDSAPIIO_MIN_MS_BETWEEN_CALLS = 3000; // simple per-key pacing floor — real protection against bursting now comes from the hourly/daily counters above, not this gap; this just avoids firing a key's whole hourly budget in the same second
 function nextUtcMidnightMs() {
   const d = new Date();
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
 }
-function checkAndCountDailyBudget() {
-  if (Date.now() >= dailyResetAtMs) {
-    dailyCallCount = 0;
-    dailyResetAtMs = nextUtcMidnightMs();
-  }
-  if (dailyCallCount >= ODDSAPIIO_DAILY_BUDGET) return false;
-  dailyCallCount++;
-  return true;
-}
-
-const oddsApiIoKeyState = oddsLookupKeys.map(key => ({
+const oddsApiIoKeyState = ODDSAPIIO_KEYS.map(key => ({
   key,
-  callTimestamps: [], // sliding window of call times within the last hour, for THIS key
+  hourlyTimestamps: [], // sliding window of call times within the last hour, for THIS key
+  dailyCount: 0,
+  dailyResetAtMs: nextUtcMidnightMs(),
   lastCallAt: 0,
   blockedUntil: 0 // set when this specific key hits a real rate-limit error
 }));
 let nextOddsApiIoKeyIndex = 0;
+
+// PRIORITY LANE — this is the fix for a real, measured bug: comparing
+// JuanAi's live scores against Betika/SportPesa/Google for the same match
+// showed JuanAi lagging the real score by MANY REAL MINUTES (not seconds).
+// The events list (fetchOddsApiIoEvents) and the live-clock endpoint
+// (fetchOddsApiIoLiveClocks) are the ONLY sources of live score/status/
+// minute data in this whole pipeline, yet calls for them used to share the
+// exact same queue and pacing as the much higher-volume, far less
+// time-sensitive PER-MATCH odds lookups. Fix: priority calls now pick
+// whichever key currently has the MOST remaining daily budget (see
+// pickAvailableOddsApiIoKey below), spreading this critical, low-volume,
+// time-sensitive traffic across every available key instead of queuing
+// behind one specific key's backlog — while regular per-match odds lookups
+// keep round-robin ordering to spread their own higher volume evenly.
+
 
 // GLOBAL (account-wide) pacing — separate from each key's own individual
 // gap above. This exists specifically because of the "maybe the real limit
@@ -229,18 +186,44 @@ function isRateLimitError(errorMsg) {
   return /resets in|rate limit|too many requests|quota|throttl/i.test(errorMsg);
 }
 
-function pickAvailableOddsApiIoKey() {
+// isPriority: for the events-list / live-clock calls, pick whichever key
+// has the MOST remaining daily budget rather than following round-robin
+// order — spreads this critical traffic across every account evenly
+// instead of concentrating it on whichever key happens to be "next" (which
+// is fine for high-volume, low-urgency per-match odds lookups, but for a
+// small number of critical calls per cycle, load-balancing by remaining
+// budget makes much better use of N separate accounts' capacity).
+function refreshKeyDailyWindow(state) {
+  if (Date.now() >= state.dailyResetAtMs) {
+    state.dailyCount = 0;
+    state.dailyResetAtMs = nextUtcMidnightMs();
+  }
+}
+function pickAvailableOddsApiIoKey(isPriority) {
   const now = Date.now();
+  oddsApiIoKeyState.forEach(refreshKeyDailyWindow);
+  const usable = oddsApiIoKeyState.filter(state => {
+    state.hourlyTimestamps = state.hourlyTimestamps.filter(t => now - t < 60 * 60 * 1000);
+    return now >= state.blockedUntil &&
+      state.hourlyTimestamps.length < ODDSAPIIO_HOURLY_BUDGET_PER_KEY &&
+      state.dailyCount < ODDSAPIIO_DAILY_BUDGET_PER_KEY;
+  });
+  if (!usable.length) return null; // every key is blocked, or has used its hourly OR daily budget
+  if (isPriority) {
+    // Prefer the key with the most daily headroom left, so priority calls
+    // spread evenly across accounts instead of draining one first.
+    return usable.reduce((best, s) => (s.dailyCount < best.dailyCount ? s : best));
+  }
+  // Regular per-match odds lookups: keep round-robin ordering for even load.
   for (let i = 0; i < oddsApiIoKeyState.length; i++) {
     const idx = (nextOddsApiIoKeyIndex + i) % oddsApiIoKeyState.length;
     const state = oddsApiIoKeyState[idx];
-    state.callTimestamps = state.callTimestamps.filter(t => now - t < 60 * 60 * 1000);
-    if (now >= state.blockedUntil && state.callTimestamps.length < ODDSAPIIO_HOURLY_BUDGET_PER_KEY) {
-      nextOddsApiIoKeyIndex = (idx + 1) % oddsApiIoKeyState.length; // spread load across keys round-robin style
+    if (usable.includes(state)) {
+      nextOddsApiIoKeyIndex = (idx + 1) % oddsApiIoKeyState.length;
       return state;
     }
   }
-  return null; // every key is either blocked or has used its hourly budget
+  return null;
 }
 
 async function throttleOddsApiIoKey(state) {
@@ -254,7 +237,9 @@ async function throttleOddsApiIoKey(state) {
   if (globalGapWait > 0) await new Promise(r => setTimeout(r, globalGapWait));
   state.lastCallAt = Date.now();
   lastOddsApiIoCallAtGlobal = state.lastCallAt;
-  state.callTimestamps.push(state.lastCallAt);
+  state.hourlyTimestamps.push(state.lastCallAt);
+  refreshKeyDailyWindow(state);
+  state.dailyCount++;
 }
 
 function isConfigured() {
@@ -287,85 +272,21 @@ async function fetchSharpApiOdds() {
 // testing, not a standard 429) marks that specific key as blocked and
 // retries on the NEXT available key, same rotation pattern as
 // footballData.js. Only throws once every key in the pool is either
-// blocked or has exhausted its hourly budget.
+// blocked or has exhausted its hourly OR daily budget.
 //
-// isEventsListCall: when true, routes through the RESERVED key (see
-// EVENTS_LIST_RESERVED_KEY above) with its own separate, much lighter
-// throttle — completely bypassing the shared per-match odds-lookup pool
-// and its pacing, so a busy backlog of odds lookups can never delay this
-// critical, low-volume, time-sensitive call. Falls back to the normal
-// shared pool if no key was set aside (e.g. only one key configured total).
+// isEventsListCall (renamed in spirit to "isPriority" — kept the param
+// name for compatibility with existing call sites): for events-list and
+// live-clock calls, picks whichever key has the most daily budget left
+// (see pickAvailableOddsApiIoKey), spreading this critical traffic evenly
+// across every configured key/account instead of concentrating on one.
 async function oaioFetch(path, isEventsListCall) {
   if (!ODDSAPIIO_KEYS.length) {
     throw new Error('No ODDSAPIIO_KEY configured');
   }
 
-  // Gate EVERY call (both lanes) against the real daily ceiling before
-  // spending any per-key throttle time on it — see ODDSAPIIO_DAILY_BUDGET
-  // above for why this exists. Failing fast here, without even attempting
-  // a request, is deliberate: the provider will reject it anyway, and this
-  // avoids burning the gapWait/backoff timing below on a call that has no
-  // chance of succeeding until the UTC reset.
-  if (!checkAndCountDailyBudget()) {
-    const minsUntilReset = Math.ceil((dailyResetAtMs - Date.now()) / 60000);
-    throw new Error('odds-api.io daily budget (' + ODDSAPIIO_DAILY_BUDGET + '/day) exhausted for this process — resets in ~' + minsUntilReset + ' min (midnight UTC)');
-  }
-
-  if (isEventsListCall && eventsListKeyState) {
-    eventsListCallTimestamps = eventsListCallTimestamps.filter(t => Date.now() - t < 60 * 60 * 1000);
-    const underBudget = eventsListCallTimestamps.length < EVENTS_LIST_HOURLY_BUDGET;
-    const gapWait = EVENTS_LIST_MIN_MS_BETWEEN_CALLS - (Date.now() - eventsListKeyState.lastCallAt);
-    if (gapWait > 0) await new Promise(r => setTimeout(r, gapWait));
-    if (Date.now() < eventsListKeyState.blockedUntil || !underBudget) {
-      // The reserved key itself is (rarely) blocked, or we're deliberately
-      // self-throttling to stay under the real evidenced account ceiling —
-      // fall through to the shared pool just this once rather than failing
-      // the whole live-score refresh outright. Score freshness matters more
-      // here than which key technically serves the request.
-      if (!underBudget) {
-        console.warn('[realOdds] events-list self-throttled (' + eventsListCallTimestamps.length + '/' + EVENTS_LIST_HOURLY_BUDGET + ' this hour) — falling back to shared key pool for this cycle');
-      }
-    } else {
-      eventsListKeyState.lastCallAt = Date.now();
-      eventsListCallTimestamps.push(Date.now());
-      const separator = path.includes('?') ? '&' : '?';
-      const res = await fetch(ODDSAPIIO_BASE + path + separator + 'apiKey=' + eventsListKeyState.key);
-      const json = await res.json().catch(() => null);
-      if (json && json.error) {
-        if (!isRateLimitError(json.error)) {
-          // Permanent/deterministic error (bad param, unsupported sport,
-          // etc.) — do NOT block this key, and do NOT fall through to burn
-          // through the rest of the pool. It'll fail identically everywhere.
-          console.error('[realOdds] events-list call failed with a non-rate-limit error (key left untouched): ' + json.error);
-          throw new Error('odds-api.io error: ' + json.error);
-        }
-        // Prefer the provider's own stated reset time when it gives one
-        // (now also matching a "seconds" form, not just "minutes" — using
-        // whichever unit it actually returns recovers faster than always
-        // blindly waiting a full minute). Falls back to 11 minutes (not the
-        // old 15) when no explicit reset time is given, matching the real
-        // ~10-11 minute cooldowns actually observed in testing rather than
-        // a padded guess that needlessly extends every unexplained block.
-        const minutesMatch = /resets in (\d+) minutes?/i.exec(json.error);
-        const secondsMatch = /resets in (\d+) seconds?/i.exec(json.error);
-        let backoffMs;
-        if (minutesMatch) backoffMs = (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000;
-        else if (secondsMatch) backoffMs = parseInt(secondsMatch[1], 10) * 1000 + 5000;
-        else backoffMs = 11 * 60 * 1000;
-        eventsListKeyState.blockedUntil = Date.now() + backoffMs;
-        console.error('[realOdds] events-list reserved key blocked for ' + Math.round(backoffMs / 1000) + 's: ' + json.error);
-        // Fall through to the shared pool below for this one retry.
-      } else if (!res.ok) {
-        throw new Error('odds-api.io request failed: ' + res.status + ' ' + JSON.stringify(json).slice(0, 200));
-      } else {
-        return json;
-      }
-    }
-  }
-
-  const state = pickAvailableOddsApiIoKey();
+  const state = pickAvailableOddsApiIoKey(isEventsListCall);
   if (!state) {
-    throw new Error('All ' + oddsApiIoKeyState.length + ' odds-api.io key(s) are currently blocked or have used their hourly budget');
+    throw new Error('All ' + oddsApiIoKeyState.length + ' odds-api.io key(s) are currently blocked or have used their hourly/daily budget');
   }
 
   await throttleOddsApiIoKey(state);
@@ -375,17 +296,24 @@ async function oaioFetch(path, isEventsListCall) {
 
   if (json && json.error) {
     if (!isRateLimitError(json.error)) {
-      // Same fix as the reserved-key branch above: a permanent error like
-      // "Invalid sport slug" will fail on every key identically — blocking
-      // this key and recursing to the next one just cascades through the
-      // ENTIRE pool in milliseconds for a request that was never going to
-      // succeed anywhere. Fail once, immediately, key untouched.
+      // Permanent/deterministic error (bad param, unsupported sport, etc.)
+      // — will fail on every key identically, so don't block this key or
+      // retry another one. Fail once, immediately, key left untouched.
       console.error('[realOdds] request failed with a non-rate-limit error (key left untouched): ' + json.error);
       throw new Error('odds-api.io error: ' + json.error);
     }
-    const minutesMatch = /resets in (\d+) minutes/i.exec(json.error);
-    const backoffMs = minutesMatch ? (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000 : 15 * 60 * 1000;
+    // Prefer the provider's own stated reset time when it gives one (also
+    // matches a "seconds" form, not just "minutes"). Falls back to 11
+    // minutes when no explicit reset time is given, matching the real
+    // ~10-11 minute cooldowns observed in testing.
+    const minutesMatch = /resets in (\d+) minutes?/i.exec(json.error);
+    const secondsMatch = /resets in (\d+) seconds?/i.exec(json.error);
+    let backoffMs;
+    if (minutesMatch) backoffMs = (parseInt(minutesMatch[1], 10) + 1) * 60 * 1000;
+    else if (secondsMatch) backoffMs = parseInt(secondsMatch[1], 10) * 1000 + 5000;
+    else backoffMs = 11 * 60 * 1000;
     state.blockedUntil = Date.now() + backoffMs;
+    console.error('[realOdds] key ' + state.key.slice(0, 6) + '... blocked for ' + Math.round(backoffMs / 1000) + 's: ' + json.error);
     // Retry on the next available key rather than failing the whole
     // request — this is the actual point of having a key pool.
     return oaioFetch(path, isEventsListCall);
@@ -428,7 +356,7 @@ async function fetchOddsApiIoEvents(sport) {
     return cached.data;
   }
   try {
-    const json = await oaioFetch('/events?sport=' + encodeURIComponent(sport), true); // true = priority lane, see EVENTS_LIST_RESERVED_KEY above
+    const json = await oaioFetch('/events?sport=' + encodeURIComponent(sport), true); // true = priority lane, see pickAvailableOddsApiIoKey above
     const data = Array.isArray(json) ? json : [];
     oddsApiIoCacheBySport[sport] = { data, fetchedAt: now };
     return data;
@@ -707,31 +635,35 @@ async function getRealOddsForMatch(homeTeam, awayTeam, sport) {
 
 function getOddsApiIoKeyPoolStatus() {
   const now = Date.now();
-  const status = {
-    totalKeys: oddsApiIoKeyState.length,
-    availableKeys: oddsApiIoKeyState.filter(s => now >= s.blockedUntil && s.callTimestamps.filter(t => now - t < 3600000).length < ODDSAPIIO_HOURLY_BUDGET_PER_KEY).length,
-    blockedOrExhaustedKeys: oddsApiIoKeyState.filter(s => now < s.blockedUntil || s.callTimestamps.filter(t => now - t < 3600000).length >= ODDSAPIIO_HOURLY_BUDGET_PER_KEY).map(s => ({
+  oddsApiIoKeyState.forEach(refreshKeyDailyWindow);
+  const perKey = oddsApiIoKeyState.map(s => {
+    s.hourlyTimestamps = s.hourlyTimestamps.filter(t => now - t < 3600000);
+    return {
       keyPreview: s.key.slice(0, 6) + '...',
-      callsInLastHour: s.callTimestamps.filter(t => now - t < 3600000).length,
+      callsInLastHour: s.hourlyTimestamps.length,
+      hourlyBudget: ODDSAPIIO_HOURLY_BUDGET_PER_KEY,
+      callsToday: s.dailyCount,
+      dailyBudget: ODDSAPIIO_DAILY_BUDGET_PER_KEY,
+      blocked: now < s.blockedUntil,
       availableInMinutes: s.blockedUntil > now ? Math.ceil((s.blockedUntil - now) / 60000) : 0
-    }))
-  };
-  // Surfaces the reserved live-score key's own health — this is the ONE
-  // call in the whole system that live scores actually depend on, so it's
-  // worth being able to see its state directly rather than inferring it
-  // from score staleness after the fact.
-  if (eventsListKeyState) {
-    eventsListCallTimestamps = eventsListCallTimestamps.filter(t => now - t < 3600000);
-    status.eventsListKey = {
-      keyPreview: eventsListKeyState.key.slice(0, 6) + '...',
-      callsInLastHour: eventsListCallTimestamps.length,
-      hourlyBudget: EVENTS_LIST_HOURLY_BUDGET,
-      blocked: now < eventsListKeyState.blockedUntil,
-      availableInMinutes: eventsListKeyState.blockedUntil > now ? Math.ceil((eventsListKeyState.blockedUntil - now) / 60000) : 0,
-      lastCachedEventsAgeSeconds: oddsApiIoCacheBySport.football ? Math.round((now - oddsApiIoCacheBySport.football.fetchedAt) / 1000) : null
     };
-  }
-  return status;
+  });
+  const usableNow = perKey.filter(k => !k.blocked && k.callsInLastHour < k.hourlyBudget && k.callsToday < k.dailyBudget);
+  return {
+    totalKeys: oddsApiIoKeyState.length,
+    availableKeys: usableNow.length,
+    // Combined capacity across every key — this is the number that
+    // actually answers "how much daily headroom do I really have," which
+    // is what adding more accounts is meant to increase. Compare this
+    // total against what a single key alone would give you (1 x
+    // ODDSAPIIO_DAILY_BUDGET_PER_KEY) to see whether extra keys are
+    // actually paying off.
+    totalDailyBudgetAcrossAllKeys: oddsApiIoKeyState.length * ODDSAPIIO_DAILY_BUDGET_PER_KEY,
+    totalCallsTodayAcrossAllKeys: perKey.reduce((sum, k) => sum + k.callsToday, 0),
+    lastCachedEventsAgeSeconds: oddsApiIoCacheBySport.football ? Math.round((now - oddsApiIoCacheBySport.football.fetchedAt) / 1000) : null,
+    perKey,
+    blockedOrExhaustedKeys: perKey.filter(k => k.blocked || k.callsInLastHour >= k.hourlyBudget || k.callsToday >= k.dailyBudget)
+  };
 }
 
 module.exports = { isConfigured, getRealOddsForMatch, teamsMatch, normalizeTeamName, fetchOddsApiIoEvents, fetchOddsApiIoLiveClocks, isOddsApiIoConfigured: () => ODDSAPIIO_KEYS.length > 0, getOddsApiIoKeyPoolStatus };
