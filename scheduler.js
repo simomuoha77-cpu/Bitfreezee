@@ -216,8 +216,8 @@ async function analysisPassInner() {
   }
 
   for (const { match, days } of thisPass) {
+    const live = isLive(match); // moved outside the try block — it was declared inside `try{}` before, which made it go out of scope by the time the pacing line below tried to read it, throwing an uncaught ReferenceError EVERY iteration and crashing the whole process. This is now computed once, safely, before anything that can throw.
     try {
-      const live = isLive(match);
       // Head-to-head and recent form don't change mid-match, so skip that
       // fetch for live re-pricing passes — it was already captured pre-match
       // (or isn't needed) and re-fetching it here would just burn API budget
