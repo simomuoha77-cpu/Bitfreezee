@@ -150,7 +150,7 @@ function needsAnalysis(match) {
 // and leaves the rest for the next pass. Over enough passes everything
 // still gets analyzed eventually; it just respects real rate limits instead
 // of front-loading a burst that guarantees failures.
-const MAX_MATCHES_PER_ANALYSIS_PASS = 6; // reduced from 15 — even with 11 total AI keys (6 Gemini + 5 Groq), demanding 15 matches every 90s (~10/min) was structurally more than the combined free-tier pool could sustain CONTINUOUSLY, so keys never had a moment to look "available" even though each one really was recovering every few minutes behind the scenes. This isn't about rotation failing — it's about demand exceeding supply on an ongoing basis. Slowing our own request rate down is the actual fix.
+const MAX_MATCHES_PER_ANALYSIS_PASS = 14; // raised from 6 — that number was tuned for 11 total AI keys; the pool has since grown to 23 combined (16 Gemini + 7 Groq), and /api/status showed ALL of them healthy with zero blocked while coverage was still crawling (59/1370 analyzed). 14 is a deliberately moderate ~2.3x increase, not a jump to what 23 keys might theoretically sustain — raise further only after confirming this doesn't reintroduce the mass-blocking bursts seen at higher rates before.
 const MAX_LIVE_MATCHES_PER_PASS = 60; // raised from 25 — that "generous safety ceiling... should never realistically be hit" WAS being hit (49 live matches observed in production, above the old cap of 25), silently truncating live re-pricing coverage every single pass. 60 leaves real headroom above what's actually been observed.
 
 // RE-ENTRANCY GUARD: setInterval fires on a fixed schedule regardless of
