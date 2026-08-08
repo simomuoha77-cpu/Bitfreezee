@@ -19,7 +19,8 @@ const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes ev
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
-const ANALYSIS_PACE_MS = 8000;                        // gap between individual match analyses (each now costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
+const ANALYSIS_PACE_MS = 8000;                        // gap between NON-LIVE match analyses (each costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
+const LIVE_ANALYSIS_PACE_MS = 2500;                    // separate, much shorter gap for LIVE re-pricing specifically — live passes skip the football-data.org history fetch entirely (see "live ? null : await fetchMatchHistory" below), so they're only bottlenecked by AI call capacity, not football-data.org's 10 req/min. Pacing live re-prices at the same 8s as history-fetching non-live analysis was needlessly slow and was the real reason a large batch of live matches could crowd out the entire backlog for minutes at a time.
 const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;      // how often to delete FINISHED matches immediately + anything stuck past the 3h cutoff — shortened from 5min so finished matches disappear from the app/API promptly
 const DAY_BUCKETS = [0, 1, 2]; // today, tomorrow, day after — reduced from 8 days. With real AI capacity tested at ~4 matches/min sustainable (11 keys across Gemini+Groq, each recovering every 1-2 min), 8 days of even a league-narrowed fixture list produced 1,376+ pending matches — a backlog that would take 5+ hours to clear even in ideal conditions, meaning almost everything sat AI-pending indefinitely. 3 days keeps total volume small enough to realistically stay fully analyzed rather than perpetually behind. If you want more lookahead later, the AI capacity needs to grow first (more genuinely separate accounts, or a paid tier) — otherwise more days just means a bigger permanent backlog, not more useful coverage.
 
@@ -150,7 +151,7 @@ function needsAnalysis(match) {
 // still gets analyzed eventually; it just respects real rate limits instead
 // of front-loading a burst that guarantees failures.
 const MAX_MATCHES_PER_ANALYSIS_PASS = 6; // reduced from 15 — even with 11 total AI keys (6 Gemini + 5 Groq), demanding 15 matches every 90s (~10/min) was structurally more than the combined free-tier pool could sustain CONTINUOUSLY, so keys never had a moment to look "available" even though each one really was recovering every few minutes behind the scenes. This isn't about rotation failing — it's about demand exceeding supply on an ongoing basis. Slowing our own request rate down is the actual fix.
-const MAX_LIVE_MATCHES_PER_PASS = 25; // live matches are processed uncapped up to this generous safety ceiling — should never realistically be hit, it's just a guard against an unusual spike in simultaneous live matches overwhelming the AI pool in one pass
+const MAX_LIVE_MATCHES_PER_PASS = 60; // raised from 25 — that "generous safety ceiling... should never realistically be hit" WAS being hit (49 live matches observed in production, above the old cap of 25), silently truncating live re-pricing coverage every single pass. 60 leaves real headroom above what's actually been observed.
 
 // RE-ENTRANCY GUARD: setInterval fires on a fixed schedule regardless of
 // whether the PREVIOUS analysisPass() call has actually finished yet. With
@@ -232,7 +233,7 @@ async function analysisPassInner() {
       console.error('[scheduler] Analysis FAILED for match ' + match.id + ': ' + e.message);
       // Leave this match without odds rather than faking a result.
     }
-    await new Promise(function(r){ setTimeout(r, ANALYSIS_PACE_MS); });
+    await new Promise(function(r){ setTimeout(r, live ? LIVE_ANALYSIS_PACE_MS : ANALYSIS_PACE_MS); });
   }
 }
 
