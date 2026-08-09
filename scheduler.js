@@ -233,8 +233,8 @@ async function analysisPassInner() {
   // concurrent batches actually uses the key pool the way it was meant to
   // be used — each concurrent request naturally picks its own available key
   // via the existing round-robin picker in ai.js.
-  const CONCURRENCY = 6; // deliberately moderate, not "one batch of 90" — this pool has gone fully dark from bursts before (see LIVE_ANALYSIS_PACE_MS history above), so this scales UP from strictly-serial (1) rather than assuming unlimited concurrent capacity. Raise only after confirming aiKeyPool stays healthy at this level.
-  const BATCH_GAP_MS = 1500; // brief pause BETWEEN batches (not between every match within a batch) — gives keys marked blocked mid-batch a moment before the next wave, without serializing everything back down to one-at-a-time.
+  const CONCURRENCY = 3; // pulled back from 6 — production logs after deploying 6 showed the entire Gemini+Groq pool going fully blocked again within minutes, the same failure pattern seen at LIVE_ANALYSIS_PACE_MS=2500 before. This confirms the real ceiling here isn't about serial-vs-concurrent processing alone — the providers' actual sustainable burst rate is lower than 6 simultaneous requests, regardless of total key count. 3 is a more conservative step up from strictly-serial (1); if the pool still goes dark at this level, the next real lever is spacing BATCH_GAP_MS out further, not raising concurrency again.
+  const BATCH_GAP_MS = 3000; // raised from 1500 alongside the concurrency pullback — more breathing room between waves of requests.
 
   for (let i = 0; i < thisPass.length; i += CONCURRENCY) {
     const batch = thisPass.slice(i, i + CONCURRENCY);
