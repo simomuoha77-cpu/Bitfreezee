@@ -19,8 +19,12 @@ const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes ev
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
-const ANALYSIS_PACE_MS = 8000;                        // gap between NON-LIVE match analyses (each costs 3 football-data.org calls: h2h + 2x form, plus the AI call, so paced wider to stay under the 10 req/min free tier)
-const LIVE_ANALYSIS_PACE_MS = 5000;                    // pulled back from 2500 — that was tuned assuming AI capacity was the slack resource, but production logs after deploying it showed the ENTIRE Gemini+Groq pool going fully blocked in bursts shortly after, which is consistent with 2.5s being too aggressive for the providers' actual burst tolerance (not just their per-key hourly/daily totals). Splitting live pacing from the football-data.org-bound 8s was still the right call — this just meets in the middle instead of assuming AI throughput was effectively unlimited.
+// NOTE: per-match serial pacing (ANALYSIS_PACE_MS / LIVE_ANALYSIS_PACE_MS)
+// was replaced by concurrent batch processing below — see CONCURRENCY and
+// BATCH_GAP_MS inside analysisPassInner. Serializing every single match
+// behind a fixed delay meant total throughput was capped by that delay
+// alone, never by actual AI capacity — so adding more keys couldn't help,
+// since nothing was ever using more than one key at a time to begin with.
 const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;      // how often to delete FINISHED matches immediately + anything stuck past the 3h cutoff — shortened from 5min so finished matches disappear from the app/API promptly
 const DAY_BUCKETS = [0, 1, 2]; // today, tomorrow, day after — reduced from 8 days. With real AI capacity tested at ~4 matches/min sustainable (11 keys across Gemini+Groq, each recovering every 1-2 min), 8 days of even a league-narrowed fixture list produced 1,376+ pending matches — a backlog that would take 5+ hours to clear even in ideal conditions, meaning almost everything sat AI-pending indefinitely. 3 days keeps total volume small enough to realistically stay fully analyzed rather than perpetually behind. If you want more lookahead later, the AI capacity needs to grow first (more genuinely separate accounts, or a paid tier) — otherwise more days just means a bigger permanent backlog, not more useful coverage.
 
@@ -154,14 +158,14 @@ const MAX_MATCHES_PER_ANALYSIS_PASS = 14; // raised from 6 — that number was t
 const MAX_LIVE_MATCHES_PER_PASS = 60; // raised from 25 — that "generous safety ceiling... should never realistically be hit" WAS being hit (49 live matches observed in production, above the old cap of 25), silently truncating live re-pricing coverage every single pass. 60 leaves real headroom above what's actually been observed.
 
 // RE-ENTRANCY GUARD: setInterval fires on a fixed schedule regardless of
-// whether the PREVIOUS analysisPass() call has actually finished yet. With
-// live matches processed uncapped (up to MAX_LIVE_MATCHES_PER_PASS) and
-// each match paced ANALYSIS_PACE_MS apart, a single pass can legitimately
-// take several minutes during a busy period (e.g. 25 live + 6 non-live
-// matches × 8s pacing ≈ 4 minutes) — LONGER than the 90-second interval
-// between scheduled triggers. Without this guard, a new pass could start
-// while a previous one was still mid-flight, running TWO OR MORE analysis
-// loops concurrently, each independently hitting the same shared AI
+// whether the PREVIOUS analysisPass() call has actually finished yet. Even
+// with concurrent batch processing (CONCURRENCY matches at once, see
+// analysisPassInner below), a busy period with live matches near the
+// MAX_LIVE_MATCHES_PER_PASS ceiling can still take longer than the
+// 90-second interval between scheduled triggers. Without this guard, a new
+// pass could start while a previous one was still mid-flight, running TWO
+// OR MORE analysis loops concurrently, each independently hitting the same
+// shared AI
 // (Gemini/Groq) and real-odds (odds-api.io) key pools — multiplying actual
 // call volume well beyond what the pacing constants were designed for,
 // and a very plausible root cause of "entire key pool blocked" errors
@@ -215,25 +219,50 @@ async function analysisPassInner() {
     console.log('[scheduler] ' + totalPending + ' matches need analysis (' + liveMatches.length + ' live, processed uncapped) — processing ' + Math.min(nonLiveMatches.length, MAX_MATCHES_PER_ANALYSIS_PASS) + ' non-live this pass, rest will follow in subsequent passes');
   }
 
-  for (const { match, days } of thisPass) {
-    const live = isLive(match); // moved outside the try block — it was declared inside `try{}` before, which made it go out of scope by the time the pacing line below tried to read it, throwing an uncaught ReferenceError EVERY iteration and crashing the whole process. This is now computed once, safely, before anything that can throw.
-    try {
-      // Head-to-head and recent form don't change mid-match, so skip that
-      // fetch for live re-pricing passes — it was already captured pre-match
-      // (or isn't needed) and re-fetching it here would just burn API budget
-      // that's better spent getting the next live update out faster.
-      const history = live ? null : await fetchMatchHistory(match);
-      const odds = await ai.analyzeMatch(match, history, live ? buildLiveState(match) : null);
-      await db.upsertMatchOdds(match.id, days, odds);
-      var home = match.homeTeam && match.homeTeam.name;
-      var away = match.awayTeam && match.awayTeam.name;
-      console.log('[scheduler] Analyzed match ' + match.id + ' (' + home + ' vs ' + away + ') for days=' + days
-        + (live ? ' [LIVE re-price, score ' + describeScore(match) + ']' : (history ? ' [with real history]' : ' [no history available]')));
-    } catch (e) {
-      console.error('[scheduler] Analysis FAILED for match ' + match.id + ': ' + e.message);
-      // Leave this match without odds rather than faking a result.
+  // REAL FIX for "analyzing fewer games than before, even with more API
+  // keys added": matches were being processed one at a time in a strict
+  // serial line, with an artificial delay between EACH one, regardless of
+  // how many AI keys were sitting idle. That made total throughput capped
+  // by the pacing delay alone, not by actual AI capacity — adding more keys
+  // couldn't help, because nothing was ever calling more than one key at a
+  // time in the first place. With 90 live matches needing re-analysis every
+  // 60s, a strictly serial line (even at a fast per-match pace) takes
+  // several minutes to cycle through — by the time it loops back around,
+  // most matches are stale again, so the same matches dominate every pass
+  // while the rest of the backlog barely moves. Processing in small
+  // concurrent batches actually uses the key pool the way it was meant to
+  // be used — each concurrent request naturally picks its own available key
+  // via the existing round-robin picker in ai.js.
+  const CONCURRENCY = 6; // deliberately moderate, not "one batch of 90" — this pool has gone fully dark from bursts before (see LIVE_ANALYSIS_PACE_MS history above), so this scales UP from strictly-serial (1) rather than assuming unlimited concurrent capacity. Raise only after confirming aiKeyPool stays healthy at this level.
+  const BATCH_GAP_MS = 1500; // brief pause BETWEEN batches (not between every match within a batch) — gives keys marked blocked mid-batch a moment before the next wave, without serializing everything back down to one-at-a-time.
+
+  for (let i = 0; i < thisPass.length; i += CONCURRENCY) {
+    const batch = thisPass.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async ({ match, days }) => {
+      const live = isLive(match);
+      try {
+        // Head-to-head and recent form don't change mid-match, so skip that
+        // fetch for live re-pricing passes — it was already captured
+        // pre-match (or isn't needed) and re-fetching it here would just
+        // burn API budget that's better spent getting the next live update
+        // out faster.
+        const history = live ? null : await fetchMatchHistory(match);
+        const odds = await ai.analyzeMatch(match, history, live ? buildLiveState(match) : null);
+        await db.upsertMatchOdds(match.id, days, odds);
+        var home = match.homeTeam && match.homeTeam.name;
+        var away = match.awayTeam && match.awayTeam.name;
+        console.log('[scheduler] Analyzed match ' + match.id + ' (' + home + ' vs ' + away + ') for days=' + days
+          + (live ? ' [LIVE re-price, score ' + describeScore(match) + ']' : (history ? ' [with real history]' : ' [no history available]')));
+      } catch (e) {
+        console.error('[scheduler] Analysis FAILED for match ' + match.id + ': ' + e.message);
+        // Leave this match without odds rather than faking a result. One
+        // match failing inside Promise.all does NOT block or cancel the
+        // rest of the batch — each has its own try/catch.
+      }
+    }));
+    if (i + CONCURRENCY < thisPass.length) {
+      await new Promise(function(r){ setTimeout(r, BATCH_GAP_MS); });
     }
-    await new Promise(function(r){ setTimeout(r, live ? LIVE_ANALYSIS_PACE_MS : ANALYSIS_PACE_MS); });
   }
 }
 
