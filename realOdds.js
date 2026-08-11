@@ -137,6 +137,46 @@ const oddsApiIoKeyState = ODDSAPIIO_KEYS.map(key => ({
 }));
 let nextOddsApiIoKeyIndex = 0;
 
+// PERSISTENCE HOOKS — see the SETTINGS_COLLECTION comment in db.js for the
+// full "restarts reset our tracking but not the provider's real count"
+// bug this fixes. Deliberately kept as plain export/import functions
+// rather than having this file require db.js directly, to avoid a
+// circular dependency (db.js already requires this file, to merge
+// odds-api.io data into fixtures). scheduler.js sits above both and wires
+// this together: load once at startup, save periodically after that.
+function exportKeyPoolState() {
+  // Keyed by the key STRING itself (not array index) — so if keys are
+  // ever reordered, added, or removed in the env var between restarts,
+  // saved state still matches up correctly with whichever key it actually
+  // belongs to, instead of silently applying to the wrong key by position.
+  const out = {};
+  oddsApiIoKeyState.forEach(s => {
+    out[s.key] = { dailyCount: s.dailyCount, dailyResetAtMs: s.dailyResetAtMs, blockedUntil: s.blockedUntil };
+  });
+  return out;
+}
+function restoreKeyPoolState(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  let restoredCount = 0;
+  oddsApiIoKeyState.forEach(s => {
+    const persisted = saved[s.key];
+    if (!persisted) return; // a genuinely new key not seen before — starts fresh, correctly
+    // Only restore the daily window if the persisted reset time hasn't
+    // already passed — otherwise we'd be restoring a stale, already-expired
+    // count into a new day, re-introducing the exact bug this is meant to
+    // fix in the other direction.
+    if (persisted.dailyResetAtMs && persisted.dailyResetAtMs > Date.now()) {
+      s.dailyCount = persisted.dailyCount || 0;
+      s.dailyResetAtMs = persisted.dailyResetAtMs;
+    }
+    if (persisted.blockedUntil && persisted.blockedUntil > Date.now()) {
+      s.blockedUntil = persisted.blockedUntil;
+    }
+    restoredCount++;
+  });
+  if (restoredCount) console.log('[realOdds] Restored daily/hourly usage state for ' + restoredCount + ' odds-api.io key(s) from persistent storage — restart will no longer blind the app to real budget already used today.');
+}
+
 // PRIORITY LANE — this is the fix for a real, measured bug: comparing
 // JuanAi's live scores against Betika/SportPesa/Google for the same match
 // showed JuanAi lagging the real score by MANY REAL MINUTES (not seconds).
@@ -690,4 +730,4 @@ function getOddsApiIoKeyPoolStatus() {
   };
 }
 
-module.exports = { isConfigured, getRealOddsForMatch, teamsMatch, normalizeTeamName, fetchOddsApiIoEvents, fetchOddsApiIoLiveClocks, isOddsApiIoConfigured: () => ODDSAPIIO_KEYS.length > 0, getOddsApiIoKeyPoolStatus };
+module.exports = { isConfigured, getRealOddsForMatch, teamsMatch, normalizeTeamName, fetchOddsApiIoEvents, fetchOddsApiIoLiveClocks, isOddsApiIoConfigured: () => ODDSAPIIO_KEYS.length > 0, getOddsApiIoKeyPoolStatus, exportKeyPoolState, restoreKeyPoolState };

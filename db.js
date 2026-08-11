@@ -26,6 +26,7 @@ const DB_NAME = 'juanai';
 const FIXTURES_COLLECTION = 'fixtures';
 const KEYS_COLLECTION = 'apikeys';
 const WALLETS_COLLECTION = 'partnerwallets'; // partner API key -> wallet base URL + HMAC secret, for real-money casino integration (see walletClient.js)
+const SETTINGS_COLLECTION = 'settings'; // generic key-value store — added specifically to persist per-key API usage tracking (odds-api.io daily/hourly call counts) across restarts. Without this, every restart reset the app's OWN idea of "how much of each key's daily budget is used" back to zero, while the real usage tracked on the provider's end did NOT reset — so a day with many restarts (e.g. redeploys) let the app confidently keep using keys it THOUGHT had room, until the real provider-side count caught up and every key hit its actual daily wall at the same moment. This was directly observed in production: 11 separate odds-api.io keys all showing "480/480 used, blocked" simultaneously on a day with unusually many restarts.
 
 let client = null;
 let mongoReady = false;
@@ -33,6 +34,7 @@ let mongoConnectAttempted = false;
 let fixturesCollection = null;
 let apiKeysCollection = null;
 let walletsCollection = null;
+let settingsCollection = null;
 
 // In-memory fallback so the server keeps working (within a single running
 // instance) if MONGO_URI is missing/unreachable — same safety net pattern
@@ -42,6 +44,7 @@ let walletsCollection = null;
 let fixturesFallback = {}; // keyed by `${days}` -> { matches: [...], fetchedAt, updatedAt }
 let apiKeysFallback = [];
 let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
+let settingsFallback = {}; // keyed by setting name -> value (JSON-serializable)
 let usingFallback = false;
 
 async function connectMongo() {
@@ -61,10 +64,12 @@ async function connectMongo() {
     fixturesCollection = db.collection(FIXTURES_COLLECTION);
     apiKeysCollection = db.collection(KEYS_COLLECTION);
     walletsCollection = db.collection(WALLETS_COLLECTION);
+    settingsCollection = db.collection(SETTINGS_COLLECTION);
     await fixturesCollection.createIndex({ matchId: 1, days: 1 }, { unique: true });
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });
     await walletsCollection.createIndex({ apiKey: 1 }, { unique: true });
+    await settingsCollection.createIndex({ name: 1 }, { unique: true });
     mongoReady = true;
     usingFallback = false;
     console.log('[db] Connected to MongoDB Atlas — fixtures/odds AND API keys will persist across restarts.');
@@ -563,6 +568,34 @@ async function expireOldMatches() {
   }
 }
 
+// Generic settings store — see SETTINGS_COLLECTION comment above for why
+// this exists. Value can be any JSON-serializable data (stored as-is under
+// a "value" field); the caller is responsible for the shape.
+async function getSetting(name) {
+  await ensureMongo();
+  if (usingFallback) {
+    return Object.prototype.hasOwnProperty.call(settingsFallback, name) ? settingsFallback[name] : null;
+  }
+  try {
+    const doc = await settingsCollection.findOne({ name });
+    return doc ? doc.value : null;
+  } catch (e) {
+    console.error('[db] getSetting(' + name + ') failed, falling back to in-memory: ' + e.message);
+    return Object.prototype.hasOwnProperty.call(settingsFallback, name) ? settingsFallback[name] : null;
+  }
+}
+
+async function setSetting(name, value) {
+  await ensureMongo();
+  settingsFallback[name] = value; // always keep the in-memory copy current too, so a mid-request Mongo hiccup doesn't lose the value for the rest of this process's lifetime
+  if (usingFallback) return;
+  try {
+    await settingsCollection.updateOne({ name }, { $set: { name, value, updatedAt: new Date() } }, { upsert: true });
+  } catch (e) {
+    console.error('[db] setSetting(' + name + ') failed, kept in-memory only for now: ' + e.message);
+  }
+}
+
 module.exports = {
   saveFixtures,
   getFixtures,
@@ -578,5 +611,7 @@ module.exports = {
   getWallet,
   getAllWallets,
   getMongoStatus,
-  ensureMongo
+  ensureMongo,
+  getSetting,
+  setSetting
 };

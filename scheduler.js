@@ -13,6 +13,7 @@
 const db = require('./db');
 const footballData = require('./footballData');
 const ai = require('./ai');
+const realOdds = require('./realOdds'); // needed directly (not just via footballData) to persist/restore odds-api.io key-pool usage state across restarts — see restoreKeyPoolState/exportKeyPoolState in realOdds.js
 
 const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixture lists every 15 min — nothing there is live/about-to-finish, so this doesn't need to be fast
 const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes every 60s (tightened from 2min) — this controls how quickly a match flips from SCHEDULED to IN_PLAY once it actually kicks off. Still comfortably within football-data.org's 10 req/min budget (just today's single bucket, not all 8), and odds-api.io's shared cached /events response means this doesn't cost extra calls there either.
@@ -340,6 +341,26 @@ function start() {
   if (running) return;
   running = true;
   console.log('[scheduler] Starting background auto-refresh + auto-analysis (no manual clicks needed)');
+
+  // REAL FIX for "all 11 odds-api.io keys hit their daily limit at the same
+  // moment, on a day with unusually many restarts": the app's own tracking
+  // of how much of each key's daily/hourly budget was already used lived
+  // ONLY in memory, so every restart reset it to zero — while the
+  // PROVIDER's real, server-side count did NOT reset, since that only
+  // happens at midnight UTC regardless of how many times our app restarts.
+  // A day with many restarts (redeploys, Render's free-tier spin-down/
+  // cold-start cycle) let the app keep confidently using keys it THOUGHT
+  // had room, until the real count finally caught up across the board.
+  // Restoring this once at boot, then saving it periodically below, closes
+  // that gap — a restart no longer blinds the app to budget it's already
+  // spent today.
+  db.getSetting('oddsApiIoKeyPoolState')
+    .then(saved => realOdds.restoreKeyPoolState(saved))
+    .catch(e => console.error('[scheduler] Failed to restore odds-api.io key pool state (starting fresh, same as before this fix): ' + e.message));
+  setInterval(function () {
+    db.setSetting('oddsApiIoKeyPoolState', realOdds.exportKeyPoolState())
+      .catch(e => console.error('[scheduler] Failed to persist odds-api.io key pool state: ' + e.message));
+  }, 60 * 1000); // frequent enough that even an unexpected crash (not just a clean restart) loses at most ~1 minute of usage-tracking accuracy
 
   // Kick off immediately on boot, then on the FASTER interval — the loop
   // itself checks each day's own due-time internally, so running the outer
