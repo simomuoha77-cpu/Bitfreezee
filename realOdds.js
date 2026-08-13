@@ -691,10 +691,23 @@ async function getRealOddsForMatch(homeTeam, awayTeam, sport) {
     if (fromSharp) return fromSharp;
   }
 
-  const fromOddsApiIo = await getFromOddsApiIo(homeTeam, awayTeam, sport);
-  if (fromOddsApiIo) return fromOddsApiIo;
-
-  return null; // neither provider covers this match — caller falls back to AI
+  // REMOVED the odds-api.io fallback that used to sit here
+  // (getFromOddsApiIo). Real production impact, confirmed directly: this
+  // fallback fired once per NON-LIVE match analyzed (whenever SharpAPI had
+  // no data for it), competing for the exact same shared daily/hourly
+  // budget that live scores and live clocks depend on — the ONE thing in
+  // this whole app that must never go stale for long. Raising
+  // MAX_MATCHES_PER_ANALYSIS_PASS and adding concurrent batch processing
+  // (both genuinely needed, to get more matches analyzed per hour) had the
+  // unintended side effect of also speeding up how fast THIS path burned
+  // through that same budget — explaining "still hitting the daily limit
+  // even after adding more keys," since the added capacity was being
+  // consumed by pre-match odds enrichment, not just live-score calls.
+  // Pre-match real-odds enrichment is a nice-to-have; live score freshness
+  // is not. If SharpAPI doesn't have a match, it now falls straight to the
+  // caller's AI-estimated odds instead, keeping the ENTIRE odds-api.io
+  // budget reserved for events discovery + live clocks specifically.
+  return null; // SharpAPI didn't cover it — caller falls back to AI-estimated odds
 }
 
 function getOddsApiIoKeyPoolStatus() {
