@@ -17,7 +17,7 @@ const realOdds = require('./realOdds');
 const GEMINI_KEYS = (process.env.GEMINI_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 const GROQ_KEYS = (process.env.GROQ_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
 const GEMINI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash']; // both confirmed live/current as of this build — the previous list (gemini-2.0-flash, gemini-1.5-flash) were BOTH shut down by Google (2.0-flash on June 1 2026, all 1.5 models earlier), which is why every call was 404ing. If these ever start 404ing too, check https://ai.google.dev/gemini-api/docs/models for the current model list before assuming it's a quota issue.
-const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b']; // migrated from llama-3.3-70b-versatile / llama-3.1-8b-instant — Groq is decommissioning both on August 16, 2026 (official deprecation notice, console.groq.com/docs/deprecations). These are Groq's own recommended replacements for each respective model's role (120b ≈ the old 70b "versatile" primary, 20b ≈ the old 8b "instant" fallback). Response shape is unchanged — GPT-OSS keeps any reasoning content in a separate `reasoning` field, not mixed into `message.content`, so callGroq's existing parsing needed no changes. NOTE: these free-tier models have a considerably lower daily request cap (1,000/day combined per Groq's published free-tier table) than the old llama-3.1-8b-instant had (14,400/day) — worth keeping in mind if Groq-side rate-limiting increases after this migration; that's a genuine capacity change, not a bug.
 const GROQ_VISION_MODEL = 'llama-3.2-11b-vision-preview';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
