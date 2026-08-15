@@ -19,7 +19,8 @@ const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixtur
 const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes every 60s (tightened from 2min) — this controls how quickly a match flips from SCHEDULED to IN_PLAY once it actually kicks off. Still comfortably within football-data.org's 10 req/min budget (just today's single bucket, not all 8), and odds-api.io's shared cached /events response means this doesn't cost extra calls there either.
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
-const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // re-analyze LIVE matches every 60s so odds track the actual score/minute, like a real in-play book
+const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // FAST path: if the score has changed since last analysis, re-price within this window — a goal should update odds almost immediately, like a real in-play book
+const LIVE_SAFETY_REFRESH_MS = 4 * 60 * 1000;        // SLOW path: even with NO score change, still refresh at least this often — odds should drift with the clock alone (less time left = more certainty), and this is also the safety net for matches this deployment doesn't track a live clock for
 // NOTE: per-match serial pacing (ANALYSIS_PACE_MS / LIVE_ANALYSIS_PACE_MS)
 // was replaced by concurrent batch processing below — see CONCURRENCY and
 // BATCH_GAP_MS inside analysisPassInner. Serializing every single match
@@ -139,11 +140,24 @@ function needsAnalysis(match) {
   // later fixture refresh resolves the actual participants.
   if (!hasKnownTeams(match)) return false;
   if (!match.aiOdds || !match.aiAnalyzedAt) return true;
-  // Live matches get a much tighter refresh window than pre-match ones —
-  // the score/minute changes constantly, so odds need to track it in near
-  // real time instead of sitting on stale pre-match numbers for 3 hours.
-  const maxAge = isLive(match) ? LIVE_ANALYSIS_MAX_AGE_MS : ANALYSIS_MAX_AGE_MS;
-  return (Date.now() - match.aiAnalyzedAt) > maxAge;
+
+  if (!isLive(match)) {
+    return (Date.now() - match.aiAnalyzedAt) > ANALYSIS_MAX_AGE_MS;
+  }
+
+  // REAL FIX for "too many live matches to keep up with": re-analyzing
+  // EVERY live match every 60s regardless of whether anything actually
+  // happened was spending the same limited AI budget on a scoreless,
+  // unchanged 0-0 match as on one where a goal just went in. With 100+
+  // matches live at once, that's a lot of wasted calls on matches where
+  // nothing changed, crowding out matches that genuinely need a fresh
+  // price. Now: a real score change gets the fast refresh (near
+  // real-time); an unchanged score only gets refreshed on the slower
+  // safety-net interval, freeing up capacity for whatever actually moved.
+  const scoreChanged = match.aiAnalyzedAtScore != null && match.aiAnalyzedAtScore !== describeGoalsOnly(match);
+  const age = Date.now() - match.aiAnalyzedAt;
+  if (scoreChanged) return age > 5000; // near-instant — a tiny debounce only, not a real gate
+  return age > LIVE_SAFETY_REFRESH_MS;
 }
 
 // Caps how many matches we attempt to analyze in a single pass. With two
@@ -249,7 +263,7 @@ async function analysisPassInner() {
         // out faster.
         const history = live ? null : await fetchMatchHistory(match);
         const odds = await ai.analyzeMatch(match, history, live ? buildLiveState(match) : null);
-        await db.upsertMatchOdds(match.id, days, odds);
+        await db.upsertMatchOdds(match.id, days, odds, describeGoalsOnly(match));
         var home = match.homeTeam && match.homeTeam.name;
         var away = match.awayTeam && match.awayTeam.name;
         console.log('[scheduler] Analyzed match ' + match.id + ' (' + home + ' vs ' + away + ') for days=' + days
@@ -283,6 +297,17 @@ function buildLiveState(match) {
 function describeScore(match) {
   const s = buildLiveState(match);
   return (s.homeGoals != null ? s.homeGoals : '?') + '-' + (s.awayGoals != null ? s.awayGoals : '?') + (s.minute ? (' @ ' + s.minute + "'") : '');
+}
+
+// Goals-only, deliberately WITHOUT the minute — used specifically for
+// score-change detection in needsAnalysis(). describeScore() above
+// includes the minute for human-readable log lines, but the minute changes
+// on nearly every poll regardless of whether a goal happened, which would
+// make a "has the score changed" comparison against it true almost every
+// single time — silently defeating the entire point of the optimization.
+function describeGoalsOnly(match) {
+  const s = buildLiveState(match);
+  return (s.homeGoals != null ? s.homeGoals : '?') + '-' + (s.awayGoals != null ? s.awayGoals : '?');
 }
 
 // Pulls real head-to-head + each team's recent form from football-data.org

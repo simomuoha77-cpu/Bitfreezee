@@ -230,7 +230,7 @@ async function getFixtures(days, sport) {
 // info comes in, or a live repricing) shows up immediately on the next
 // read, from JuanAi's UI or BetaKE's API call, with no risk of clobbering
 // unrelated fixture data written by a concurrent saveFixtures call.
-async function upsertMatchOdds(matchId, days, odds) {
+async function upsertMatchOdds(matchId, days, odds, scoreAtAnalysis) {
   // AI analysis only ever runs for football (basketball skips it by design
   // — see basketballData.js's file header) — so this always targets the
   // football-prefixed bucket key. Written explicitly here (not defaulted
@@ -247,7 +247,7 @@ async function upsertMatchOdds(matchId, days, odds) {
     bucket.matches = bucket.matches.map(m => {
       if (String(m.id) === String(matchId)) {
         found = true;
-        return Object.assign({}, m, { aiOdds: odds, aiPrediction: odds.prediction, aiConfidence: odds.confidence, aiAnalysis: odds.analysis, aiXG: { home: odds.xgHome, away: odds.xgAway }, aiValueBet: odds.valueBet, aiAnalyzedAt: now });
+        return Object.assign({}, m, { aiOdds: odds, aiPrediction: odds.prediction, aiConfidence: odds.confidence, aiAnalysis: odds.analysis, aiXG: { home: odds.xgHome, away: odds.xgAway }, aiValueBet: odds.valueBet, aiAnalyzedAt: now, aiAnalyzedAtScore: scoreAtAnalysis || null });
       }
       return m;
     });
@@ -267,6 +267,7 @@ async function upsertMatchOdds(matchId, days, odds) {
           aiXG: { home: odds.xgHome, away: odds.xgAway },
           aiValueBet: odds.valueBet,
           aiAnalyzedAt: now,
+          aiAnalyzedAtScore: scoreAtAnalysis || null,
           updatedAt: new Date().toISOString()
         }
       }
