@@ -18,6 +18,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression'); // REAL FIX for hitting Render's free-tier 5GB/month bandwidth cap far faster than expected: every API response (fixtures JSON — often 1000+ matches, each with full AI-written analysis text) was being sent completely uncompressed. gzip typically shrinks repetitive JSON like this by 70-90%, so this alone should make the same 5GB allowance cover several times more real traffic than before.
 const path = require('path');
 const db = require('./db');
 const ai = require('./ai');
@@ -32,6 +33,7 @@ const userToken = require('./userToken');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
