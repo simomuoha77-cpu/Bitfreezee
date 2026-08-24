@@ -46,6 +46,7 @@ let apiKeysFallback = [];
 let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
 let settingsFallback = {}; // keyed by setting name -> value (JSON-serializable)
 let usingFallback = false;
+let lastWrittenMatchContent = new Map(); // `${bucketKey}:${matchId}` -> last-written JSON string — see saveFixtures below for why this exists
 
 async function connectMongo() {
   if (mongoConnectAttempted) return;
@@ -126,17 +127,45 @@ async function saveFixtures(days, matches, sport) {
   }
 
   try {
-    const ops = matches.map(m => ({
-      updateOne: {
-        filter: { matchId: String(m.id), days: bucketKey },
-        // $set updates the match's base fixture data (teams, date, status,
-        // score) WITHOUT touching aiOdds/aiPrediction/etc — those fields are
-        // only ever written by upsertMatchOdds below, so a fixture refresh
-        // can never accidentally wipe out existing analysis.
-        update: { $set: { matchId: String(m.id), days: bucketKey, sport: sport, match: m, fetchedAt: Date.now(), updatedAt: now } },
-        upsert: true
-      }
-    }));
+    // REAL FIX for excess "Service-Initiated" outbound bandwidth (Render
+    // metrics showed this larger than compressed HTTP response traffic):
+    // every refresh cycle used to rewrite EVERY match's full document to
+    // MongoDB unconditionally, even for the large fraction of matches
+    // (most non-live ones, and many live ones between events) whose data
+    // is byte-for-byte identical to what was already there. Skipping
+    // those unchanged writes entirely — comparing against what was last
+    // actually sent, not re-fetching from Mongo to check — cuts real
+    // outbound traffic without changing behavior: an unchanged match still
+    // ends up with exactly the same data in the database either way.
+    // Simple safety valve against unbounded memory growth over many days
+    // of continuous operation: this cache has no explicit eviction tied to
+    // match expiry (expireOldMatches' deleteMany doesn't report which IDs
+    // it removed, so precise cleanup isn't cheaply possible here). If it
+    // grows past a generous ceiling, just clear it — worst case, the next
+    // write cycle re-sends currently-tracked matches once more than
+    // strictly necessary, a small one-time cost, not a recurring one.
+    if (lastWrittenMatchContent.size > 20000) {
+      console.log('[db] lastWrittenMatchContent cache exceeded 20000 entries — clearing (memory safety valve, not an error)');
+      lastWrittenMatchContent.clear();
+    }
+    const ops = [];
+    matches.forEach(m => {
+      const contentKey = bucketKey + ':' + String(m.id);
+      const serialized = JSON.stringify(m);
+      if (lastWrittenMatchContent.get(contentKey) === serialized) return; // identical to last write — skip entirely
+      lastWrittenMatchContent.set(contentKey, serialized);
+      ops.push({
+        updateOne: {
+          filter: { matchId: String(m.id), days: bucketKey },
+          // $set updates the match's base fixture data (teams, date, status,
+          // score) WITHOUT touching aiOdds/aiPrediction/etc — those fields are
+          // only ever written by upsertMatchOdds below, so a fixture refresh
+          // can never accidentally wipe out existing analysis.
+          update: { $set: { matchId: String(m.id), days: bucketKey, sport: sport, match: m, fetchedAt: Date.now(), updatedAt: now } },
+          upsert: true
+        }
+      });
+    });
     if (ops.length) await fixturesCollection.bulkWrite(ops);
 
     // CROSS-BUCKET CLEANUP: a match's kickoff timing can cause it to
