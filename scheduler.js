@@ -366,6 +366,7 @@ function start() {
   if (running) return;
   running = true;
   console.log('[scheduler] Starting background auto-refresh + auto-analysis (no manual clicks needed)');
+  console.log('[scheduler] Running in football-data.org-only mode — odds-api.io is disabled (see comment in footballData.js getOddsApiIoMatchesForDate). Real live scores/minutes for ~12 major leagues; all odds are AI-estimated. This is intentional, not an error.');
 
   // REAL FIX for "all 11 odds-api.io keys hit their daily limit at the same
   // moment, on a day with unusually many restarts": the app's own tracking

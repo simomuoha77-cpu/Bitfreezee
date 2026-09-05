@@ -497,6 +497,21 @@ function convertOddsApiIoEvent(e, liveClock) {
 // hitting the API again — this is a read of data already in memory, not an
 // extra network call, so it doesn't add to odds-api.io's rate-limit budget.
 async function getOddsApiIoMatchesForDate(dateStr, isTodayBucket) {
+  // DISABLED (explicit, not just via missing env var): odds-api.io paused
+  // new free API keys indefinitely and has revoked/rejected all existing
+  // free keys tried here (confirmed directly on their own dashboard —
+  // "New free API keys are paused... Paid plans are still available").
+  // Running purely on football-data.org now: real live status/minute data
+  // (better quality than odds-api.io ever gave, which needed the whole
+  // estimation/live-clock system built earlier), just for the ~12 major
+  // leagues football-data.org covers, at zero cost, with a friendly
+  // steady 10-req/min-per-key limit that never runs out for the day —
+  // unlike odds-api.io's 500/day wall this whole conversation kept
+  // fighting. Re-enable by removing this early return (and restoring the
+  // ODDSAPIIO_KEY env var) if a paid odds-api.io plan or a different
+  // provider integration happens later.
+  return [];
+  // eslint-disable-next-line no-unreachable
   if (!realOdds.isOddsApiIoConfigured()) return [];
   try {
     // Fetched together: /events gives the day's schedule + settled scores,
