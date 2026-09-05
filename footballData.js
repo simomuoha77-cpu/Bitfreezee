@@ -205,15 +205,45 @@ function normalizeFdScore(rawScore) {
   };
 }
 
+// The account's available competitions (confirmed from the football-data.org
+// account page's "Available competitions" list for TIER_ONE/free access) —
+// used to fetch per-competition instead of the generic /matches endpoint.
+// See getMatchesForDate below for why this is necessary.
+const COVERED_COMPETITIONS = ['WC', 'CL', 'BL1', 'DED', 'BSA', 'PD', 'FL1', 'ELC', 'PPL', 'EC', 'SA', 'PL'];
+
 async function getMatchesForDate(dateStr) {
-  const data = await fdFetch('/matches?dateFrom=' + dateStr + '&dateTo=' + dateStr);
-  const matches = data.matches || [];
-  // Normalize score field names in place — every other field on these raw
-  // football-data.org match objects (status, utcDate, homeTeam.name,
-  // competition.name, etc.) is passed through completely unchanged; only
-  // the score sub-object's internal key names are touched.
-  matches.forEach(m => { m.score = normalizeFdScore(m.score); });
-  return matches;
+  // REAL BUG FIX (confirmed via live curl testing, not a guess): the generic
+  // /v4/matches?dateFrom=X&dateTo=X endpoint — what this function used to
+  // call — returns an EMPTY matches array on this account's free TIER_ONE
+  // plan even on dates with real, confirmed fixtures. Querying the exact
+  // same date through /v4/competitions/{code}/matches?dateFrom=X&dateTo=X
+  // instead correctly returns real matches (verified: PL alone returned 7
+  // matches for a date the generic endpoint reported zero for). This is a
+  // real, documented-by-testing quirk of the free tier's top-level /matches
+  // resource, not something fixable by changing query parameters on it —
+  // the per-competition endpoint is simply the one that actually works.
+  //
+  // This does mean one date now costs up to COVERED_COMPETITIONS.length
+  // requests instead of 1 (each still going through fdFetch's existing
+  // per-key throttle/rotation/retry, so the 10-req/min-per-key budget is
+  // still respected — it just takes longer wall-clock time to complete a
+  // single date now). Callers (getMergedMatchesForDate, scheduler.js) are
+  // unaffected — this function's signature and return shape are unchanged.
+  const all = [];
+  for (const code of COVERED_COMPETITIONS) {
+    try {
+      const data = await fdFetch('/competitions/' + code + '/matches?dateFrom=' + dateStr + '&dateTo=' + dateStr);
+      const matches = data.matches || [];
+      matches.forEach(m => { m.score = normalizeFdScore(m.score); });
+      all.push(...matches);
+    } catch (e) {
+      // Don't let one competition's failure (e.g. this account's plan
+      // doesn't actually include it, or a transient error) block the rest —
+      // same "keep going, log it" philosophy as the rest of this file.
+      console.error('[footballData] competition ' + code + ' fetch failed for ' + dateStr + ': ' + e.message);
+    }
+  }
+  return all;
 }
 
 // ── odds-api.io as a SECOND fixtures source ────────────────────────────

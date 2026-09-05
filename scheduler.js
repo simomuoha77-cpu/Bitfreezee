@@ -16,7 +16,7 @@ const ai = require('./ai');
 const realOdds = require('./realOdds'); // needed directly (not just via footballData) to persist/restore odds-api.io key-pool usage state across restarts — see restoreKeyPoolState/exportKeyPoolState in realOdds.js
 
 const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixture lists every 15 min — nothing there is live/about-to-finish, so this doesn't need to be fast
-const TODAY_REFRESH_INTERVAL_MS = 60 * 1000;      // TODAY's bucket refreshes every 60s (tightened from 2min) — this controls how quickly a match flips from SCHEDULED to IN_PLAY once it actually kicks off. Still comfortably within football-data.org's 10 req/min budget (just today's single bucket, not all 8), and odds-api.io's shared cached /events response means this doesn't cost extra calls there either.
+const TODAY_REFRESH_INTERVAL_MS = 3 * 60 * 1000;  // widened from 60s: getMatchesForDate now fans out to ~12 sequential per-competition calls (see footballData.js) instead of 1, so a single refresh can take over a minute on one key alone — 60s was no longer enough headroom to reliably finish one cycle before the next was due.
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // FAST path: if the score has changed since last analysis, re-price within this window — a goal should update odds almost immediately, like a real in-play book
@@ -339,13 +339,20 @@ async function fetchMatchHistory(match) {
   }
 }
 
+let fixtureRefreshLoopInFlight = false;
 async function fixtureRefreshLoop() {
-  for (const days of DAY_BUCKETS) {
-    const last = lastFixtureRefresh[days] || 0;
-    const interval = days === 0 ? TODAY_REFRESH_INTERVAL_MS : FIXTURE_REFRESH_INTERVAL_MS;
-    if (Date.now() - last >= interval) {
-      await refreshFixturesForDay(days);
+  if (fixtureRefreshLoopInFlight) return; // previous cycle (now potentially ~12 calls per day bucket) still running — never overlap
+  fixtureRefreshLoopInFlight = true;
+  try {
+    for (const days of DAY_BUCKETS) {
+      const last = lastFixtureRefresh[days] || 0;
+      const interval = days === 0 ? TODAY_REFRESH_INTERVAL_MS : FIXTURE_REFRESH_INTERVAL_MS;
+      if (Date.now() - last >= interval) {
+        await refreshFixturesForDay(days);
+      }
     }
+  } finally {
+    fixtureRefreshLoopInFlight = false;
   }
 }
 
