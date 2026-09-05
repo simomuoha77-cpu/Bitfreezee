@@ -46,6 +46,20 @@ const ODDSAPIIO_KEYS = (process.env.ODDSAPIIO_KEY || '')
   .split(',')
   .map(k => k.trim())
   .filter(Boolean);
+
+// DIAGNOSTIC for "many keys fail, one key works" reports — logs exactly
+// what the app actually parsed from the env var at startup, without
+// exposing the key values themselves. If this shows a different key count
+// than expected, or any suspiciously short/long lengths, that's a copy-
+// paste/formatting problem in the Render env var itself (hidden characters,
+// a key that got truncated, an accidental line break instead of a comma,
+// etc.) — not a bug in this parsing code, which is a plain, standard
+// comma-split.
+if (ODDSAPIIO_KEYS.length) {
+  console.log('[realOdds] Parsed ' + ODDSAPIIO_KEYS.length + ' odds-api.io key(s) from ODDSAPIIO_KEY env var. Lengths: [' + ODDSAPIIO_KEYS.map(k => k.length).join(', ') + '] — a real odds-api.io key is normally the same length as the others; a value here that looks much shorter or longer usually means that specific key got corrupted or cut off when it was pasted into Render.');
+} else {
+  console.error('[realOdds] ODDSAPIIO_KEY env var is EMPTY or not set at all — every odds-api.io call will fail with "need a valid apiKey" until this is fixed.');
+}
 const ODDSAPIIO_BASE = 'https://api.odds-api.io/v3';// odds-api.io free tier only unlocks 2 bookmakers; Bet365 was confirmed
 // working in real testing. If your account has different books enabled,
 // change this — there's no single endpoint that tells us which books a
