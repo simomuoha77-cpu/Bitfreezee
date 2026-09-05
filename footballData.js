@@ -223,7 +223,63 @@ function normalizeFdScore(rawScore) {
 // account page's "Available competitions" list for TIER_ONE/free access) —
 // used to fetch per-competition instead of the generic /matches endpoint.
 // See getMatchesForDate below for why this is necessary.
-const COVERED_COMPETITIONS = ['WC', 'CL', 'BL1', 'DED', 'BSA', 'PD', 'FL1', 'ELC', 'PPL', 'EC', 'SA', 'PL'];
+//
+// REAL BUG FIX: this list used to be the ONLY source of which competitions
+// ever got fetched — reported symptom was the app only ever showing a
+// handful of leagues (Premier League, Bundesliga, Eredivisie, Ligue 1,
+// Championship, Serie A) day to day, because this fixed list is just
+// whatever someone typed in once, not necessarily everything the account's
+// plan actually has access to (and can drift further out of date if the
+// plan is ever upgraded, or football-data.org adds/removes competitions).
+// It's now kept ONLY as an emergency fallback (see getCompetitionCodes
+// below) for the rare case where the dynamic /v4/competitions call itself
+// fails — normal operation no longer uses this constant at all.
+const FALLBACK_COMPETITIONS = ['WC', 'CL', 'BL1', 'DED', 'BSA', 'PD', 'FL1', 'ELC', 'PPL', 'EC', 'SA', 'PL'];
+
+// REAL FIX: dynamically discovers every competition the account's plan
+// actually has access to, via football-data.org's own GET /v4/competitions
+// endpoint (confirmed against their official docs: the only filter it
+// supports is an OPTIONAL "areas" param — omitting it, as done here, does
+// NOT paginate or hide anything; it returns the complete list the token can
+// see). Cached in-memory since a competition list changes on the order of
+// months/seasons, not minutes — re-fetching it on every single date lookup
+// would burn through the same 10-req/min-per-key budget that
+// getMatchesForDate already needs for the actual match data.
+let competitionsCache = { list: null, fetchedAt: 0 };
+const COMPETITIONS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12h
+
+async function getAvailableCompetitions() {
+  const isFresh = competitionsCache.list && (Date.now() - competitionsCache.fetchedAt) < COMPETITIONS_CACHE_TTL_MS;
+  if (isFresh) return competitionsCache.list;
+
+  const data = await fdFetch('/competitions');
+  const list = (data.competitions || []).map(c => ({
+    code: c.code,
+    name: c.name,
+    type: c.type || null,
+    emblem: c.emblem || null,
+    area: c.area ? { name: c.area.name, code: c.area.code, flag: c.area.flag || null } : null,
+    plan: c.plan || null
+  })).filter(c => c.code); // a competition with no code can't be used to fetch its matches anyway
+
+  competitionsCache = { list, fetchedAt: Date.now() };
+  return list;
+}
+
+// Just the codes, for getMatchesForDate's fetch loop — falls back to the
+// FALLBACK_COMPETITIONS constant above only if the dynamic call itself
+// throws (e.g. football-data.org is down, or every key is currently
+// cooling down), so a temporary discovery failure doesn't take fixture
+// fetching down entirely.
+async function getCompetitionCodes() {
+  try {
+    const list = await getAvailableCompetitions();
+    if (list.length > 0) return list.map(c => c.code);
+  } catch (e) {
+    console.error('[footballData] dynamic competitions discovery failed, using fallback list: ' + e.message);
+  }
+  return FALLBACK_COMPETITIONS;
+}
 
 async function getMatchesForDate(dateStr) {
   // REAL BUG FIX (confirmed via live curl testing, not a guess): the generic
@@ -237,14 +293,18 @@ async function getMatchesForDate(dateStr) {
   // resource, not something fixable by changing query parameters on it —
   // the per-competition endpoint is simply the one that actually works.
   //
-  // This does mean one date now costs up to COVERED_COMPETITIONS.length
-  // requests instead of 1 (each still going through fdFetch's existing
-  // per-key throttle/rotation/retry, so the 10-req/min-per-key budget is
-  // still respected — it just takes longer wall-clock time to complete a
-  // single date now). Callers (getMergedMatchesForDate, scheduler.js) are
-  // unaffected — this function's signature and return shape are unchanged.
+  // This does mean one date now costs up to however many competitions the
+  // account can see (dynamically discovered — see getCompetitionCodes
+  // above) requests instead of 1 (each still going through fdFetch's
+  // existing per-key throttle/rotation/retry, so the 10-req/min-per-key
+  // budget is still respected — it just takes longer wall-clock time to
+  // complete a single date now, and scales with however many competitions
+  // the plan actually covers). Callers (getMergedMatchesForDate,
+  // scheduler.js) are unaffected — this function's signature and return
+  // shape are unchanged.
+  const codes = await getCompetitionCodes();
   const all = [];
-  for (const code of COVERED_COMPETITIONS) {
+  for (const code of codes) {
     try {
       const data = await fdFetch('/competitions/' + code + '/matches?dateFrom=' + dateStr + '&dateTo=' + dateStr);
       const matches = data.matches || [];
@@ -359,10 +419,32 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
   const rawElapsedMin = Math.floor((Date.now() - new Date(kickoffIso).getTime()) / 60000);
   if (rawElapsedMin < 0) return null; // hasn't kicked off yet
 
-  const HALF_TIME_BREAK_MIN = 16; // was 15 — real broadcast half-time breaks commonly run slightly past the strict 15-minute rule
+  const HALF_TIME_BREAK_MIN = 15; // REAL BUG FIX: was 16 — see TYPICAL_STOPPAGE_MIN comment below for the full reasoning; this alone is a small part of the fix, the stoppage constant below is the big one.
   const FIRST_HALF_MIN = 45;
   const SECOND_HALF_MIN = 45;
-  const MAX_STOPPAGE_PER_HALF = 9; // was 8 — modern IFAB directives (timing goal celebrations, subs, VAR reviews) have pushed typical added time up in recent seasons
+  // REAL BUG FIX for JuanAi's live minute running 7-12 min behind Betika/
+  // SafariBet on ordinary matches (confirmed on multiple separate live
+  // matches, not a one-off): this constant used to be a single
+  // MAX_STOPPAGE_PER_HALF=9 reused for TWO different purposes — (1) how
+  // much "dead time" to assume has passed before the match even reaches
+  // half-time/second-half, and (2) how high the second-half estimate is
+  // allowed to climb during play. Using the pessimistic WORST-CASE value
+  // (9 min stoppage) for purpose (1) meant this function assumed 9+15=24
+  // min of total dead time before it would start counting ANY second-half
+  // minutes, on every single match, regardless of that match's actual
+  // stoppage time — which for most ordinary matches is more like 2-5 min,
+  // not 9. That mismatch is exactly the observed lag. Splitting these into
+  // two constants: TYPICAL_STOPPAGE_MIN (a realistic average, used for
+  // timing the phase transitions below) vs MAX_STOPPAGE_DISPLAY_CAP (kept
+  // at the old worst-case value, used ONLY to cap how far the second-half
+  // estimate can climb — this is what originally prevented the "111'"
+  // runaway bug, and lowering IT would reintroduce that bug, so it stays
+  // high on purpose). If this now runs ahead of reality for a match with
+  // genuinely long stoppage, that's an expected, correct-direction trade-
+  // off (see the no-buffer reasoning above this function) — verify against
+  // an independent real source before adjusting further, same as always.
+  const TYPICAL_STOPPAGE_MIN = 4;
+  const MAX_STOPPAGE_DISPLAY_CAP = 9;
 
   // THE ACTUAL FIX for "runs ahead of reality after half-time": when we
   // have a real, provider-confirmed half-time checkpoint (htObservedAt —
@@ -388,7 +470,7 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
       return { minute: FIRST_HALF_MIN, isHalftime: true };
     }
     const secondHalfElapsed = minSinceHtObserved - RESUME_BUFFER_MIN;
-    const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
+    const cappedSecondHalf = Math.min(secondHalfElapsed, SECOND_HALF_MIN + MAX_STOPPAGE_DISPLAY_CAP);
     return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
   }
 
@@ -404,11 +486,11 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
   // in stoppage time, which simply cannot be known in advance.
   const elapsedMin = rawElapsedMin;
 
-  if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF) {
+  if (elapsedMin <= FIRST_HALF_MIN + TYPICAL_STOPPAGE_MIN) {
     // Still in the first half (or its stoppage time) — no adjustment needed.
     return { minute: elapsedMin, isHalftime: false };
   }
-  if (elapsedMin <= FIRST_HALF_MIN + MAX_STOPPAGE_PER_HALF + HALF_TIME_BREAK_MIN) {
+  if (elapsedMin <= FIRST_HALF_MIN + TYPICAL_STOPPAGE_MIN + HALF_TIME_BREAK_MIN) {
     // In the half-time window itself. Returning isHalftime:true here is the
     // actual fix for matches appearing to "keep counting" through the
     // break — without this flag, every consumer (JuanAi's own dashboard,
@@ -422,8 +504,8 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
   // one remaining case that can still run ahead of reality (same root
   // cause as before), because there's no real signal to anchor to for
   // this specific match.
-  const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - MAX_STOPPAGE_PER_HALF - HALF_TIME_BREAK_MIN;
-  const cappedSecondHalf = Math.min(Math.max(0, secondHalfElapsed), SECOND_HALF_MIN + MAX_STOPPAGE_PER_HALF);
+  const secondHalfElapsed = elapsedMin - FIRST_HALF_MIN - TYPICAL_STOPPAGE_MIN - HALF_TIME_BREAK_MIN;
+  const cappedSecondHalf = Math.min(Math.max(0, secondHalfElapsed), SECOND_HALF_MIN + MAX_STOPPAGE_DISPLAY_CAP);
   return { minute: FIRST_HALF_MIN + cappedSecondHalf, isHalftime: false };
 }
 
@@ -791,4 +873,4 @@ function getKeyPoolStatus() {
   };
 }
 
-module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute, REALISTIC_MAX_LIVE_MIN, getHtObservedAt, recordHalftimeObserved };
+module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute, REALISTIC_MAX_LIVE_MIN, getHtObservedAt, recordHalftimeObserved, getAvailableCompetitions };

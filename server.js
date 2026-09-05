@@ -822,6 +822,22 @@ app.get('/internal/fixtures-view', async (req, res) => {
   res.json(bucket || { matches: [], fetchedAt: null });
 });
 
+// GET /internal/competitions — powers the frontend's league filter
+// dropdown (see loadCompetitionsList() in public/index.html) with the SAME
+// dynamic football-data.org GET /v4/competitions response that
+// footballData.js's getMatchesForDate now actually fetches from, instead of
+// a separately-maintained, easily-stale manual list. Read-only, cheap to
+// call from the frontend since footballData.js caches the underlying
+// football-data.org call for 12h.
+app.get('/internal/competitions', async (req, res) => {
+  try {
+    const competitions = await footballData.getAvailableCompetitions();
+    res.json({ competitions });
+  } catch (e) {
+    res.status(500).json({ error: e.message, competitions: [] });
+  }
+});
+
 // GET /internal/casino/exposure — read-only risk monitoring: current
 // round's total staked amount vs the configured MAX_ROUND_EXPOSURE cap
 // (see casino.js). Requires X-Admin-Secret header — this is house-side
