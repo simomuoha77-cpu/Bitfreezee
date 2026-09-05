@@ -64,7 +64,7 @@ const MIN_MS_BETWEEN_CALLS = 6500; // ~9.2 req/min ceiling, per key
 // Independent state per key: last call time (for throttling) and a
 // "blocked until" timestamp (set when a key hits 429, so we stop trying it
 // for a while instead of hammering a key that's already blocked).
-const keyState = FDORG_KEYS.map(key => ({ key, lastCallAt: 0, blockedUntil: 0 }));
+const keyState = FDORG_KEYS.map(key => ({ key, lastCallAt: 0, blockedUntil: 0, retriedOnce: false }));
 let nextKeyIndex = 0; // round-robins the starting point so load spreads across keys over time, not always favoring key[0]
 
 const KEY_BLOCK_COOLDOWN_MS = 20 * 60 * 1000; // how long to avoid a key after it 429s — confirmed in testing that these blocks outlast a simple 1-minute reset, so 20 min is a conservative, safer assumption than "reset immediately"
@@ -110,6 +110,29 @@ async function fdFetch(endpoint) {
     return fdFetch(endpoint);
   }
   if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+    const bodyText = await resp.text().catch(() => '');
+
+    // TRANSIENT-VS-DEAD CHECK: confirmed live (real token, two identical
+    // requests seconds apart) that football-data.org sometimes answers a
+    // genuinely valid, currently-working token with this exact 400 "Your
+    // API token is invalid" body — almost certainly its free-tier
+    // rate/abuse guard misfiring with the wrong status code instead of a
+    // proper 429. Immediately writing this off as a dead key (old
+    // behavior) meant one flaky response could block the ONLY configured
+    // key for a full 20 minutes even though it starts working again
+    // within seconds. So: give the SAME key one short-delay retry before
+    // treating it as actually bad. A truly invalid/revoked key will just
+    // fail the retry too and fall through to the normal long cooldown
+    // below — this only helps the transient case, it doesn't weaken the
+    // dead-key handling.
+    if (!state.retriedOnce) {
+      state.retriedOnce = true;
+      console.warn('[footballData] key ' + state.key.slice(0, 6) + '... got HTTP ' + resp.status + ' (' + (bodyText ? bodyText.slice(0, 150) : 'no body') + ') — retrying same key once in 5s before assuming it\'s actually dead');
+      await new Promise(r => setTimeout(r, 5000));
+      return fdFetch(endpoint);
+    }
+    state.retriedOnce = false;
+
     // REAL BUG FIX: an invalid/unauthorized token used to throw immediately
     // here, WITHOUT ever trying any other configured key — meaning one bad
     // key in a comma-separated list could permanently block the whole
@@ -121,10 +144,11 @@ async function fdFetch(endpoint) {
     // (not forever — a typo'd-then-corrected key on the SAME env var value
     // shouldn't need a full restart to recover) and move on to the next key.
     state.blockedUntil = Date.now() + KEY_BLOCK_COOLDOWN_MS;
-    const bodyText = await resp.text().catch(() => '');
-    console.error('[footballData] key ' + state.key.slice(0, 6) + '... rejected (HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 150) : '') + ') — trying next key if one is available');
+    console.error('[footballData] key ' + state.key.slice(0, 6) + '... rejected again after retry (HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 150) : '') + ') — trying next key if one is available');
     return fdFetch(endpoint);
   }
+  // A clean response clears any retry flag left over from a prior transient blip on this key.
+  state.retriedOnce = false;
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => '');
     throw new Error(`football-data.org HTTP ${resp.status}${bodyText ? ': ' + bodyText.slice(0, 200) : ''}`);
