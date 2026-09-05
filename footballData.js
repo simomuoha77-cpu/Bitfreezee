@@ -447,6 +447,33 @@ function estimateMatchMinute(kickoffIso, htObservedAt) {
 // anchor instead of falling back to the old formula).
 const htObservedAtCache = new Map(); // matchId -> timestamp ms of first observation
 
+// Exposes htObservedAtCache to callers outside this file (server.js's
+// recomputeLiveMinutes) so a REAL halftime signal from football-data.org
+// itself — its own PAUSED status, reported directly and accurately — can
+// anchor the second-half clock the same way odds-api.io's half-time score
+// already does below. Without this, football-data.org matches (the only
+// live source now that odds-api.io is disabled) NEVER got an htObservedAt
+// checkpoint at all, so estimateMatchMinute always fell through to its
+// worst-case fallback formula (assumes a full 9-min stoppage + 16-min
+// break = 25 min of "dead time" before counting any second-half minutes)
+// — accurate only for that specific worst case, and behind reality for
+// every shorter, more typical break. This was the actual cause of a
+// reported ~7-8 minute lag behind other bookmakers (Betika, SafariBet) on
+// live second-half matches.
+function getHtObservedAt(matchId) {
+  return htObservedAtCache.get(String(matchId)) || null;
+}
+function recordHalftimeObserved(matchId) {
+  const key = String(matchId);
+  if (!htObservedAtCache.has(key)) htObservedAtCache.set(key, Date.now());
+  // Same memory safety valve as db.js's lastWrittenMatchContent — this
+  // cache has no per-match expiry tied to a match actually finishing, so
+  // over many days of continuous operation it could otherwise grow
+  // unbounded. Clearing past a generous ceiling costs nothing worse than
+  // one match's second-half estimate briefly re-anchoring.
+  if (htObservedAtCache.size > 5000) htObservedAtCache.clear();
+}
+
 function convertOddsApiIoEvent(e, liveClock) {
   // Maps odds-api.io's event shape onto football-data.org's match shape,
   // so the rest of the pipeline (scheduler.js, ai.js, the frontend) can
@@ -764,4 +791,4 @@ function getKeyPoolStatus() {
   };
 }
 
-module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute, REALISTIC_MAX_LIVE_MIN };
+module.exports = { getMatchesForDate, getMergedMatchesForDate, getDateString, getHeadToHead, getTeamRecentForm, getKeyPoolStatus, estimateMatchMinute, REALISTIC_MAX_LIVE_MIN, getHtObservedAt, recordHalftimeObserved };

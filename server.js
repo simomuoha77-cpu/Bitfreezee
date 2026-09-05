@@ -667,6 +667,25 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // function so the two routes can never silently drift apart in behavior.
 function recomputeLiveMinutes(matches) {
   matches.forEach(m => {
+    // REAL BUG FIX for JuanAi's live minute running ~7-8 min behind other
+    // bookmakers (Betika, SafariBet): every estimateMatchMinute() call
+    // below reads m.htObservedAt as a real halftime anchor when present,
+    // but nothing was ever setting it for football-data.org matches (only
+    // odds-api.io's now-disabled path populated that cache). football-data
+    // .org already reports PAUSED directly and accurately at real
+    // half-time — a genuine provider signal, not a guess — so recording
+    // that moment the first time we see it, and pulling it back onto this
+    // match every request afterward, gives the second-half estimate a real
+    // anchor instead of always falling through to the pessimistic
+    // worst-case fallback formula (see estimateMatchMinute's comments).
+    if (m.status === 'PAUSED' && m.id != null) {
+      footballData.recordHalftimeObserved(m.id);
+    }
+    if (m.id != null) {
+      const observed = footballData.getHtObservedAt(m.id);
+      if (observed) m.htObservedAt = observed;
+    }
+
     // REAL BUG FIX: a match whose kickoff has clearly passed was staying
     // displayed as "Upcoming"/"Scheduled" (status TIMED/SCHEDULED) until
     // football-data.org's own free-tier data eventually flipped it to
