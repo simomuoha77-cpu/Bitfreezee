@@ -667,6 +667,42 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // function so the two routes can never silently drift apart in behavior.
 function recomputeLiveMinutes(matches) {
   matches.forEach(m => {
+    // REAL BUG FIX: a match whose kickoff has clearly passed was staying
+    // displayed as "Upcoming"/"Scheduled" (status TIMED/SCHEDULED) until
+    // football-data.org's own free-tier data eventually flipped it to
+    // IN_PLAY on a later poll — their status sync can lag real kickoff by
+    // several minutes. This block infers "probably live" independently of
+    // that upstream lag, purely from kickoff time already being in the
+    // past — so the UI stops waiting on a provider that may not have
+    // caught up yet. A grace window (GRACE_MS) avoids flipping a match
+    // live the instant its listed kickoff time ticks over, since real
+    // kickoffs commonly slip a few minutes late.
+    //
+    // Deliberately does NOT touch POSTPONED/CANCELLED/SUSPENDED matches —
+    // only TIMED/SCHEDULED, which are the two statuses football-data.org
+    // uses for "hasn't started yet, no reason to think it won't" — a match
+    // the provider has explicitly flagged as not going ahead is left alone.
+    if ((m.status === 'TIMED' || m.status === 'SCHEDULED') && m.utcDate) {
+      const GRACE_MS = 3 * 60 * 1000; // 3 min past listed kickoff before assuming live — covers normal kickoff slippage without needlessly delaying real ones
+      const msSinceKickoff = Date.now() - new Date(m.utcDate).getTime();
+      if (msSinceKickoff > GRACE_MS) {
+        const rawElapsedMin = Math.floor(msSinceKickoff / 60000);
+        if (rawElapsedMin <= footballData.REALISTIC_MAX_LIVE_MIN) {
+          const est = footballData.estimateMatchMinute(m.utcDate, m.htObservedAt || null);
+          m.status = (est && est.isHalftime) ? 'PAUSED' : 'IN_PLAY';
+          m.minute = est ? est.minute : null;
+          m.isHalftime = est ? est.isHalftime : false;
+          m.minuteIsEstimated = true; // marks this for the SAME guarded recompute path below on every subsequent request, and for the frontend's "~" estimated-minute indicator
+        } else {
+          // Kickoff was long enough ago that it should be over by now, but
+          // football-data.org still hasn't posted a final score — same
+          // "don't guess FINISHED with no real score" reasoning as
+          // convertOddsApiIoEvent uses for the odds-api.io path.
+          m.status = 'AWAITING_RESULT';
+        }
+      }
+    }
+
     // CRITICAL GUARD: only recompute minute/status for a match that is
     // CURRENTLY still IN_PLAY or PAUSED. Without this guard, this function
     // would blindly force status back to IN_PLAY/PAUSED on every single
