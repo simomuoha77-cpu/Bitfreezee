@@ -190,10 +190,24 @@ async function fdFetch(endpoint) {
 // weren't reading it).
 function normalizeFdScore(rawScore) {
   if (!rawScore) return null;
+  // REAL BUG FIX (confirmed against a live curl to this exact /v4/ endpoint,
+  // and against football-data.org's own v4 changelog): v4 returns the score
+  // node's teams as plain "home"/"away", NOT "homeTeam"/"awayTeam" — the
+  // latter was the OLD v2 field naming. This function used to read only
+  // p.homeTeam/p.awayTeam, which are always undefined on the real v4
+  // response, so conv() always returned null and every live/finished
+  // match's score silently vanished (frontend then fell back to showing
+  // "0 - 0 LIVE" even when the real score, e.g. Newcastle 1-2 Bournemouth,
+  // was right there in the raw API response). Reading home/away FIRST and
+  // falling back to homeTeam/awayTeam keeps this safe even if some other
+  // response shape ever sends the old v2-style names.
   const conv = (period) => {
     const p = rawScore[period];
-    if (!p || p.homeTeam == null || p.awayTeam == null) return null;
-    return { home: p.homeTeam, away: p.awayTeam };
+    if (!p) return null;
+    const home = p.home != null ? p.home : p.homeTeam;
+    const away = p.away != null ? p.away : p.awayTeam;
+    if (home == null || away == null) return null;
+    return { home, away };
   };
   return {
     winner: rawScore.winner || null,
