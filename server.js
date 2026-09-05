@@ -113,6 +113,26 @@ function requireAdmin(req, res, next) {
 // priced the match. Pass ?realOddsOnly=1 to have this endpoint filter to
 // ONLY such matches server-side, so you don't have to replicate this check
 // in your own code and risk missing a match that should have been excluded.
+// GET /api/competitions — the PUBLIC, partner-facing counterpart to
+// /internal/competitions above. SafariBet's own "Leagues" filter dropdown
+// was found hardcoded to a fixed 6-item list on ITS side (missing La Liga,
+// Champions League, World Cup, Euro Championship, Brasileirao — leagues
+// football-data.org's free tier already covers and JuanAi already fetches)
+// — a SEPARATE hardcoding bug from the one already fixed in JuanAi's own
+// frontend, in a codebase we don't have access to. This gives SafariBet (or
+// any other partner) the same real, dynamic football-data.org competitions
+// list, gated the same way /api/fixtures already is, so they have an actual
+// endpoint to switch their own selector to instead of a manually-typed list
+// that will drift out of date the same way ours did.
+app.get('/api/competitions', requireApiKey, async (req, res) => {
+  try {
+    const competitions = await footballData.getAvailableCompetitions();
+    res.json({ competitions });
+  } catch (e) {
+    res.status(500).json({ error: e.message, competitions: [] });
+  }
+});
+
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
   const days = req.query.days || '0';
   // sport defaults to 'football' so every existing caller (BetaKE included)
