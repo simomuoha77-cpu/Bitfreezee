@@ -703,6 +703,32 @@ function recomputeLiveMinutes(matches) {
       }
     }
 
+    // REAL BUG FIX: football-data.org can (and normally does) report a
+    // match as IN_PLAY/PAUSED directly on fetch, rather than via the
+    // TIMED/SCHEDULED->IN_PLAY inference above — that's the common case,
+    // not the exception. But only the block above ever calls
+    // estimateMatchMinute(), so a match that arrived already-live straight
+    // from the provider never got a minute at all: m.minute stayed null
+    // forever and the UI showed a bare "LIVE" badge with no minute, while
+    // e.g. SafariBet (estimating independently from kickoff time) showed
+    // one just fine. Treating "already IN_PLAY/PAUSED but no minute yet"
+    // as "first time we're seeing this match live" and estimating it right
+    // here — then marking minuteIsEstimated so the guarded recompute block
+    // below keeps updating it (and applies the same 130-min staleness
+    // safety net) on every subsequent request — closes that gap. Skips
+    // matches with a real provider clock (minuteIsRealClock) so this can
+    // never override authoritative minute data if that path is ever
+    // reactivated.
+    if ((m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.minute == null && !m.minuteIsRealClock && m.utcDate) {
+      const est = footballData.estimateMatchMinute(m.utcDate, m.htObservedAt || null);
+      if (est) {
+        m.minute = est.minute;
+        m.isHalftime = est.isHalftime;
+        m.status = est.isHalftime ? 'PAUSED' : 'IN_PLAY';
+        m.minuteIsEstimated = true;
+      }
+    }
+
     // CRITICAL GUARD: only recompute minute/status for a match that is
     // CURRENTLY still IN_PLAY or PAUSED. Without this guard, this function
     // would blindly force status back to IN_PLAY/PAUSED on every single
