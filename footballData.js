@@ -110,7 +110,8 @@ async function fdFetch(endpoint) {
     return fdFetch(endpoint);
   }
   if (!resp.ok) {
-    throw new Error(`football-data.org HTTP ${resp.status}`);
+    const bodyText = await resp.text().catch(() => '');
+    throw new Error(`football-data.org HTTP ${resp.status}${bodyText ? ': ' + bodyText.slice(0, 200) : ''}`);
   }
   return resp.json();
 }
