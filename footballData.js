@@ -109,6 +109,22 @@ async function fdFetch(endpoint) {
     // this is the actual point of having multiple keys.
     return fdFetch(endpoint);
   }
+  if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+    // REAL BUG FIX: an invalid/unauthorized token used to throw immediately
+    // here, WITHOUT ever trying any other configured key — meaning one bad
+    // key in a comma-separated list could permanently block the whole
+    // fetch, even with several other genuinely valid keys sitting unused.
+    // Only 429 (rate limit) used to trigger rotation to the next key; a
+    // bad-credentials error is just as good a reason to try the next one,
+    // arguably more so since a truly invalid key will NEVER recover on its
+    // own the way a rate limit does. Mark it blocked for a long cooldown
+    // (not forever — a typo'd-then-corrected key on the SAME env var value
+    // shouldn't need a full restart to recover) and move on to the next key.
+    state.blockedUntil = Date.now() + KEY_BLOCK_COOLDOWN_MS;
+    const bodyText = await resp.text().catch(() => '');
+    console.error('[footballData] key ' + state.key.slice(0, 6) + '... rejected (HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 150) : '') + ') — trying next key if one is available');
+    return fdFetch(endpoint);
+  }
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => '');
     throw new Error(`football-data.org HTTP ${resp.status}${bodyText ? ': ' + bodyText.slice(0, 200) : ''}`);
