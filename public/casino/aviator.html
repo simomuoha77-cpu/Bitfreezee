@@ -262,6 +262,7 @@ body.fs .game-wrap{
 }
 .abtn.bwait{background:#1c1830;border:1px solid #24203a;color:#4a4460}
 .abtn.bplaced{background:#1c1830;border:1px solid #342c4d;color:#8a83a3}
+.abtn.bqueued{background:#241c40;border:1px solid #4a3d8a;color:#b3a6ff}
 .abtn:disabled{opacity:.4;cursor:not-allowed;animation:none;box-shadow:none}
 
 .qrow{display:flex;justify-content:space-between;gap:6px;margin-bottom:5px}
@@ -503,6 +504,11 @@ body.fs .game-wrap{
 // ══════════════════════════════════════
 let ST='waiting',HIST=[],PLAYERS=[];
 let BET1=null,BET2=null,USER=null;
+// QUEUED[s] holds a stake amount the user asked to bet WHILE the plane was
+// already flying — see doBet()'s flightActive branch. Placed automatically
+// the moment the next round opens (see poll()'s 'waiting' handling), never
+// retroactively applied to the round that was flying when it was queued.
+let QUEUED={1:null,2:null};
 let lastRound=null,prevST='waiting',lastTickM=0;
 let localMulti=1.00,flightActive=false,flyStart=null,pathPts=[];
 let waitTimer=null,countVal=5,countdownRound=null;
@@ -996,6 +1002,19 @@ async function poll(){
           a.placedThisRound=true;
         }
       });
+      // Place any bet queued while the plane was flying (see doBet()'s
+      // flightActive branch) — this is the ONLY place a queued bet ever
+      // gets placed, and it only runs once this round has genuinely
+      // reached 'waiting', so it can never land in the round that was
+      // flying when the user clicked.
+      [1,2].forEach(s=>{
+        const bet=s===1?BET1:BET2;
+        if(QUEUED[s]&&!bet){
+          const queuedStake=QUEUED[s];
+          QUEUED[s]=null;
+          doBet(s,queuedStake);
+        }
+      });
     } else if(ST==='flying'){
       wo.classList.remove('on');mv.style.display='block';
       if(!flightActive){
@@ -1075,21 +1094,57 @@ async function hbet(s){
   else if(ST==='crashed') showT('Wait for next round...','ti');
 }
 
-async function doBet(s){
-  const stake=getStake(s);
+async function doBet(s,forcedStake){
+  // forcedStake lets a queued bet (placed while the plane was flying —
+  // see the flightActive branch below, and poll()'s 'waiting' handling)
+  // use the EXACT stake the user queued, rather than re-reading whatever
+  // happens to be in the input field by the time the next round opens.
+  const stake=forcedStake!=null?forcedStake:getStake(s);
   if(!stake||stake<10) return showT('Min bet KES 10','tl');
   if(stake>100000) return showT('Max bet KES 100,000','tl');
   const tok=localStorage.getItem('token');
   const utoken=sessionStorage.getItem('utoken');
   if(!tok){showT('Session expired — reload with ?key=jsk_xxx&utoken=...','tl');return;}
   if(!utoken){showT('Missing signed session — reload with ?utoken=... from SafariBet','tl');return;}
+
+  // REAL FIX: clicking Bet while the plane is already flying used to be
+  // impossible — the button was fully disabled ("Wait / Next round") with
+  // no way to act on it at all. Now it queues the stake and places it
+  // automatically the instant the NEXT round opens (see the 'waiting'
+  // branch in poll() below) — never in the round that's currently flying,
+  // since that round's bets already closed the moment it took off.
+  if(flightActive){
+    const bet=s===1?BET1:BET2;
+    if(bet){showT('Already have a bet this round','tl');return;}
+    QUEUED[s]=stake;
+    showT('Queued — will bet KES '+stake.toFixed(2)+' next round','ti');
+    updBtns();
+    return;
+  }
+
   playBet();
-  const btn=document.getElementById('b'+s);btn.disabled=true;
+  const btn=document.getElementById('b'+s);
+  btn.disabled=true;
+  // REAL BUG FIX for "clicking Bet at count 5 doesn't seem to register
+  // until count 2": the actual bet confirmation has to wait on a real
+  // network round-trip to SafariBet's own wallet endpoint (confirming the
+  // real-money debit before the bet is allowed to exist — see
+  // walletClient.js's debit(), which has its own 5s timeout for exactly
+  // that external call). That wait is real and can't be skipped without
+  // risking a bet existing before its money is actually confirmed moved.
+  // What WAS missing is any immediate feedback that the click registered
+  // at all — the button just sat disabled with no label change until the
+  // slow network call finally resolved, which reads as "nothing happened
+  // yet" for however long that takes. Showing "Placing..." right here,
+  // before the network call even starts, makes the click itself feel
+  // instant regardless of how long the wallet confirmation takes.
+  btn.classList.add('bwait');
+  btn.innerHTML='Placing...<br><span class="sub">KES '+stake.toFixed(2)+'</span>';
   try{
     const r=await fetch('/api/casino/play/bet',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
       body:JSON.stringify({utoken,gameId:'aviator',slot:s,stake})});
-    if(r.status===401){showT('Invalid API key or session','tl');btn.disabled=false;return;}
+    if(r.status===401){showT('Invalid API key or session','tl');btn.disabled=false;updBtns();return;}
     const d=await r.json();
     if(d.success){
       if(s===1)BET1={stake,cashedOut:false,betId:d.betId};else BET2={stake,cashedOut:false,betId:d.betId};
@@ -1105,8 +1160,8 @@ async function doBet(s){
       // just no longer blocks anything.
       showT('✅ Bet KES '+stake.toFixed(2),'ti');updBtns();
       refreshBalance();
-    }else{showT(d.message||'Failed','tl');btn.disabled=false;}
-  }catch(e){showT('Connection error','tl');btn.disabled=false;}
+    }else{showT(d.message||'Failed','tl');btn.disabled=false;updBtns();}
+  }catch(e){showT('Connection error','tl');btn.disabled=false;updBtns();}
 }
 
 async function doCash(s){
@@ -1144,8 +1199,21 @@ function updBtns(){
     if(flightActive&&bet&&!bet.cashedOut){
       btn.classList.add('bcash');
       btn.innerHTML=`Cash Out<br><span class="sub">${localMulti.toFixed(2)}× — KES ${(bet.stake*localMulti).toFixed(2)}</span>`;
+    }else if(flightActive&&QUEUED[s]){
+      // REAL FIX: this used to be lumped in with the plain "Wait / Next
+      // round" disabled state below, giving no way to tell "I successfully
+      // queued a bet" apart from "betting just isn't available right now".
+      btn.classList.add('bqueued');
+      btn.innerHTML=`Queued ✓<br><span class="sub">KES ${QUEUED[s].toFixed(2)} next round</span>`;
+      btn.disabled=false; // stays clickable so the user can re-click to cancel/adjust before the round opens (see doBet's flightActive branch)
     }else if(flightActive){
-      btn.classList.add('bwait');btn.innerHTML='Wait<br><span class="sub">Next round</span>';btn.disabled=true;
+      // REAL FIX: this used to be btn.disabled=true, making it impossible
+      // to bet at all while a round was flying. Now clicking it queues a
+      // stake for the NEXT round instead (see doBet()'s flightActive
+      // branch) — never the round currently in the air, since that
+      // round's betting window already closed the moment it took off.
+      btn.classList.add('bbet');
+      btn.innerHTML=`Bet<br><span class="sub">${stake.toFixed(2)} KES — next round</span>`;
     }else if(!flightActive&&bet){
       btn.classList.add('bplaced');btn.innerHTML=`Placed ✓<br><span class="sub">KES ${bet.stake.toFixed(2)}</span>`;btn.disabled=true;
     }else if(ST==='crashed'){
