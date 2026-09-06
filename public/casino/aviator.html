@@ -1088,7 +1088,15 @@ async function hbet(s){
   const btn=document.getElementById('b'+s);
   if(btn.disabled) return;
   if(flightActive&&bet&&!bet.cashedOut) await doCash(s);
-  else if(flightActive&&(!bet||bet.cashedOut)) showT('Wait for next round','ti');
+  // REAL BUG FIX: this branch used to just show a "Wait for next round"
+  // toast and do NOTHING — it never actually called doBet(), so the new
+  // queue-a-bet-during-flight feature (see doBet()'s flightActive branch)
+  // was completely unreachable by clicking: the button visually updated to
+  // say "next round", but tapping it just showed a message and queued
+  // nothing. Calling doBet() here is what actually queues it — doBet
+  // itself already shows its own "Queued — will bet KES X next round"
+  // confirmation, so no separate toast is needed here anymore.
+  else if(flightActive&&(!bet||bet.cashedOut)) await doBet(s);
   else if(!flightActive&&ST==='waiting'&&!bet) await doBet(s);
   else if(!flightActive&&ST==='waiting'&&bet) showT('Bet already placed ✓','ti');
   else if(ST==='crashed') showT('Wait for next round...','ti');
