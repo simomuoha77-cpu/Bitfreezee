@@ -1,0 +1,3053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JuanAi — Home Tech Group</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080a0f;--bg2:#0d1018;--bg3:#13171f;--bgh:#181d28;--bga:#1c2232;--sur:#0f1219;
+  --bdr:#1a2030;--bdl:#242d42;--t1:#eceef5;--t2:#8892aa;--tm:#4d5568;
+  --acc:#6366f1;--ach:#818cf8;--acg:rgba(99,102,241,0.18);--acs:rgba(99,102,241,0.08);
+  --ok:#10d9a0;--err:#f87171;--warn:#fbbf24;--info:#38bdf8;
+  --ub:#0c1e45;--ubb:#162d66;--ubt:#bdd0ff;
+  --grad:linear-gradient(135deg,#6366f1,#10d9a0);
+  --sh:0 8px 32px rgba(0,0,0,0.5);--sh2:0 2px 8px rgba(0,0,0,0.3);
+  --tr:0.16s cubic-bezier(0.4,0,0.2,1);
+  --cas-a:#8b5cf6;--cas-b:#f5b942;--cas-grad:linear-gradient(135deg,#8b5cf6,#f5b942);
+  --cas-felt:#150f24;--cas-felt2:#1c1433;--cas-win:#f5b942;--cas-lose:#f87171;
+}
+html.light{
+  --bg:#f0f2f8;--bg2:#fff;--bg3:#e8ecf5;--bgh:#dde3f0;--bga:#d0d8ee;--sur:#fff;
+  --bdr:#c8d0e5;--bdl:#b0bcd8;--t1:#0f172a;--t2:#475569;--tm:#94a3b8;
+  --ub:#dce9ff;--ubb:#b3cbf7;--ubt:#1a3260;--sh:0 4px 24px rgba(0,0,0,0.1);
+}
+html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;background:var(--bg);color:var(--t1);-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bdl);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:var(--tm)}
+.app{display:flex;height:100%;width:100%;position:relative;overflow:hidden}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+@keyframes waveBar{0%{height:3px}100%{height:16px}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes glow{0%,100%{box-shadow:0 0 8px rgba(99,102,241,.4)}50%{box-shadow:0 0 20px rgba(99,102,241,.8)}}
+@keyframes slideIn{from{transform:translateX(-8px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ── AUTH ── */
+.auth-screen{position:fixed;inset:0;z-index:500;background:var(--bg);display:flex;align-items:center;justify-content:center;animation:fadeIn .4s ease}
+.auth-screen.hidden{display:none}
+.auth-bg{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.auth-bg::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 20% 20%,rgba(99,102,241,.12) 0%,transparent 60%),radial-gradient(ellipse 50% 40% at 80% 80%,rgba(16,217,160,.08) 0%,transparent 60%)}
+.auth-bg::after{content:'';position:absolute;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(99,102,241,.04),transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%)}
+.auth-card{position:relative;z-index:1;background:var(--bg2);border:1px solid var(--bdr);border-radius:24px;padding:40px 36px;width:440px;max-width:94vw;box-shadow:0 32px 80px rgba(0,0,0,.6);animation:fadeUp .5s ease both}
+.auth-logo{display:flex;flex-direction:column;align-items:center;margin-bottom:28px}
+.auth-logo-icon{width:64px;height:64px;border-radius:18px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;margin-bottom:14px;box-shadow:0 8px 32px rgba(99,102,241,.4);animation:glow 3s ease-in-out infinite}
+.auth-logo h1{font-size:24px;font-weight:800;letter-spacing:-.6px}
+.auth-logo h1 span{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.auth-logo p{color:var(--tm);font-size:12px;margin-top:4px;font-weight:500}
+.auth-tabs{display:flex;gap:3px;margin-bottom:22px;background:var(--bg3);border-radius:12px;padding:4px}
+.auth-tab{flex:1;padding:10px;text-align:center;border:none;background:transparent;color:var(--t2);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;border-radius:9px;transition:var(--tr)}
+.auth-tab.active{background:var(--acc);color:#fff;box-shadow:0 2px 8px rgba(99,102,241,.4)}
+.auth-tab:not(.active):hover{color:var(--t1);background:var(--bgh)}
+.auth-form{display:none;flex-direction:column;gap:14px;animation:fadeUp .25s ease}
+.auth-form.active{display:flex}
+.fg{display:flex;flex-direction:column;gap:6px}
+.fg label{font-size:12px;font-weight:600;color:var(--t2);letter-spacing:.3px}
+.fi{padding:12px 14px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;color:var(--t1);font-family:'Inter',sans-serif;font-size:14px;outline:none;transition:var(--tr);width:100%}
+.fi:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acg)}
+.fi::placeholder{color:var(--tm)}
+.fi.err{border-color:var(--err);box-shadow:0 0 0 3px rgba(248,113,113,.12)}
+.fe{font-size:11px;color:var(--err);display:none;align-items:center;gap:5px;margin-top:2px}
+.fe.on{display:flex}
+.auth-submit{padding:13px;background:var(--grad);color:#fff;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;cursor:pointer;transition:var(--tr);letter-spacing:.2px}
+.auth-submit:hover{opacity:.9;transform:translateY(-1px);box-shadow:0 6px 20px rgba(99,102,241,.4)}
+.auth-submit:active{transform:translateY(0)}
+.adiv{display:flex;align-items:center;gap:12px;color:var(--tm);font-size:11px;font-weight:500}
+.adiv::before,.adiv::after{content:'';flex:1;height:1px;background:var(--bdr)}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--t1);transition:var(--tr)}
+.gbtn:hover{background:var(--bgh);border-color:var(--bdl);transform:translateY(-1px)}
+.gbtn svg{width:18px;height:18px;flex-shrink:0}
+.gstbtn{display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:transparent;border:1.5px dashed var(--bdr);border-radius:10px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;color:var(--tm);transition:var(--tr)}
+.gstbtn:hover{color:var(--t2);border-color:var(--bdl);background:var(--bg3)}
+.auth-footer{text-align:center;margin-top:12px;font-size:11px;color:var(--tm)}
+.pw{position:relative}
+.pw .fi{padding-right:44px}
+.ptg{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--tm);cursor:pointer;padding:4px;font-size:14px;transition:var(--tr)}
+.ptg:hover{color:var(--t2)}
+
+/* ── SIDEBAR ── */
+.sidebar{width:272px;min-width:272px;background:var(--bg2);border-right:1px solid var(--bdr);display:flex;flex-direction:column;transition:transform .28s ease,opacity .28s ease;z-index:100}
+.sidebar.collapsed{transform:translateX(-100%);position:absolute;height:100%;opacity:0;pointer-events:none}
+.sb-hdr{padding:16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bdr)}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-icon{width:36px;height:36px;border-radius:10px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;flex-shrink:0}
+.brand-name{font-weight:800;font-size:18px;letter-spacing:-.4px}
+.sb-acts{display:flex;gap:3px}
+.ibtn{background:transparent;border:none;color:var(--t2);cursor:pointer;padding:7px;border-radius:8px;transition:var(--tr);font-size:14px;display:flex;align-items:center;justify-content:center}
+.ibtn:hover{background:var(--bgh);color:var(--t1)}
+.new-chat-btn{margin:12px 14px;padding:12px;background:var(--acc);color:#fff;border:none;border-radius:12px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;transition:var(--tr);letter-spacing:.2px}
+.new-chat-btn:hover{background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 16px rgba(99,102,241,.4)}
+.hist-sec{flex:1;overflow-y:auto;padding:6px 8px}
+.hist-lbl{padding:8px 10px 5px;font-size:10px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:1.2px}
+.hist-item{padding:10px 10px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:9px;transition:var(--tr);margin-bottom:2px;position:relative}
+.hist-item:hover{background:var(--bgh)}
+.hist-item.active{background:var(--bga);border:1px solid var(--acg)}
+.hi-icon{width:28px;height:28px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;color:var(--tm);font-size:11px;flex-shrink:0}
+.hist-item.active .hi-icon{background:var(--acg);color:var(--acc)}
+.hi-txt{flex:1;min-width:0}
+.hi-title{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--t1)}
+.hi-time{font-size:10px;color:var(--tm);margin-top:2px}
+.hi-del{opacity:0;background:none;border:none;color:var(--tm);cursor:pointer;padding:5px;border-radius:5px;font-size:11px;transition:var(--tr);flex-shrink:0}
+.hist-item:hover .hi-del{opacity:1}
+.hi-del:hover{color:var(--err);background:rgba(248,113,113,.1)}
+.sb-foot{padding:12px 14px;border-top:1px solid var(--bdr);display:flex;align-items:center;gap:10px;cursor:pointer;transition:var(--tr);position:relative;border-radius:0 0 0 0}
+.sb-foot:hover{background:var(--bgh)}
+.foot-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;font-weight:700;flex-shrink:0;background:var(--grad)}
+.foot-av.guest{background:var(--bg3);color:var(--tm);border:1.5px dashed var(--bdr)}
+.foot-info{flex:1;min-width:0}
+.foot-name{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.foot-sub{font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.user-menu{display:none;position:absolute;bottom:62px;left:10px;right:10px;background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;box-shadow:var(--sh);overflow:hidden;z-index:110;animation:fadeUp .18s ease}
+.um-hdr{padding:12px 14px;border-bottom:1px solid var(--bdr);background:var(--bg3)}
+.um-name{font-size:13px;font-weight:700}
+.um-email{font-size:11px;color:var(--tm);margin-top:2px;word-break:break-all}
+.um-item{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;font-size:12px;font-weight:600;color:var(--t2);transition:var(--tr);border:none;background:none;width:100%;font-family:'Inter',sans-serif;text-align:left}
+.um-item:hover{background:var(--bgh);color:var(--t1)}
+.um-item i{width:16px;text-align:center;font-size:12px}
+.um-item.danger{color:var(--err)}
+.um-item.danger:hover{background:rgba(248,113,113,.08)}
+.um-sep{height:1px;background:var(--bdr);margin:3px 0}
+.ghn{display:flex;flex-direction:column;align-items:center;gap:10px;padding:32px 18px;text-align:center;color:var(--tm)}
+.ghn i{font-size:28px;opacity:.3}
+.ghn p{font-size:12px;line-height:1.6}
+.ghn button{padding:8px 16px;background:var(--acc);color:#fff;border:none;border-radius:8px;font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer}
+
+/* ── MAIN ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;background:var(--bg)}
+.main-hdr{padding:12px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--bdr);background:var(--bg2);position:sticky;top:0;z-index:50;backdrop-filter:blur(12px)}
+.menu-btn{display:none}
+.main-title{font-weight:800;font-size:16px;flex:1;letter-spacing:-.4px}
+.hdr-right{display:flex;gap:8px;align-items:center}
+.conn-badge{padding:5px 10px;border-radius:20px;font-size:10px;font-weight:700;display:flex;align-items:center;gap:5px;letter-spacing:.3px}
+.conn-badge.groq{background:rgba(16,217,160,.1);color:var(--ok);border:1px solid rgba(16,217,160,.25)}
+.main-tab-btn{background:none;border:none;color:var(--t2);cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;font-family:'Inter',sans-serif;transition:.16s;display:flex;align-items:center;gap:5px}
+.main-tab-btn:hover{background:var(--bgh);color:var(--t1)}
+.main-tab-btn.active{background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.2)}
+
+/* ─── CASINO ROOM ──────────────────────────────────────────────────────── */
+.casino-hdr{padding:14px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.casino-hdr .ctitle{font-weight:800;font-size:15px;flex:1;background:var(--cas-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.casino-note{font-size:11px;color:var(--tm);padding:8px 18px;background:var(--bg3);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:6px}
+.casino-grid{display:grid;grid-template-columns:1fr;gap:20px;padding:20px;max-width:640px;margin:0 auto}
+@media(min-width:900px){.casino-grid{grid-template-columns:1fr 1fr;max-width:1100px}}
+.cgame-card{background:radial-gradient(ellipse at top,var(--cas-felt2),var(--cas-felt));border:1px solid var(--bdl);border-radius:18px;padding:18px;box-shadow:var(--sh)}
+.cgame-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.cgame-hdr h3{font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;color:var(--t1)}
+.cgame-balance{font-size:12px;font-weight:700;color:var(--cas-b);background:rgba(245,185,66,.1);border:1px solid rgba(245,185,66,.25);padding:4px 10px;border-radius:20px}
+
+/* Crash game */
+.crash-stage{position:relative;height:240px;background:var(--cas-felt);border-radius:14px;overflow:hidden;border:1px solid var(--bdl);margin-bottom:14px}
+.crash-bg-canvas,.crash-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.crash-plane{position:absolute;width:34px;height:34px;transform:translate(-50%,-50%);pointer-events:none;filter:drop-shadow(0 2px 8px rgba(245,185,66,.5));transition:none;will-change:left,top}
+.crash-mult{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--t1);text-shadow:0 2px 20px rgba(139,92,246,.6);pointer-events:none;transition:color .15s}
+.crash-mult.busted{color:var(--cas-lose)}
+.crash-mult.cashed{color:var(--ok)}
+.crash-status{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--tm);text-transform:uppercase}
+.crash-controls{display:flex;gap:8px;align-items:center}
+.crash-bet-input{width:90px;padding:10px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;font-weight:700;outline:none;text-align:center}
+.crash-bet-input:focus{border-color:var(--cas-a)}
+.crash-btn{flex:1;padding:12px;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:13px;font-weight:800;cursor:pointer;transition:var(--tr);letter-spacing:.2px}
+.crash-btn.play{background:var(--cas-grad);color:#1a0f2e}
+.crash-btn.play:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.crash-btn.cashout{background:var(--ok);color:#04261c}
+.crash-btn.cashout:hover{filter:brightness(1.08)}
+.crash-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.crash-log{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.crash-log span{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--bg3);color:var(--tm)}
+.crash-log span.win{color:var(--ok);background:rgba(16,217,160,.1)}
+.crash-log span.loss{color:var(--cas-lose);background:rgba(248,113,113,.1)}
+
+/* Slot machine */
+.slot-frame{background:var(--cas-felt);border-radius:14px;border:1px solid var(--bdl);padding:18px;margin-bottom:14px}
+.slot-reels{display:flex;gap:8px;justify-content:center;margin-bottom:14px}
+.slot-reel{width:76px;height:88px;background:var(--bg2);border-radius:10px;border:2px solid var(--bdl);display:flex;align-items:center;justify-content:center;font-size:38px;overflow:hidden;position:relative}
+.slot-reel.spinning .slot-sym{animation:slotSpin .12s linear infinite}
+@keyframes slotSpin{0%{transform:translateY(0)}100%{transform:translateY(-40px)}}
+.slot-reel.win{border-color:var(--cas-b);box-shadow:0 0 0 3px rgba(245,185,66,.25)}
+.slot-payline{text-align:center;font-size:11px;color:var(--tm);margin-bottom:14px;min-height:15px;font-weight:700}
+.slot-payline.win{color:var(--cas-b)}
+.slot-controls{display:flex;gap:8px}
+.slot-paytable{margin-top:12px;font-size:10px;color:var(--tm);display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.slot-paytable span{background:var(--bg3);padding:3px 7px;border-radius:6px}
+
+.conn-dot{width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite}
+.conn-badge.groq .conn-dot{background:var(--ok)}
+#adminBadge{display:none;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;background:linear-gradient(135deg,rgba(248,113,113,.15),rgba(251,191,36,.15));color:var(--warn);border:1px solid rgba(251,191,36,.2)}
+
+/* ── TABS ── */
+.main-tabs{display:flex;border-bottom:1px solid var(--bdr);background:var(--bg2);flex-shrink:0;padding:0 4px}
+.main-tab{flex:1;padding:13px 8px;border:none;background:transparent;color:var(--tm);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border-bottom:2.5px solid transparent;transition:var(--tr);display:flex;align-items:center;justify-content:center;gap:7px;letter-spacing:.2px}
+.main-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
+.main-tab:not(.active):hover{color:var(--t2);background:var(--bgh)}
+
+/* ── CHAT ── */
+.chat-wrap{display:flex;flex:1;flex-direction:column;overflow:hidden;position:relative}
+.chat-wrap.hidden{display:none}
+.gbanner{display:none;padding:8px 18px;background:rgba(251,191,36,.05);border-bottom:1px solid rgba(251,191,36,.1);font-size:12px;color:var(--warn);align-items:center;gap:9px;justify-content:center;font-weight:500}
+.gbanner.on{display:flex}
+.gbanner a{color:var(--acc);cursor:pointer;font-weight:700;text-decoration:underline;margin-left:2px}
+.chat-area{flex:1;overflow-y:auto;scroll-behavior:smooth}
+.chat-con{max-width:780px;margin:0 auto;padding:24px 24px 180px}
+
+/* ── WELCOME ── */
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;text-align:center;animation:fadeUp .5s ease}
+.w-logo{width:72px;height:72px;border-radius:20px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-size:30px;color:#fff;margin-bottom:20px;box-shadow:0 12px 40px rgba(99,102,241,.35);animation:glow 3s ease-in-out infinite}
+.welcome h1{font-size:28px;font-weight:800;margin-bottom:8px;letter-spacing:-.6px}
+.welcome h1 span{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.welcome p{color:var(--t2);font-size:14px;max-width:420px;line-height:1.7}
+.suggs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:28px;width:100%;max-width:520px}
+.sg-card{padding:14px 16px;background:var(--bg2);border:1.5px solid var(--bdr);border-radius:14px;cursor:pointer;text-align:left;transition:var(--tr)}
+.sg-card:hover{background:var(--bgh);border-color:var(--bdl);transform:translateY(-2px);box-shadow:var(--sh2)}
+.sg-card .sg-ic{font-size:18px;margin-bottom:6px}
+.sg-card .sg-tx{font-size:12px;color:var(--t2);line-height:1.5;font-weight:500}
+
+/* ── MESSAGES ── */
+.msg{display:flex;gap:12px;padding:16px 0;animation:fadeUp .2s ease}
+.msg.user{justify-content:flex-end}
+.msg.user .mbody{background:var(--ub);border:1px solid var(--ubb);border-radius:18px 18px 4px 18px;padding:12px 16px;max-width:80%}
+.msg.user .mcontent{color:var(--ubt);font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.msg.user .mname{font-size:11px;font-weight:700;color:var(--ubt);opacity:.6;margin-bottom:4px}
+.msg.user .mav{order:2;width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;font-weight:700;font-size:13px}
+.msg.ai .mav{width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--grad);color:#fff;font-weight:800;font-size:12px}
+.msg.ai .mbody{color:var(--t1);flex:1;min-width:0}
+.msg.ai .mcontent,.msg.ai .mcontent p,.msg.ai .mcontent li{color:var(--t1)!important}
+.mbody{flex:1;min-width:0}
+.mname{font-size:12px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;color:var(--t1)}
+.mname .tag{font-size:9px;color:var(--acc);font-weight:700;padding:2px 7px;background:var(--acg);border-radius:5px;border:1px solid rgba(99,102,241,.2);letter-spacing:.3px}
+.mcontent{font-size:14px;line-height:1.75;word-break:break-word}
+.mcontent p{margin:0 0 10px}.mcontent p:last-child{margin-bottom:0}
+.mcontent h1{font-size:21px;font-weight:800;margin:16px 0 8px;border-bottom:1px solid var(--bdr);padding-bottom:7px}
+.mcontent h2{font-size:18px;font-weight:700;margin:14px 0 7px}
+.mcontent h3{font-size:16px;font-weight:700;margin:12px 0 6px}
+.mcontent h4{font-size:14px;font-weight:700;margin:10px 0 5px}
+.mcontent strong{font-weight:700}.mcontent em{font-style:italic;color:var(--t2)}
+.mcontent ul,.mcontent ol{margin:10px 0;padding-left:24px}
+.mcontent li{margin-bottom:6px;line-height:1.65}.mcontent li::marker{color:var(--acc)}
+.mcontent blockquote{border-left:3px solid var(--acc);padding:10px 14px;margin:12px 0;color:var(--t2);font-style:italic;background:var(--acg);border-radius:0 8px 8px 0}
+.mcontent a{color:var(--acc);text-decoration:none;font-weight:500}.mcontent a:hover{text-decoration:underline}
+.mcontent hr{border:none;border-top:1px solid var(--bdr);margin:16px 0}
+.mcontent table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px;display:block;overflow:auto}
+.mcontent th,.mcontent td{border:1px solid var(--bdr);padding:9px 13px;text-align:left}
+.mcontent th{background:var(--bg3);font-weight:700;font-size:12px;color:var(--t2)}
+.mcontent code.inline{background:var(--bg3);border:1px solid var(--bdr);padding:2px 7px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#e2b96d}
+/* ── CODE BLOCKS ── */
+.code-block{position:relative;background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;margin:12px 0;overflow:hidden}
+.code-hdr{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:var(--bg3);border-bottom:1px solid var(--bdr);cursor:pointer;user-select:none}
+.code-hdr:hover{background:var(--bgh)}
+.code-lang-tag{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:1px;font-weight:700;display:flex;align-items:center;gap:7px}
+.code-lang-tag::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.code-acts{display:flex;gap:7px;align-items:center}
+.code-toggle{font-size:10px;font-weight:700;color:var(--t2);display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;background:var(--bg2);border:1px solid var(--bdr);cursor:pointer;font-family:'Inter',sans-serif;transition:var(--tr)}
+.code-toggle:hover{background:var(--bgh);color:var(--t1)}
+.code-body{display:none;border-top:1px solid var(--bdr)}
+.code-body.open{display:block}
+.code-body pre{margin:0;padding:16px;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.65;color:#c9d1d9;white-space:pre}
+.code-copy,.code-run,.code-dl{display:flex;align-items:center;gap:5px;border:1px solid var(--bdr);color:var(--t2);cursor:pointer;padding:4px 10px;border-radius:6px;font-size:10px;font-family:'Inter',sans-serif;font-weight:700;transition:var(--tr);background:var(--bg2)}
+.code-copy:hover,.code-dl:hover{background:var(--bgh);color:var(--t1)}
+.code-copy.copied{color:var(--ok);border-color:rgba(16,217,160,.3);background:rgba(16,217,160,.08)}
+.code-dl{color:var(--acc);border-color:rgba(99,102,241,.3);background:rgba(99,102,241,.08)}
+.code-dl:hover{background:rgba(99,102,241,.15);color:var(--ach)}
+.code-run{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.3);color:#10b981}
+.code-run:hover{background:rgba(16,185,129,.2)}
+.typing-ind{display:flex;align-items:center;gap:5px;padding:6px 0}
+.typing-ind span{width:7px;height:7px;border-radius:50%;background:var(--tm);animation:pulse 1.4s ease-in-out infinite}
+.typing-ind span:nth-child(2){animation-delay:.2s}.typing-ind span:nth-child(3){animation-delay:.4s}
+.stream-cur{display:none;}
+.msg-acts{display:flex;gap:5px;margin-top:10px;opacity:0;transition:var(--tr)}
+.msg:hover .msg-acts{opacity:1}
+.ma-btn{background:none;border:1px solid var(--bdr);color:var(--tm);cursor:pointer;padding:5px 10px;border-radius:7px;font-size:10px;font-family:'Inter',sans-serif;font-weight:600;display:flex;align-items:center;gap:4px;transition:var(--tr)}
+.ma-btn:hover{background:var(--bgh);color:var(--t1);border-color:var(--bdl)}
+.ma-btn.copied{color:var(--ok);border-color:rgba(16,217,160,.3)}
+.msg-dl-bar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.msg-dl-btn{display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;transition:var(--tr);border:none;background:var(--acc);color:#fff}
+.msg-dl-btn:hover{background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 14px rgba(99,102,241,.4)}
+.msg-dl-btn.run{background:linear-gradient(135deg,#10b981,#059669)}
+.msg-dl-btn.run:hover{opacity:.9;box-shadow:0 4px 14px rgba(16,185,129,.4)}
+.msg-img{max-width:260px;border-radius:14px;margin-top:8px;border:1px solid var(--bdr)}
+.img-gen-loading{display:flex;align-items:center;gap:12px;padding:20px;background:var(--bg3);border-radius:14px;border:1px solid var(--bdr)}
+.img-gen-spin{width:28px;height:28px;border:2.5px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+.img-gen-loading span{font-size:13px;font-weight:600;color:var(--t2)}
+.gen-img-wrap{margin-top:8px;border-radius:16px;overflow:hidden;border:1px solid var(--bdr);display:inline-block;max-width:100%}
+.gen-img{display:block;max-width:100%;max-height:500px;object-fit:contain}
+.gen-img-actions{display:flex;gap:8px;padding:10px;background:var(--bg3);border-top:1px solid var(--bdr)}
+.gen-img-btn{display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;transition:var(--tr);border:none;background:var(--acc);color:#fff;text-decoration:none}
+.gen-img-btn:hover{background:var(--ach);transform:translateY(-1px)}
+.gen-img-btn:last-child{background:var(--bg2);color:var(--t2);border:1px solid var(--bdr)}
+.gen-img-btn:last-child:hover{background:var(--bgh);color:var(--t1)}
+
+/* ── INPUT AREA (PROFESSIONAL) ── */
+.input-area{position:absolute;bottom:0;left:0;right:0;padding:12px 20px 20px;background:linear-gradient(to top,var(--bg) 65%,transparent)}
+.input-wrap{max-width:780px;margin:0 auto;background:var(--bg2);border:1.5px solid var(--bdr);border-radius:18px;overflow:hidden;transition:var(--tr);box-shadow:var(--sh2)}
+.input-wrap:focus-within{border-color:var(--acc);box-shadow:0 0 0 3px var(--acg),var(--sh2)}
+
+/* Attachment previews row */
+.attach-row{display:none;padding:10px 14px 0;gap:8px;flex-wrap:wrap;align-items:center}
+.attach-row.on{display:flex}
+.att-chip{display:flex;align-items:center;gap:7px;background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:6px 10px;font-size:11px;font-weight:600;color:var(--t2);max-width:200px;animation:slideIn .2s ease}
+.att-chip .att-icon{font-size:14px;flex-shrink:0}
+.att-chip .att-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.att-chip .att-rm{background:none;border:none;color:var(--tm);cursor:pointer;padding:2px 4px;border-radius:4px;font-size:12px;flex-shrink:0;transition:var(--tr);line-height:1}
+.att-chip .att-rm:hover{color:var(--err);background:rgba(248,113,113,.1)}
+.att-chip.img-chip img{width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--bdr)}
+
+/* Voice indicator */
+.voice-ind{display:none;padding:6px 14px;align-items:center;gap:8px;font-size:11px;color:var(--err);font-weight:600;background:rgba(248,113,113,.04);border-top:1px solid rgba(248,113,113,.1)}
+.voice-ind.on{display:flex}
+.vwave{display:flex;gap:2px;align-items:center;height:16px}
+.vwave span{width:3px;background:var(--err);border-radius:2px;animation:waveBar .5s ease-in-out infinite alternate}
+.vwave span:nth-child(1){height:4px}.vwave span:nth-child(2){height:12px;animation-delay:.12s}.vwave span:nth-child(3){height:7px;animation-delay:.24s}.vwave span:nth-child(4){height:14px;animation-delay:.08s}.vwave span:nth-child(5){height:5px;animation-delay:.2s}
+
+/* Toolbar row above textarea */
+.input-toolbar{display:flex;align-items:center;gap:4px;padding:8px 12px 0}
+.itool-btn{background:transparent;border:none;color:var(--tm);cursor:pointer;padding:6px 8px;border-radius:8px;transition:var(--tr);font-size:14px;display:flex;align-items:center;gap:5px;font-family:'Inter',sans-serif;font-size:12px;font-weight:600}
+.itool-btn:hover{color:var(--t1);background:var(--bgh)}
+.itool-btn.active{color:var(--acc);background:var(--acg)}
+.itool-sep{width:1px;height:18px;background:var(--bdr);margin:0 2px;flex-shrink:0}
+.char-count{margin-left:auto;font-size:10px;color:var(--tm);font-weight:500;padding:0 4px}
+
+/* Textarea row */
+.input-row{display:flex;align-items:flex-end;padding:6px 10px 8px;gap:6px}
+.input-row textarea{flex:1;background:transparent;border:none;outline:none;color:var(--t1);font-family:'Inter',sans-serif;font-size:15px;line-height:1.6;resize:none;min-height:28px;max-height:200px;padding:4px 2px}
+.input-row textarea::placeholder{color:var(--tm)}
+.in-acts{display:flex;gap:4px;align-items:center;flex-shrink:0;padding-bottom:2px}
+
+/* Send button */
+.send-btn{background:var(--acc)!important;color:#fff!important;width:36px;height:36px;display:flex!important;align-items:center;justify-content:center;border-radius:10px!important;border:none;cursor:pointer;transition:var(--tr)!important;font-size:14px;flex-shrink:0}
+.send-btn:hover{background:var(--ach)!important;transform:scale(1.05)}
+.send-btn:disabled{opacity:.35;cursor:not-allowed!important;transform:none!important}
+
+/* Shortcut hint */
+.input-hint{text-align:center;padding:4px 14px 10px;font-size:10px;color:var(--tm);display:flex;align-items:center;justify-content:center;gap:10px}
+.hint-key{background:var(--bg3);border:1px solid var(--bdr);border-radius:4px;padding:1px 6px;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--tm)}
+
+/* ── SLASH COMMANDS POPUP ── */
+.slash-popup{display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--bdr);border-radius:14px;box-shadow:var(--sh);z-index:200;max-height:280px;overflow-y:auto;margin-bottom:6px;animation:fadeUp .15s ease}
+.slash-popup.on{display:block}
+.slash-cat{padding:7px 14px 4px;font-size:10px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bdr)}
+.slash-item{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;transition:var(--tr)}
+.slash-item:hover,.slash-item.selected{background:var(--bgh)}
+.slash-item .si-cmd{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--acc);font-weight:700;min-width:120px}
+.slash-item .si-desc{font-size:11px;color:var(--t2)}
+.zip-viewer{background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;margin:10px 0;overflow:hidden}
+.zip-header{display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);cursor:pointer}
+.zip-header .zh-icon{font-size:16px}
+.zip-header .zh-name{font-size:13px;font-weight:700;flex:1}
+.zip-header .zh-size{font-size:10px;color:var(--tm)}
+.zip-tree{padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t2);line-height:1.8;max-height:200px;overflow-y:auto}
+.zip-tree .zt-file{display:flex;align-items:center;gap:7px;padding:2px 0}
+.zip-tree .zt-file:hover{color:var(--t1)}
+.zip-tree .zt-icon{font-size:11px;width:14px;text-align:center;flex-shrink:0}
+
+/* ── MODALS ── */
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal-ov.on{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--bdr);border-radius:18px;padding:24px;max-width:440px;width:90%;box-shadow:var(--sh);animation:fadeUp .25s ease}
+.modal-box h3{font-size:17px;font-weight:800;margin-bottom:6px;letter-spacing:-.3px}
+.modal-box p{font-size:13px;color:var(--t2);margin-bottom:18px;line-height:1.6}
+.modal-btns{display:flex;justify-content:flex-end;gap:8px}
+.modal-btns button{padding:10px 20px;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:var(--tr)}
+.btn-cancel{background:var(--bg3);color:var(--t2);border:1.5px solid var(--bdr)}.btn-cancel:hover{background:var(--bgh)}
+.btn-danger{background:var(--err);color:#fff}.btn-danger:hover{opacity:.88}
+.btn-primary{background:var(--acc);color:#fff}.btn-primary:hover{background:var(--ach)}
+
+/* ── PREVIEW ── */
+.prev-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);z-index:300;align-items:center;justify-content:center}
+.prev-ov.on{display:flex}
+.prev-con{width:94vw;height:90vh;max-width:1280px;background:var(--bg2);border:1px solid var(--bdr);border-radius:18px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 32px 100px rgba(0,0,0,.7);animation:fadeUp .22s ease}
+.prev-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--bdr);background:var(--bg3);flex-shrink:0}
+.prev-dots{display:flex;gap:6px}
+.prev-dots span{width:12px;height:12px;border-radius:50%}
+.prev-dots span:nth-child(1){background:#ff5f57}.prev-dots span:nth-child(2){background:#febc2e}.prev-dots span:nth-child(3){background:#28c840}
+.prev-title{font-size:12px;font-weight:700;color:var(--t2);display:flex;align-items:center;gap:8px;margin-left:10px}
+.prev-tabs{display:flex;gap:3px}
+.prev-tab{padding:5px 14px;border:none;background:transparent;color:var(--tm);font-family:'Inter',sans-serif;font-size:11px;font-weight:700;cursor:pointer;border-radius:6px;transition:var(--tr)}
+.prev-tab.active{background:var(--acc);color:#fff}
+.prev-tab:not(.active):hover{background:var(--bgh);color:var(--t1)}
+.prev-close{background:none;border:none;color:var(--tm);cursor:pointer;padding:6px 8px;border-radius:7px;font-size:16px;transition:var(--tr)}
+.prev-close:hover{background:var(--bgh);color:var(--t1)}
+.prev-body{flex:1;position:relative;overflow:hidden}
+.prev-iframe{width:100%;height:100%;border:none;background:#fff}
+.prev-src{width:100%;height:100%;overflow:auto;padding:16px;background:var(--bg);display:none}
+.prev-src pre{margin:0;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t1);line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.prev-foot{display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-top:1px solid var(--bdr);background:var(--bg3);flex-shrink:0}
+.prev-info{font-size:11px;color:var(--tm);display:flex;align-items:center;gap:6px;font-weight:600}
+.prev-acts{display:flex;gap:8px}
+.pf-btn{padding:6px 13px;border:1.5px solid var(--bdr);background:var(--bg2);color:var(--t2);border-radius:7px;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:var(--tr);display:flex;align-items:center;gap:6px}
+.pf-btn:hover{background:var(--bgh);color:var(--t1)}
+.pf-btn.primary{background:var(--acc);color:#fff;border-color:var(--acc)}.pf-btn.primary:hover{background:var(--ach)}
+
+/* ── TOAST ── */
+#toast-con{position:fixed;top:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast-el{padding:12px 18px;background:var(--bg2);border-radius:12px;color:var(--t1);font-size:12px;font-family:'Inter',sans-serif;box-shadow:var(--sh);max-width:320px;display:flex;align-items:center;gap:9px;animation:slideIn .3s ease;pointer-events:all;font-weight:600;border:1px solid var(--bdr)}
+
+/* ── OVERLAY / RESPONSIVE ── */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;backdrop-filter:blur(2px)}
+.overlay.on{display:block}
+@media(max-width:768px){
+  .sidebar{position:absolute;height:100%;width:272px;box-shadow:var(--sh)}
+  .menu-btn{display:flex!important}
+  .suggs{grid-template-columns:1fr}
+  .msg.user .mbody{max-width:90%}
+  .prev-con{width:100vw;height:100vh;border-radius:0}
+  .cr-body{flex-direction:column}
+  .cr-left{width:100%;border-right:none;border-bottom:1px solid var(--bdr);max-height:260px}
+  .chat-con{padding:16px 14px 180px}
+}
+@media(min-width:769px){.sidebar:not(.collapsed){transform:translateX(0);opacity:1;pointer-events:all}}
+</style>
+</head>
+<body>
+
+<!-- AUTH -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-bg"></div>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon"><i class="fa-solid fa-bolt"></i></div>
+      <h1>Welcome to <span>JuanAi</span></h1>
+      <p>Intelligent AI by Home Tech Group</p>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchTab('login')" id="tabLogin">Sign In</button>
+      <button class="auth-tab" onclick="switchTab('register')" id="tabReg">Register</button>
+    </div>
+    <div class="auth-form active" id="formLogin">
+      <div class="fg"><label>Email</label><input class="fi" type="email" id="lEmail" placeholder="you@example.com" autocomplete="email"><div class="fe" id="lEmailErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+      <div class="fg"><label>Password</label><div class="pw"><input class="fi" type="password" id="lPass" placeholder="Your password" autocomplete="current-password"><button class="ptg" onclick="togglePw(this)" type="button"><i class="fa-solid fa-eye"></i></button></div><div class="fe" id="lPassErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+      <button class="auth-submit" onclick="doLogin()">Sign In</button>
+      <div class="adiv">or</div>
+      <button class="gbtn" onclick="doGoogle()"><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>Continue with Google</button>
+    </div>
+    <div class="auth-form" id="formReg">
+      <div class="fg"><label>Full Name</label><input class="fi" type="text" id="rName" placeholder="Home Tech Group" autocomplete="name"><div class="fe" id="rNameErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+      <div class="fg"><label>Email</label><input class="fi" type="email" id="rEmail" placeholder="you@example.com" autocomplete="email"><div class="fe" id="rEmailErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+      <div class="fg"><label>Password</label><div class="pw"><input class="fi" type="password" id="rPass" placeholder="Min. 6 characters" autocomplete="new-password"><button class="ptg" onclick="togglePw(this)" type="button"><i class="fa-solid fa-eye"></i></button></div><div class="fe" id="rPassErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+      <div style="display:flex;align-items:flex-start;gap:9px"><input type="checkbox" id="pck" style="margin-top:3px;accent-color:var(--acc)"><label for="pck" style="font-size:12px;color:var(--t2);cursor:pointer;line-height:1.5">I agree to the <a onclick="alert('JuanAI Terms: Use responsibly. Home Tech Group owns all rights.')" style="color:var(--acc);cursor:pointer;font-weight:600">Terms of Service</a></label></div>
+      <button class="auth-submit" onclick="doRegister()">Create Account</button>
+      <div class="adiv">or</div>
+      <button class="gbtn" onclick="doGoogle()"><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>Sign up with Google</button>
+    </div>
+    <div style="margin-top:16px"><button class="gstbtn" onclick="enterGuest()"><i class="fa-solid fa-user-secret"></i>Continue without account</button></div>
+    <div class="auth-footer">Developed by Home Tech Group &middot; JuanAi v2.0</div>
+  </div>
+</div>
+
+<!-- GOOGLE MODAL -->
+<div class="modal-ov" id="gModal">
+  <div class="modal-box" style="max-width:380px">
+    <h3 style="margin-bottom:16px">Sign in with Google</h3>
+    <div class="fg" style="margin-bottom:16px"><input class="fi" type="email" id="gEmail" placeholder="you@gmail.com"><div class="fe" id="gEmailErr"><i class="fa-solid fa-circle-exclamation"></i><span></span></div></div>
+    <div class="modal-btns"><button class="btn-cancel" onclick="closeModal('gModal')">Cancel</button><button class="btn-primary" onclick="confirmGoogle()">Continue</button></div>
+  </div>
+</div>
+
+<!-- DELETE MODAL -->
+<div class="modal-ov" id="delModal">
+  <div class="modal-box"><h3>Delete Chat</h3><p>Are you sure you want to delete this conversation? This action cannot be undone.</p><div class="modal-btns"><button class="btn-cancel" onclick="closeModal('delModal')">Cancel</button><button class="btn-danger" id="delConfirm">Delete</button></div></div>
+</div>
+
+<!-- CLEAR MODAL -->
+<div class="modal-ov" id="clearModal">
+  <div class="modal-box"><h3>Clear All Chats</h3><p>This will permanently delete all your conversations and cannot be undone.</p><div class="modal-btns"><button class="btn-cancel" onclick="closeModal('clearModal')">Cancel</button><button class="btn-danger" onclick="clearAll()">Clear All</button></div></div>
+</div>
+
+<!-- PREVIEW MODAL -->
+<div class="prev-ov" id="prevOv">
+  <div class="prev-con">
+    <div class="prev-hdr">
+      <div style="display:flex;align-items:center"><div class="prev-dots"><span></span><span></span><span></span></div><div class="prev-title"><i class="fa-solid fa-play-circle" style="color:var(--ok)"></i> Live Preview</div></div>
+      <div class="prev-tabs"><button class="prev-tab active" onclick="switchPrevTab('preview')" id="ptabP">Preview</button><button class="prev-tab" onclick="switchPrevTab('source')" id="ptabS">Source</button></div>
+      <button class="prev-close" onclick="closePrev()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="prev-body">
+      <iframe class="prev-iframe" id="prevIframe" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+      <div class="prev-src" id="prevSrc"><pre id="prevSrcCode"></pre></div>
+    </div>
+    <div class="prev-foot">
+      <div class="prev-info"><i class="fa-solid fa-shield-halved" style="color:var(--ok)"></i> Sandboxed Environment</div>
+      <div class="prev-acts">
+        <button class="pf-btn" onclick="copyPrevCode()"><i class="fa-regular fa-copy"></i> Copy</button>
+        <button class="pf-btn" onclick="dlPrevCode()"><i class="fa-solid fa-download"></i> Download</button>
+        <button class="pf-btn primary" onclick="refreshPrev()"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="appCon" style="display:none">
+  <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar collapsed" id="sidebar">
+    <div class="sb-hdr">
+      <div class="brand"><div class="brand-icon">J</div><span class="brand-name">JuanAi</span></div>
+      <div class="sb-acts">
+        <button class="ibtn" onclick="toggleTheme()" title="Toggle theme"><i class="fa-solid fa-circle-half-stroke"></i></button>
+        <button class="ibtn" onclick="toggleSidebar()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+    <button class="new-chat-btn" onclick="newChat()"><i class="fa-solid fa-plus"></i> New Chat</button>
+    <div class="hist-sec"><div id="histList"></div></div>
+    <div class="user-menu" id="userMenu">
+      <div class="um-hdr"><div class="um-name" id="umName"></div><div class="um-email" id="umEmail"></div></div>
+      <button class="um-item" onclick="showClearModal()"><i class="fa-solid fa-broom"></i>Clear all chats</button>
+      <div class="um-sep"></div>
+      <button class="um-item danger" onclick="doLogout()"><i class="fa-solid fa-right-from-bracket"></i>Sign out</button>
+    </div>
+    <div class="sb-foot" id="sbFoot" onclick="toggleUM()">
+      <div class="foot-av" id="footAv">J</div>
+      <div class="foot-info"><div class="foot-name" id="footName">JuanAi</div><div class="foot-sub" id="footSub">by Home Tech Group</div></div>
+      <span class="ibtn" style="pointer-events:none"><i class="fa-solid fa-ellipsis-vertical"></i></span>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="main-hdr">
+      <button class="ibtn menu-btn" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+      <div class="main-title">JuanAi</div>
+      <div class="hdr-right">
+        <button class="main-tab-btn active" id="btnChat" onclick="switchMainTab('chat')"><i class="fa-solid fa-message"></i> Chat</button>
+        <button class="main-tab-btn" id="btnFootball" onclick="switchMainTab('football')"><i class="fa-solid fa-futbol"></i> Football</button>
+        <button class="main-tab-btn" id="btnApiKeys" onclick="switchMainTab('apikeys')"><i class="fa-solid fa-key"></i> API Keys</button>
+        <button class="main-tab-btn" id="btnCasino" onclick="switchMainTab('casino')"><i class="fa-solid fa-dice"></i> Casino</button>
+        <div class="conn-badge groq" id="connBadge"><span class="conn-dot"></span><span id="connTxt">Groq · Llama</span></div>
+        <div id="adminBadge">&#128274; ADMIN</div>
+      </div>
+    </div>
+    <!-- CHAT -->
+    <div class="chat-wrap" id="chatWrap">
+      <div class="gbanner" id="gbanner"><i class="fa-solid fa-triangle-exclamation"></i><span>Guest mode — chat history is not saved.</span><a onclick="showAuthFromGuest()">Sign in to save</a></div>
+      <div class="chat-area" id="chatArea"><div class="chat-con" id="chatCon"></div></div>
+
+      <!-- INPUT AREA -->
+      <div class="input-area">
+        <div class="slash-popup" id="slashPopup"></div>
+        <div class="input-wrap" id="inputWrap">
+          <!-- Attachment chips -->
+          <div class="attach-row" id="attachRow"></div>
+          <!-- Voice indicator -->
+          <div class="voice-ind" id="voiceInd"><div class="vwave"><span></span><span></span><span></span><span></span><span></span></div><span>Listening... click mic to stop</span></div>
+          <!-- Toolbar -->
+          <div class="input-toolbar">
+            <button class="itool-btn" onclick="trigImgUpload()" title="Attach image"><i class="fa-solid fa-image"></i></button>
+            <button class="itool-btn" onclick="trigFileUpload()" title="Attach file / ZIP"><i class="fa-solid fa-paperclip"></i></button>
+            <div class="itool-sep"></div>
+            <button class="itool-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice input"><i class="fa-solid fa-microphone"></i></button>
+            <span class="char-count" id="charCount">0</span>
+            <input type="file" id="imgInput" accept="image/*" style="display:none" onchange="onImgSelect(event)">
+            <input type="file" id="fileInput" accept=".zip,.txt,.js,.ts,.py,.html,.css,.json,.md,.csv,.xml,.java,.cpp,.c,.go,.rs,.php,.rb,.swift,.kt" style="display:none" onchange="onFileSelect(event)">
+          </div>
+          <!-- Textarea -->
+          <div class="input-row">
+            <textarea id="msgInput" rows="1" placeholder="Message JuanAi... (tap ➤ to send)"></textarea>
+            <div class="in-acts">
+              <button class="send-btn" id="sendBtn" onclick="sendMsg()" title="Send (Enter)"><i class="fa-solid fa-arrow-up"></i></button>
+            </div>
+          </div>
+          <div class="input-hint">
+            <span><span class="hint-key">↵ Enter</span> new line &nbsp;&nbsp; <span class="hint-key">Ctrl+Enter</span> send</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⚽ FOOTBALL PANEL -->
+    <div id="footballPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg)">
+      <!-- Football Header -->
+      <div style="padding:14px 18px;background:var(--bg2);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-weight:800;font-size:15px;flex:1">⚽ Football Intelligence</div>
+        <select id="fbDays" style="background:var(--bg3);border:1px solid var(--bdr);color:var(--t1);padding:6px 10px;border-radius:8px;font-size:12px;font-family:'Inter',sans-serif;outline:none" onchange="loadFixtures()">
+          <option value="0">Today</option>
+          <option value="1">Tomorrow</option>
+          <option value="2">In 2 Days</option>
+        </select>
+        <select id="fbLeagueFilter" style="background:var(--bg3);border:1px solid var(--bdr);color:var(--t1);padding:6px 10px;border-radius:8px;font-size:12px;font-family:'Inter',sans-serif;outline:none;max-width:160px" onchange="onLeagueFilterChange()">
+          <option value="">All Leagues</option>
+        </select>
+        <button onclick="loadFixtures()" style="background:var(--grad);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px"><i class="fa-solid fa-rotate-right"></i> Refresh</button>
+        <button onclick="analyzeAllMatches()" style="background:linear-gradient(135deg,#ff4f6b,#ff8c42);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px" title="Analysis already runs automatically in the background"><i class="fa-solid fa-robot"></i> Analysis Status</button>
+      </div>
+
+      <!-- Stats Bar -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--bdr);border-bottom:1px solid var(--bdr)">
+        <div style="background:var(--bg2);padding:12px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--acc)" id="fbTotalMatches">0</div><div style="font-size:10px;color:var(--t2);font-weight:600">Fixtures</div></div>
+        <div style="background:var(--bg2);padding:12px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--ok)" id="fbAnalyzed">0</div><div style="font-size:10px;color:var(--t2);font-weight:600">Analyzed</div></div>
+        <div style="background:var(--bg2);padding:12px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--warn)" id="fbLive">0</div><div style="font-size:10px;color:var(--t2);font-weight:600">Live Now</div></div>
+        <div style="background:var(--bg2);padding:12px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--err)" id="fbLeagues">0</div><div style="font-size:10px;color:var(--t2);font-weight:600">Leagues</div></div>
+      </div>
+
+      <!-- Fixtures List -->
+      <div style="padding:16px" id="fixturesList">
+        <div style="text-align:center;padding:40px;color:var(--tm)">
+          <i class="fa-solid fa-futbol" style="font-size:32px;opacity:.3;display:block;margin-bottom:10px"></i>
+          <div style="font-size:13px">Click Refresh to load fixtures</div>
+          <div style="font-size:11px;margin-top:6px">AI will automatically generate odds for every match</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🔑 API KEYS PANEL -->
+    <div id="apiKeysPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg);padding:20px">
+      <div style="max-width:700px;margin:0 auto">
+        <div style="font-weight:800;font-size:18px;margin-bottom:6px">🔑 API Key Management</div>
+        <div style="font-size:12px;color:var(--info);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:12px 14px;margin-bottom:20px;line-height:1.6">
+          <b>ℹ️ Requires the JuanAi backend server to be running</b> (<code>node server.js</code> — see README). Keys generated here are stored and checked by that real server, so external servers like BetaKE can call <code>GET /api/fixtures?key=...</code> over normal HTTP. If the backend isn't running, this panel will say so instead of silently failing. Odds shown are still AI-generated predictions, not real bookmaker prices — don't present them to end users as live market odds.
+        </div>
+
+        <!-- Generate Key -->
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-plus" style="color:var(--acc)"></i> Generate New API Key</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <input type="text" id="apiKeyName" placeholder="Key name (e.g. BettingSite, App1)" style="flex:1;padding:10px 13px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:9px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;outline:none;min-width:180px">
+            <button onclick="generateApiKey()" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap"><i class="fa-solid fa-key"></i> Generate Key</button>
+          </div>
+        </div>
+
+        <!-- API Keys List -->
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-list" style="color:var(--acc)"></i> Your API Keys</div>
+          <div id="apiKeysList"><div style="color:var(--tm);font-size:12px">Loading...</div></div>
+        </div>
+
+        <!-- API Docs -->
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-book" style="color:var(--acc)"></i> API Documentation</div>
+          <div style="font-size:12px;color:var(--t2);line-height:1.8;margin-bottom:12px">
+            This calls JuanAi's real backend server (<code>server.js</code>) over plain HTTP — works from any server, including BetaKE's, since it's a normal network request instead of browser-only <code>localStorage</code>.
+          </div>
+          <div style="background:var(--bg3);border-radius:10px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#c9d1d9;line-height:1.8;overflow-x:auto">
+// From BetaKE's Node.js backend (or any server):<br>
+const API_KEY = 'jsk_xxxxxxxxxxxxxxxx';<br>
+const JUANAI_URL = 'https://your-juanai-domain.com'; // or http://localhost:3000 for local dev<br><br>
+async function getJuanAiFixtures(days) {<br>
+&nbsp;&nbsp;const resp = await fetch(`${JUANAI_URL}/api/fixtures?key=${API_KEY}&amp;days=${days}`);<br>
+&nbsp;&nbsp;if (!resp.ok) throw new Error('JuanAi API error: ' + resp.status);<br>
+&nbsp;&nbsp;const data = await resp.json();<br>
+&nbsp;&nbsp;return data.matches || [];<br>
+}<br><br>
+// Each match has:<br>
+// match.homeTeam, match.awayTeam<br>
+// match.utcDate, match.status — one of SCHEDULED, IN_PLAY, PAUSED,<br>
+//   FINISHED, or AWAITING_RESULT (match should be over by now, but no<br>
+//   confirmed final score has arrived yet — do NOT treat this the same as<br>
+//   FINISHED for settlement purposes; match.score will be null while in<br>
+//   this state, precisely so it can't be mistaken for a real result)<br>
+// match.minute — current match minute if IN_PLAY (null otherwise)<br>
+// match.minuteIsEstimated — true if match.minute is an ESTIMATE (odds-api.io<br>
+//   sourced matches don't have a real match clock, only kickoff time — see<br>
+//   note below). false/absent means it's a real minute from football-data.org.<br>
+//   Show a "~" prefix or similar when true, so users know it's approximate.<br>
+// match.competition<br>
+// match.score.fullTime.home, match.score.fullTime.away — final/current score<br>
+// match.score.halfTime.home, match.score.halfTime.away — half-time score,<br>
+//   when available. Present for football-data.org matches once the match<br>
+//   reaches half-time (null before then). For odds-api.io matches this is<br>
+//   populated on a best-effort basis and may be null more often — always<br>
+//   check for null before using it to settle a First Half market.<br>
+// match.aiOdds.homeWin, match.aiOdds.draw, match.aiOdds.awayWin<br>
+// match.aiOdds.over25, match.aiOdds.under25<br>
+// match.aiOdds.btts, match.aiOdds.bttsNo<br>
+// match.aiOdds.dc_home_draw, match.aiOdds.dc_home_away, match.aiOdds.dc_draw_away<br>
+// match.aiOdds.handicap — { line, home, away, isRealMarketOdds } or absent.<br>
+//   ONLY ever present when a real bookmaker (odds-api.io) actually priced a<br>
+//   handicap/spread line for this match — there is no AI-estimated fallback<br>
+//   for this field. Absent/undefined means no real handicap is available<br>
+//   for this match right now; don't assume one exists.<br>
+// match.aiPrediction, match.aiConfidence<br>
+// match.aiAnalysis, match.aiXG, match.aiValueBet<br>
+// match.aiOdds.isRealMarketOdds — true = real bookmaker price (safe for<br>
+//   real-money bets), false/absent = AI estimate (NOT safe for real-money<br>
+//   bets). Pass &realOddsOnly=1 on the fetch URL to have this filtered<br>
+//   server-side automatically.<br><br>
+// ⚠️ match.aiOdds are AI-generated predictions, not real bookmaker odds,<br>
+// UNLESS aiOdds.isRealMarketOdds is true. Label accordingly if shown to end users.
+          </div>
+        </div>
+
+        <!-- Integration Example -->
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-code" style="color:var(--acc)"></i> Full Usage Example</div>
+          <div style="background:var(--bg3);border-radius:10px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#c9d1d9;line-height:1.8;overflow-x:auto">
+// In BetaKE's Express route, e.g. GET /games/today:<br>
+app.get('/games/today', async (req, res) => {<br>
+&nbsp;&nbsp;try {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;const games = await getJuanAiFixtures(0);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;res.json({ games });<br>
+&nbsp;&nbsp;} catch (e) {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;res.status(502).json({ error: 'Could not reach JuanAi' });<br>
+&nbsp;&nbsp;}<br>
+});
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🎰 CASINO PANEL -->
+    <div id="casinoPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg)">
+      <div class="casino-hdr">
+        <div class="ctitle">🎰 JuanAi Casino</div>
+      </div>
+      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Round outcomes are decided server-side.</div>
+      <div class="casino-grid">
+
+        <!-- AVIATOR — real server-authoritative crash game, own page -->
+        <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Aviator</h3>
+            <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
+          </div>
+          <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+<div id="toast-con"></div>
+
+<script>
+// ── JuanAi BACKEND CONFIG ──────────────────────────────────────────────────
+// Once server.js is running, set this to its address (same box if hosted
+// together, e.g. same Render service; otherwise the deployed backend URL).
+// Leave as-is for local dev: http://localhost:3000
+var JUANAI_BACKEND_URL = window.location.origin;
+
+// ── Admin secret handling ──────────────────────────────────────────────
+// /internal/* routes on the server now require an X-Admin-Secret header
+// (see server.js's requireAdmin) — this panel used to call them with no
+// auth at all, which was the actual security hole that fix closed. Kept
+// in memory only (a plain JS variable, not localStorage) so it doesn't
+// linger in browser storage indefinitely; the admin retypes it once per
+// page load if needed.
+var _adminSecret = null;
+function getAdminSecret(){
+  if(_adminSecret) return _adminSecret;
+  var entered = window.prompt('Enter admin secret (ADMIN_SECRET from your .env) to manage API keys / wallet / casino settings:');
+  if(entered) _adminSecret = entered;
+  return _adminSecret;
+}
+// Wrapper for every /internal/* call — attaches the admin secret header
+// automatically, and clears the cached secret + re-prompts on a 401 so a
+// wrong/stale entry doesn't get stuck silently failing forever.
+async function fetchInternal(path, options){
+  options = options || {};
+  var secret = getAdminSecret();
+  if(!secret) throw new Error('Admin secret required for this action');
+  var headers = Object.assign({}, options.headers || {}, {'X-Admin-Secret': secret});
+  var resp = await fetch(JUANAI_BACKEND_URL + path, Object.assign({}, options, {headers: headers}));
+  if(resp.status === 401){
+    _adminSecret = null; // clear so the next attempt re-prompts instead of silently reusing a wrong value
+    throw new Error('Invalid admin secret — try again');
+  }
+  return resp;
+}
+
+// Fire-and-forget push to the real backend. Failure here (backend not running,
+// offline, etc) must NEVER break the UI — localStorage still works as the
+// in-browser cache it always was. This just ALSO mirrors data to a place
+// external servers like BetaKE can actually reach over HTTP.
+function pushToBackend(path, body){
+  fetch(JUANAI_BACKEND_URL + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).catch(function(e){
+    console.warn('JuanAi backend unreachable (data still cached locally):', e.message);
+  });
+}
+
+// ─── ENGINE CONFIG — Gemini PRIMARY + Groq FALLBACK ──────────────────────────
+// API keys are no longer stored here — they live only in the server's own
+// environment variables (see ai.js) and every AI call is proxied through
+// POST /api/chat/stream instead of calling Google/Groq directly from the
+// browser. This is a real security fix: two live keys used to sit in this
+// file in plain text, visible to anyone who viewed page source. Model
+// names are also no longer hardcoded here — the server (ai.js) is the
+// source of truth for which models are currently live, since that list
+// needs to be updated when providers deprecate models, and keeping two
+// copies (client + server) in sync was itself a past source of bugs.
+
+var GEMINI_VISION_MODEL = 'gemini-3.5-flash'; // vision-capable Gemini model — kept client-side only because it selects a UI code path, not a secret
+var GROQ_VISION_MODEL = 'llama-3.2-11b-vision-preview';
+
+// Engine state
+var _lastEngine = 'gemini'; // tracks which engine last succeeded
+
+// ─── SYSTEM ───────────────────────────────────────────────────────────────────
+var SYS = `You are JuanAi — a next-generation AI Coding Assistant by Home Tech Group. You combine the reasoning power of Gemini with the speed of Groq to deliver a world-class development experience. You act as a senior software engineer with 15+ years of experience across the full stack.
+
+⚠️ PRIME DIRECTIVE — CODING:
+When asked to build, create, code, or generate ANYTHING you MUST deliver complete, production-ready, fully working code. Never write placeholders, stubs, or "// TODO" comments. Every function must be implemented. Every feature must work.
+
+══════════════════════════════════════════
+🤖 ACTIVE AI AGENTS — You embody all of these:
+══════════════════════════════════════════
+🏗️ SOFTWARE ARCHITECT — Design clean, scalable system architecture
+⚙️ BACKEND ENGINEER — APIs, databases, auth, server logic
+🎨 FRONTEND ENGINEER — Beautiful, responsive, accessible UIs
+🗄️ DATABASE ENGINEER — Schema design, queries, optimization, migrations
+🔒 SECURITY ENGINEER — Detect SQLi, XSS, CSRF, weak auth, exposed secrets
+⚡ PERFORMANCE OPTIMIZER — Caching, lazy loading, query optimization, bundles
+🧪 QA ENGINEER — Unit tests, integration tests, E2E tests, mock data
+📚 DOCUMENTATION WRITER — README, API docs, changelogs, architecture diagrams
+🔄 DEVOPS ENGINEER — Docker, CI/CD, deployment scripts, cloud configs
+👁️ CODE REVIEWER — Find bugs, security issues, anti-patterns, improvements
+
+══════════════════════════════════════════
+🧠 INTELLIGENCE & MEMORY:
+══════════════════════════════════════════
+- Remember everything from this conversation: project structure, tech stack, naming conventions, architecture decisions, previous bugs fixed, user preferences
+- Never lose context during long conversations
+- When user says "continue" — pick up EXACTLY where you left off
+- Reference previous messages and decisions automatically
+- If building across multiple messages, always state: what you just did + what comes next
+
+══════════════════════════════════════════
+💻 CODING STANDARDS:
+══════════════════════════════════════════
+COMPLETENESS: Always write the FULL file. No partial code. No "rest of code here".
+PRODUCTION QUALITY: Clean architecture, proper error handling, input validation, security best practices.
+DESIGN (HTML/CSS): Dark theme, Google Fonts, Font Awesome, animations, gradients, glassmorphism, responsive, mobile-first.
+JAVASCRIPT: Real business logic, localStorage persistence, proper async/await, error boundaries.
+SECURITY: Never hardcode secrets. Use env vars. Sanitize inputs. Proper auth patterns.
+PERFORMANCE: Lazy load, minimize DOM ops, optimize queries, use proper indexes.
+
+══════════════════════════════════════════
+🛠️ WHAT YOU CAN BUILD:
+══════════════════════════════════════════
+Frontend: React, Vue, Angular, Next.js, HTML/CSS/JS, TypeScript
+Backend: Node.js, Express, FastAPI, Django, Laravel, Spring Boot, Go, Rust
+Mobile: React Native, Flutter, Kotlin, Swift
+Database: MongoDB, MySQL, PostgreSQL, SQLite, Redis, Firebase, Supabase
+DevOps: Docker, Kubernetes, GitHub Actions, Nginx configs
+APIs: REST, GraphQL, WebSocket, Serverless, Microservices
+
+══════════════════════════════════════════
+🔍 DEBUGGING INTELLIGENCE:
+══════════════════════════════════════════
+When given code with errors:
+1. Identify ALL issues: syntax, runtime, logic, security, performance
+2. Explain each issue clearly
+3. Provide the complete fixed version
+4. Explain what was fixed and why
+
+Detect: SQL injection, XSS, CSRF, weak JWT, broken auth, memory leaks, N+1 queries, race conditions, dependency conflicts
+
+══════════════════════════════════════════
+📊 AI PLANNING (for complex requests):
+══════════════════════════════════════════
+For complex projects, BEFORE coding:
+1. Analyze requirements
+2. Design architecture
+3. List all files/components needed
+4. Estimate complexity
+5. Generate implementation plan
+Then execute the plan completely.
+
+══════════════════════════════════════════
+🗂️ FILE & CODE HANDLING:
+══════════════════════════════════════════
+- Files uploaded between ---FILE--- markers: read every line, analyze fully
+- ZIP projects: map structure, identify framework, explain architecture
+- Multiple files: understand relationships between them
+- Never say "I cannot read the file"
+
+══════════════════════════════════════════
+📝 SLASH COMMANDS:
+══════════════════════════════════════════
+/architect = Design system architecture | /backend = Generate backend code | /frontend = Generate frontend code | /database = Generate DB schema + queries | /api = Generate full REST/GraphQL API | /auth = Generate authentication system | /docker = Generate Dockerfile + compose | /cicd = Generate CI/CD pipeline | /test = Generate test suite | /debug = Find and fix all bugs | /security = Full security audit | /optimize = Performance optimization | /refactor = Clean and restructure code | /review = Complete code review with rating | /docs = Generate documentation | /readme = Generate README | /explain = Explain code line by line | /convert = Convert between languages | /migrate = Generate DB migration | /deploy = Generate deployment config | /ghost = Answer only, no explanation | /brief = 3-5 lines | /expand = Fully detailed | /eli5 = Explain simply | /compare = Side by side comparison | /proscons = Pros and cons`
+
+
+// ADMIN_SYS and ADMIN_PASS used to live here in plain text — both moved
+// server-side (see server.js's /api/chat/stream: ADMIN_MODE_PASSWORD env
+// var and ADMIN_MODE_SYSTEM_PROMPT). This file no longer knows the real
+// password or the real admin prompt text at all; it only sends whatever
+// password the user typed after "/admin " for the SERVER to verify, and
+// the server decides which system prompt actually gets used regardless of
+// what this file sends as its normal (non-admin) systemPrompt.
+var ADMIN_EMAIL = 'admin@juanai.app';
+var IS_ADMIN = false; // display-only flag (badge/label) — grants no real privilege by itself
+function getSys(){return SYS;} // the server substitutes the real admin prompt server-side when a verified admin password is supplied; this is only ever the normal prompt now
+
+// ─── STORAGE — IndexedDB PRIMARY (works in APK) + localStorage fallback ─────────
+var _mem = {};
+var _idb = null; // IndexedDB instance
+
+// Init IndexedDB — this is what persists in Android APK WebView
+function initIDB(cb) {
+  try {
+    var req = indexedDB.open('JuanAiDB', 2);
+    req.onupgradeneeded = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('store')) {
+        db.createObjectStore('store', {keyPath: 'k'});
+      }
+    };
+    req.onsuccess = function(e) {
+      _idb = e.target.result;
+      if (cb) cb(true);
+    };
+    req.onerror = function() { if (cb) cb(false); };
+  } catch(e) { if (cb) cb(false); }
+}
+
+function idbGet(k, cb) {
+  if (!_idb) { cb(null); return; }
+  try {
+    var tx = _idb.transaction('store', 'readonly');
+    var req = tx.objectStore('store').get(k);
+    req.onsuccess = function() { cb(req.result ? req.result.v : null); };
+    req.onerror = function() { cb(null); };
+  } catch(e) { cb(null); }
+}
+
+function idbSet(k, v, cb) {
+  if (!_idb) { if(cb) cb(false); return; }
+  try {
+    var tx = _idb.transaction('store', 'readwrite');
+    tx.objectStore('store').put({k:k, v:v});
+    tx.oncomplete = function() { if(cb) cb(true); };
+    tx.onerror = function() { if(cb) cb(false); };
+  } catch(e) { if(cb) cb(false); }
+}
+
+function idbDel(k) {
+  if (!_idb) return;
+  try {
+    var tx = _idb.transaction('store', 'readwrite');
+    tx.objectStore('store').delete(k);
+  } catch(e) {}
+}
+
+// Sync: write to both localStorage AND IndexedDB
+function sSet(k, v) {
+  _mem[k] = v;
+  // localStorage
+  try { localStorage.setItem(k, v); } catch(e) {
+    try { localStorage.removeItem('ju_convs2'); localStorage.setItem(k, v); } catch(e2) {}
+  }
+  // IndexedDB (async — APK persistent)
+  idbSet(k, v);
+  // sessionStorage backup
+  try { sessionStorage.setItem(k, v); } catch(e3) {}
+  return true;
+}
+
+function sGet(k) {
+  // Sync sources first (immediate)
+  try { var v = localStorage.getItem(k); if (v !== null && v !== 'null' && v !== '') return v; } catch(e) {}
+  try { var v2 = sessionStorage.getItem(k); if (v2 !== null && v2 !== 'null' && v2 !== '') return v2; } catch(e) {}
+  if (_mem[k] !== undefined && _mem[k] !== null) return _mem[k];
+  return null;
+}
+
+function sDel(k) {
+  delete _mem[k];
+  try { localStorage.removeItem(k); } catch(e) {}
+  try { sessionStorage.removeItem(k); } catch(e) {}
+  idbDel(k);
+}
+
+// Load a key from IndexedDB into memory+localStorage (for APK startup)
+function idbPreload(keys, cb) {
+  var pending = keys.length;
+  if (pending === 0) { cb(); return; }
+  keys.forEach(function(k) {
+    idbGet(k, function(v) {
+      if (v !== null && v !== undefined) {
+        _mem[k] = v;
+        try { localStorage.setItem(k, v); } catch(e) {}
+      }
+      pending--;
+      if (pending === 0) cb();
+    });
+  });
+}
+
+// ─── AUTH STATE ───────────────────────────────────────────────────────────────
+var CU=null,isGuest=false,users={};
+function hash(s){var h=0;for(var i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return'h_'+Math.abs(h).toString(36);}
+
+// Save users to 3 keys — so at least one survives
+function saveUsers(){
+  try{
+    var creds={};
+    Object.keys(users).forEach(function(k){
+      var u=users[k];
+      creds[k]={name:u.name,email:u.email,ph:u.ph,provider:u.provider,createdAt:u.createdAt};
+    });
+    var str=JSON.stringify(creds);
+    sSet('ju_creds',str);
+    sSet('ju_creds_bk1',str);
+    sSet('ju_creds_bk2',str);
+  }catch(e){}
+}
+
+// Load users — try all backup keys
+function loadUsers(){
+  var keys=['ju_creds','ju_creds_bk1','ju_creds_bk2','ju_users'];
+  for(var i=0;i<keys.length;i++){
+    try{
+      var d=sGet(keys[i]);
+      if(!d)continue;
+      var parsed=JSON.parse(d);
+      if(!parsed||Object.keys(parsed).length===0)continue;
+      Object.keys(parsed).forEach(function(k){
+        users[k]={name:parsed[k].name,email:parsed[k].email,ph:parsed[k].ph,provider:parsed[k].provider,createdAt:parsed[k].createdAt};
+      });
+      saveUsers();// sync to all keys
+      return;
+    }catch(e){}
+  }
+  users={};
+}
+
+// Save session to 3 keys — includes full user data for self-healing
+function saveSess(){
+  if(CU){
+    var sess=JSON.stringify({e:CU.email,n:CU.name,ph:CU.ph,pr:CU.provider,a:IS_ADMIN,ts:Date.now()});
+    sSet('ju_sess',sess);
+    sSet('ju_sess_bk1',sess);
+    sSet('ju_sess_bk2',sess);
+  }else{
+    ['ju_sess','ju_sess_bk1','ju_sess_bk2','ju_sess2'].forEach(function(k){sDel(k);});
+  }
+}
+
+// Load session — tries all keys, self-heals if user data is missing
+function loadSess(){
+  var keys=['ju_sess','ju_sess_bk1','ju_sess_bk2','ju_sess2'];
+  for(var i=0;i<keys.length;i++){
+    try{
+      var s=sGet(keys[i]);
+      if(!s)continue;
+      var d=JSON.parse(s);
+      if(!d||!d.e)continue;
+      var u=users[d.e];
+      if(!u){
+        // User creds got wiped — rebuild from session data
+        u={name:d.n||d.e.split('@')[0],email:d.e,ph:d.ph||'__session__',provider:d.pr||'session',createdAt:d.ts||Date.now()};
+        users[d.e]=u;
+        saveUsers();
+      }
+      CU=u;
+      IS_ADMIN=d.a||isAdminEmail(d.e);
+      saveSess();// refresh all keys
+      return true;
+    }catch(e){}
+  }
+  return false;
+}
+
+function saveConvsToStorage(){
+  try{
+    var toSave=convs.slice(0,25).map(function(c){
+      return{id:c.id,title:c.title,createdAt:c.createdAt,
+        msgs:c.msgs.slice(-30).map(function(m){
+          return{r:m.r,t:(m.t||'').substring(0,5000),fileName:m.fileName||null};
+        })};
+    });
+    var str=JSON.stringify(toSave);
+    sSet('ju_convs2',str);
+    sSet('ju_convs_bk',str);
+    sSet('ju_active2',activeId||'');
+  }catch(e){
+    try{
+      var mini=convs.slice(0,8).map(function(c){
+        return{id:c.id,title:c.title,createdAt:c.createdAt,
+          msgs:c.msgs.slice(-8).map(function(m){return{r:m.r,t:(m.t||'').substring(0,800)};})};
+      });
+      sSet('ju_convs2',JSON.stringify(mini));
+    }catch(e2){}
+  }
+}
+
+function loadConvsFromStorage(){
+  try{
+    var d=sGet('ju_convs2')||sGet('ju_convs_bk')||sGet('ju_convs_backup');
+    if(d){var p=JSON.parse(d);if(p&&p.length)return p;}
+  }catch(e){}
+  return[];
+}
+function loadActiveFromStorage(){
+  return sGet('ju_active2')||sGet('ju_active_backup')||null;
+}
+function validEmail(e){return/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);}
+function isAdminEmail(e){return e&&e.toLowerCase()===ADMIN_EMAIL.toLowerCase();}
+function switchTab(t){document.getElementById('tabLogin').classList.toggle('active',t==='login');document.getElementById('tabReg').classList.toggle('active',t==='register');document.getElementById('formLogin').classList.toggle('active',t==='login');document.getElementById('formReg').classList.toggle('active',t==='register');clearErr();}
+function clearErr(){document.querySelectorAll('.fe').forEach(function(e){e.classList.remove('on');});document.querySelectorAll('.fi').forEach(function(e){e.classList.remove('err');});}
+function showErr(id,msg){var e=document.getElementById(id);if(!e)return;e.querySelector('span').textContent=msg;e.classList.add('on');var p=e.previousElementSibling;if(p){if(p.classList.contains('pw'))p.querySelector('.fi').classList.add('err');else if(p.classList.contains('fi'))p.classList.add('err');}}
+function togglePw(btn){var i=btn.parentElement.querySelector('input');var ic=btn.querySelector('i');i.type=i.type==='password'?'text':'password';ic.className=i.type==='password'?'fa-solid fa-eye':'fa-solid fa-eye-slash';}
+
+function doLogin(){
+  clearErr();
+  var e=document.getElementById('lEmail').value.trim();
+  var p=document.getElementById('lPass').value;
+  if(!e){showErr('lEmailErr','Email required');return;}
+  if(!validEmail(e)){showErr('lEmailErr','Invalid email');return;}
+  if(!p){showErr('lPassErr','Password required');return;}
+  var u=users[e.toLowerCase()];
+  if(!u){showErr('lEmailErr','Account not found — please register');return;}
+  if(u.provider==='google'){showErr('lEmailErr','Use Google sign-in');return;}
+  if(u.ph!==hash(p)&&u.ph!=='__session__'){showErr('lPassErr','Wrong password');return;}
+  CU=u;isGuest=false;IS_ADMIN=isAdminEmail(u.email);
+  saveSess();enterApp();
+  toast(IS_ADMIN?'Admin Mode Active 🔐':'Welcome back, '+CU.name+'!','success');
+}
+
+function doRegister(){
+  clearErr();
+  var pck=document.getElementById('pck');
+  if(!pck.checked){toast('Please accept the Terms','warning');return;}
+  var n=document.getElementById('rName').value.trim();
+  var e=document.getElementById('rEmail').value.trim();
+  var p=document.getElementById('rPass').value;
+  if(!n){showErr('rNameErr','Name required');return;}
+  if(!e){showErr('rEmailErr','Email required');return;}
+  if(!validEmail(e)){showErr('rEmailErr','Invalid email');return;}
+  if(!p){showErr('rPassErr','Password required');return;}
+  if(p.length<6){showErr('rPassErr','Min 6 characters');return;}
+  var el=e.toLowerCase();
+  if(users[el]){showErr('rEmailErr','Account already exists — sign in');return;}
+  var u={name:n,email:el,ph:hash(p),provider:'email',createdAt:Date.now()};
+  users[el]=u;saveUsers();
+  CU=u;isGuest=false;IS_ADMIN=isAdminEmail(el);
+  saveSess();enterApp();
+  toast(IS_ADMIN?'Admin Mode Active':'Account created! Welcome, '+n+'!','success');
+}
+
+function doGoogle(){
+  document.getElementById('gEmail').value='';
+  document.getElementById('gEmailErr').classList.remove('on');
+  document.getElementById('gModal').classList.add('on');
+  setTimeout(function(){document.getElementById('gEmail').focus();},100);
+}
+
+function confirmGoogle(){
+  var e=document.getElementById('gEmail').value.trim();
+  var err=document.getElementById('gEmailErr');
+  err.classList.remove('on');
+  if(!e||!validEmail(e)){err.querySelector('span').textContent=e?'Invalid email':'Email required';err.classList.add('on');return;}
+  var el=e.toLowerCase();closeModal('gModal');
+  var u=users[el];
+  if(!u){
+    var n=el.split('@')[0].replace(/[._-]/g,' ');
+    n=n.charAt(0).toUpperCase()+n.slice(1);
+    u={name:n,email:el,ph:'',provider:'google',createdAt:Date.now()};
+    users[el]=u;saveUsers();
+  }
+  CU=u;isGuest=false;IS_ADMIN=isAdminEmail(el);
+  saveSess();enterApp();
+  toast(IS_ADMIN?'Admin Mode Active':'Welcome, '+u.name+'!','success');
+}
+
+function enterGuest(){CU=null;isGuest=true;enterApp();}
+
+function showAuthFromGuest(){
+  document.getElementById('appCon').style.display='none';
+  document.getElementById('authScreen').classList.remove('hidden');
+  isGuest=false;switchTab('register');
+}
+
+function enterApp(){
+  document.getElementById('authScreen').classList.add('hidden');
+  document.getElementById('appCon').style.display='flex';
+  document.getElementById('adminBadge').style.display=IS_ADMIN?'block':'none';
+  updateUserUI();updateGuestBanner();
+  // Load convs from separate storage
+  convs=loadConvsFromStorage();
+  var savedActive=loadActiveFromStorage();
+  if(convs.length>0){
+    activeId=(savedActive&&convs.find(function(x){return x.id===savedActive;}))?savedActive:convs[0].id;
+  }else{newChat();return;}
+  renderHist();renderMsgs();
+}
+
+function updateUserUI(){
+  var av=document.getElementById('footAv'),nm=document.getElementById('footName'),sb=document.getElementById('footSub'),un=document.getElementById('umName'),ue=document.getElementById('umEmail');
+  if(CU){
+    av.textContent=CU.name.charAt(0).toUpperCase();av.className='foot-av';
+    nm.textContent=IS_ADMIN?'[ADMIN] '+CU.name:CU.name;
+    sb.textContent=IS_ADMIN?'Admin Access':CU.email;
+    un.textContent=CU.name;ue.textContent=CU.email;
+  }else{
+    av.innerHTML='<i class="fa-solid fa-user-secret" style="font-size:13px"></i>';av.className='foot-av guest';
+    nm.textContent='Guest';sb.textContent='No account';
+    un.textContent='Guest User';ue.textContent='Sign in to save history';
+  }
+}
+function updateGuestBanner(){document.getElementById('gbanner').classList.toggle('on',isGuest);}
+function toggleUM(){var m=document.getElementById('userMenu');m.style.display=m.style.display==='block'?'none':'block';}
+document.addEventListener('click',function(e){var m=document.getElementById('userMenu');var f=document.getElementById('sbFoot');if(m&&!m.contains(e.target)&&f&&!f.contains(e.target))m.style.display='none';});
+
+function doLogout(){
+  document.getElementById('userMenu').style.display='none';
+  saveSess(); // clears session since CU will be null after
+  CU=null;isGuest=false;IS_ADMIN=false;convs=[];activeId=null;
+  sDel('ju_sess2');
+  document.getElementById('appCon').style.display='none';
+  document.getElementById('authScreen').classList.remove('hidden');
+  document.getElementById('lEmail').value='';document.getElementById('lPass').value='';
+  clearErr();switchTab('login');
+  toast('Signed out successfully','info');
+}
+function showClearModal(){document.getElementById('userMenu').style.display='none';document.getElementById('clearModal').classList.add('on');}
+function clearAll(){convs=[];activeId=null;saveConvsToStorage();newChat();renderHist();renderMsgs();closeModal('clearModal');toast('All chats cleared','info');}
+
+// ─── GROQ API ─────────────────────────────────────────────────────────────────
+var MAX_CTX_CHARS = 12000; // ~3000 tokens — safe limit per message
+
+function truncateContent(content, maxChars) {
+  if (!content) return '';
+  if (content.length <= maxChars) return content;
+  var half = Math.floor(maxChars / 2);
+  return content.substring(0, half) + '\n\n... [' + Math.round((content.length - maxChars) / 1000) + 'KB truncated to fit context] ...\n\n' + content.substring(content.length - half);
+}
+
+// ── AGENT ROUTING — detect which specialist agent to activate ──────────────────
+function detectAgent(text) {
+  var t = (text || '').toLowerCase();
+  if (/\/architect|system design|architecture|microservice|infrastructure/.test(t)) return '🏗️ Software Architect';
+  if (/\/security|sql injection|xss|csrf|vulnerability|penetration|audit/.test(t)) return '🔒 Security Engineer';
+  if (/\/database|\/migrate|schema|migration|query|orm|sql|mongodb|postgres|mysql/.test(t)) return '🗄️ Database Engineer';
+  if (/\/docker|\/cicd|dockerfile|kubernetes|deploy|nginx|ci\/cd|pipeline/.test(t)) return '🔄 DevOps Engineer';
+  if (/\/test|unit test|integration test|e2e|jest|pytest|mock|coverage/.test(t)) return '🧪 QA Engineer';
+  if (/\/docs|\/readme|documentation|changelog|api doc/.test(t)) return '📚 Documentation Writer';
+  if (/\/optimize|performance|caching|lazy load|bottleneck|memory leak/.test(t)) return '⚡ Performance Optimizer';
+  if (/\/review|code review|feedback|anti-pattern|best practice/.test(t)) return '👁️ Code Reviewer';
+  if (/\/frontend|react|vue|angular|css|ui|ux|component|tailwind/.test(t)) return '🎨 Frontend Engineer';
+  if (/\/backend|\/api|express|fastapi|django|node|server|rest|graphql/.test(t)) return '⚙️ Backend Engineer';
+  return null;
+}
+
+// ── PROJECT MEMORY — extract and track project context ────────────────────────
+function extractProjectContext(msgs) {
+  var ctx = {stack: [], frameworks: [], dbType: null, projectName: null, lang: null};
+  var allText = msgs.map(function(m){ return (m.t || ''); }).join(' ').toLowerCase();
+  // Detect tech stack
+  ['react','vue','angular','next.js','svelte','html'].forEach(function(f){ if(allText.includes(f)) ctx.frameworks.push(f); });
+  ['node','express','fastapi','django','laravel','spring','go','rust'].forEach(function(f){ if(allText.includes(f)) ctx.stack.push(f); });
+  if(allText.includes('mongodb')||allText.includes('mongoose')) ctx.dbType='MongoDB';
+  else if(allText.includes('postgresql')||allText.includes('postgres')) ctx.dbType='PostgreSQL';
+  else if(allText.includes('mysql')) ctx.dbType='MySQL';
+  else if(allText.includes('sqlite')) ctx.dbType='SQLite';
+  else if(allText.includes('firebase')) ctx.dbType='Firebase';
+  ['javascript','typescript','python','java','php','go','rust','kotlin','swift'].forEach(function(l){ if(allText.includes(l)&&!ctx.lang) ctx.lang=l; });
+  return ctx;
+}
+
+function buildMessages(c) {
+  var msgs = [{role:"system", content:getSys()}];
+  var hasImage = false;
+  var allMsgs = c.msgs.filter(function(m){ return m.r === 'user' || (m.r === 'ai' && m.t && m.t !== '...'); });
+
+  // Extract project memory from full history
+  var projCtx = extractProjectContext(allMsgs);
+  var ctxNote = '';
+  if(projCtx.frameworks.length || projCtx.stack.length || projCtx.dbType || projCtx.lang) {
+    ctxNote = '\n\n[PROJECT MEMORY: ';
+    if(projCtx.lang) ctxNote += 'Language=' + projCtx.lang + ' ';
+    if(projCtx.frameworks.length) ctxNote += 'Frontend=' + projCtx.frameworks.join(',') + ' ';
+    if(projCtx.stack.length) ctxNote += 'Backend=' + projCtx.stack.join(',') + ' ';
+    if(projCtx.dbType) ctxNote += 'DB=' + projCtx.dbType + ' ';
+    ctxNote += '— maintain consistency with this stack]';
+  }
+
+  // Detect which agent to activate
+  var lastUserMsg = allMsgs.filter(function(m){return m.r==='user';}).pop();
+  var activeAgent = lastUserMsg ? detectAgent(lastUserMsg.t) : null;
+  if(activeAgent) {
+    ctxNote += '\n\n[ACTIVE AGENT: ' + activeAgent + ' — apply specialized expertise]';
+  }
+
+  // Add system context note
+  if(ctxNote) {
+    msgs[0] = {role:'system', content: getSys() + ctxNote};
+  }
+
+  // Summarize older messages to preserve context without exceeding limits
+  var recentCount = 14;
+  if (allMsgs.length > recentCount) {
+    var older = allMsgs.slice(0, allMsgs.length - recentCount);
+    var summary = '## Project context from earlier in this session:\n';
+    older.forEach(function(m) {
+      var role = m.r === 'user' ? 'User' : 'JuanAi';
+      var text = (m.t || '').substring(0, 400);
+      summary += '**' + role + ':** ' + text + (m.t && m.t.length > 400 ? '...' : '') + '\n';
+    });
+    summary += '\n## Continue with full memory of the above:';
+    msgs.push({role:"user", content: summary});
+    msgs.push({role:"assistant", content: "Understood. I have full context of our project and will continue seamlessly maintaining all decisions made."});
+  }
+
+  var recent = allMsgs.slice(-recentCount);
+  for (var i = 0; i < recent.length; i++) {
+    var m = recent[i];
+    if (m.r === 'ai' && i === recent.length - 1 && !m.t) continue;
+    if (m.r === 'user') {
+      var textContent = (m.t || '').trim() || '(no message)';
+      if (m.fileContent) {
+        textContent += '\n\n---FILE: ' + (m.fileName||'file') + '---\n' + m.fileContent.substring(0,5000) + '\n---END---';
+      }
+      var isLastUser = (i === recent.length - 1) || (i === recent.length - 2 && recent[recent.length-1].r === 'ai');
+      if (m.b64 && isLastUser) {
+        hasImage = true;
+        var imgData = m.b64;
+        var mimeMatch = imgData.match(/^data:([^;]+);base64,/);
+        var mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        var b64data = imgData.replace(/^data:[^;]+;base64,/, '');
+        msgs.push({role:'user', content:[
+          {type:'text', text: textContent || 'Analyze this image or code screenshot.'},
+          {type:'image_url', image_url:{url:'data:'+mimeType+';base64,'+b64data}}
+        ]});
+      } else {
+        if (m.b64 && !isLastUser) textContent += ' [image/screenshot was attached earlier in conversation]';
+        msgs.push({role:'user', content: textContent});
+      }
+    } else if (m.r === 'ai' && m.t) {
+      msgs.push({role:'assistant', content: m.t.substring(0, 5000)});
+    }
+  }
+  return {msgs: msgs, hasImage: hasImage};
+}
+// ─── GEMINI STREAMING ─────────────────────────────────────────────────────────
+function buildGeminiContents(msgs) {
+  // Convert OpenAI-style messages to Gemini format
+  var contents = [];
+  for (var i = 1; i < msgs.length; i++) { // skip system (index 0)
+    var m = msgs[i];
+    var role = m.role === 'assistant' ? 'model' : 'user';
+    if (Array.isArray(m.content)) {
+      // Vision message
+      var parts = [];
+      m.content.forEach(function(p) {
+        if (p.type === 'text') {
+          parts.push({text: p.text || ''});
+        } else if (p.type === 'image_url' && p.image_url && p.image_url.url) {
+          var url = p.image_url.url;
+          var match = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            parts.push({inlineData:{mimeType:match[1], data:match[2]}});
+          }
+        }
+      });
+      if (parts.length) contents.push({role:role, parts:parts});
+    } else {
+      var text = (m.content || '').trim();
+      if (text) contents.push({role:role, parts:[{text:text}]});
+    }
+  }
+  return contents;
+}
+
+async function geminiStream(msgs, sysPrompt, onChunk, modelName, adminAttempt) {
+  var contents = buildGeminiContents(msgs);
+  if (!contents.length) contents = [{role:'user', parts:[{text:'Hello'}]}];
+  var body = {
+    engine: 'gemini',
+    model: modelName || undefined, // server picks its own default if omitted
+    systemPrompt: sysPrompt || getSys(),
+    contents: contents,
+    maxTokens: 8192,
+    temperature: IS_ADMIN ? 1.0 : 0.7,
+    adminPasswordAttempt: adminAttempt || undefined
+  };
+  var resp = await fetch(JUANAI_BACKEND_URL + '/api/chat/stream', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    var txt = ''; try { txt = await resp.text(); } catch(e) {}
+    throw {status: resp.status, text: txt, engine: 'gemini'};
+  }
+  // Server independently verified any adminPasswordAttempt and reports the
+  // real result here — this is the ONLY place IS_ADMIN (a display-only
+  // flag) gets set to true, and only when the server actually confirmed it.
+  if (adminAttempt && resp.headers.get('X-Admin-Verified') === 'true' && !IS_ADMIN) {
+    IS_ADMIN = true;
+    var badge = document.getElementById('adminBadge');
+    if (badge) badge.style.display = 'block';
+    toast('Admin Mode Activated 🔐', 'success');
+  } else if (adminAttempt && resp.headers.get('X-Admin-Verified') !== 'true') {
+    toast('Incorrect admin password', 'error');
+  }
+  var reader = resp.body.getReader();
+  var dec = new TextDecoder();
+  var full = ''; var buf = '';
+  while (true) {
+    var rd = await reader.read();
+    if (rd.done) break;
+    buf += dec.decode(rd.value, {stream:true});
+    var lines = buf.split('\n'); buf = lines.pop() || '';
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li].trim();
+      if (!line.startsWith('data:')) continue;
+      var d = line.slice(5).trim();
+      if (!d || d === '[DONE]') continue;
+      try {
+        var p = JSON.parse(d);
+        if (p.candidates && p.candidates[0] && p.candidates[0].content) {
+          var parts = p.candidates[0].content.parts;
+          if (parts) parts.forEach(function(pt) {
+            if (pt.text) { full += pt.text; if (onChunk) onChunk(full); }
+          });
+        }
+      } catch(e) {}
+    }
+  }
+  return full;
+}
+
+// ─── GROQ STREAMING ───────────────────────────────────────────────────────────
+var GEMINI_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash']; // model NAMES only (not secret) — kept in sync with ai.js's server-side list; used for indexing/labeling in the retry loop below, the actual key stays server-side
+var GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+
+async function callGroq(messages, modelIdx, maxTokens, onChunk) {
+  var model = (modelIdx === 'vision') ? GROQ_VISION_MODEL : GROQ_MODELS[modelIdx || 0];
+  var resp = await fetch(JUANAI_BACKEND_URL + '/api/chat/stream', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      engine: 'groq',
+      model: model,
+      messages: messages,
+      maxTokens: maxTokens || 4096,
+      temperature: IS_ADMIN ? 0.9 : 0.7
+    })
+  });
+  if (!resp.ok) {
+    var txt = ''; try { txt = await resp.text(); } catch(e) {}
+    throw {status: resp.status, text: txt, engine: 'groq'};
+  }
+  var reader = resp.body.getReader();
+  var dec = new TextDecoder();
+  var full = ''; var buf = '';
+  while (true) {
+    var rd = await reader.read();
+    if (rd.done) break;
+    buf += dec.decode(rd.value, {stream:true});
+    var lines = buf.split('\n'); buf = lines.pop() || '';
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li].trim();
+      if (!line.startsWith('data:')) continue;
+      var d = line.slice(5).trim();
+      if (!d || d === '[DONE]') continue;
+      try {
+        var p = JSON.parse(d);
+        var delta = p.choices && p.choices[0] && p.choices[0].delta;
+        if (delta && delta.content) { full += delta.content; if (onChunk) onChunk(full); }
+      } catch(e) {}
+    }
+  }
+  return full;
+}
+
+// ─── SMART CONTEXT TRIMMER ────────────────────────────────────────────────────
+function makeContextVersions(msgs) {
+  // v1: last 4 msgs, AI capped at 2000
+  var v1 = [msgs[0]].concat(msgs.slice(1).slice(-4).map(function(m) {
+    if (m.role === 'assistant' && typeof m.content === 'string' && m.content.length > 2000)
+      return {role:m.role, content:m.content.substring(0,2000)+'...'};
+    return m;
+  }));
+  // v2: last 2 msgs, no images, cap 800
+  var v2 = [msgs[0]].concat(msgs.slice(1).slice(-2).map(function(m) {
+    var content = Array.isArray(m.content)
+      ? ((m.content.find(function(p){return p.type==='text';}) || {}).text || '')
+      : (m.content || '');
+    return {role:m.role, content:content.substring(0,800)};
+  }));
+  // v3: just current user message
+  var lastUser = msgs.slice(1).filter(function(m){return m.role==='user';}).pop();
+  var v3 = [
+    {role:'system', content:'You are JuanAi, a helpful AI by Home Tech Group.'},
+    {role:'user', content: lastUser
+      ? (Array.isArray(lastUser.content)
+          ? ((lastUser.content.find(function(p){return p.type==='text';}) || {}).text || 'Hello')
+          : (lastUser.content || 'Hello')).substring(0,500)
+      : 'Hello'}
+  ];
+  return [v1, v2, v3];
+}
+
+function sleep(ms){ return new Promise(function(r){setTimeout(r,ms);}); }
+
+function updateEngineLabel(label) {
+  var el = document.getElementById('connTxt');
+  if (el) el.textContent = label;
+}
+
+function toTextOnly(msgs) {
+  return msgs.map(function(m) {
+    if (Array.isArray(m.content)) {
+      var txt = '';
+      m.content.forEach(function(p){ if(p.type==='text') txt += p.text; });
+      return {role:m.role, content:(txt||'').substring(0,800)};
+    }
+    return {role:m.role, content:(m.content||'').substring(0,800)};
+  });
+}
+
+// Test the AI proxy silently on startup — update badge to show real engine status
+async function testGeminiKey() {
+  try {
+    var resp = await fetch(JUANAI_BACKEND_URL + '/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({engine:'gemini', contents:[{role:'user',parts:[{text:'hi'}]}], maxTokens:5})
+    });
+    if (resp.ok) {
+      updateEngineLabel('Gemini · ready');
+      document.getElementById('connBadge').className = 'conn-badge groq'; // green
+    } else {
+      updateEngineLabel('Groq · Llama');
+    }
+  } catch(e) {
+    updateEngineLabel('Groq · Llama');
+  }
+}
+
+// ─── MAIN CHAT FUNCTION — Gemini PRIMARY → Groq FALLBACK ─────────────────────
+async function groqStream(messages, onChunk, useVision, adminAttempt) {
+  var sys = messages[0] ? messages[0].content : getSys();
+  var lastErr = 'Unknown error';
+
+  // ══ 1. GEMINI — handles text + images natively ══
+  var geminiModels = useVision
+    ? GEMINI_MODELS // current Gemini models are all vision-capable, no separate list needed
+    : GEMINI_MODELS;
+
+  for (var gi = 0; gi < geminiModels.length; gi++) {
+    try {
+      var res = await geminiStream(messages, sys, onChunk, geminiModels[gi], adminAttempt);
+      if (res && res.trim()) {
+        _lastEngine = 'gemini';
+        updateEngineLabel('Gemini · ' + geminiModels[gi].replace('gemini-','').replace('-preview',''));
+        return res;
+      }
+    } catch(e) {
+      lastErr = 'Gemini ' + (e.status || e.message || e);
+      if (e.status === 429) await sleep(900);
+      if (e.status === 400) {
+        // Context too large — retry with trimmed context, keep images
+        try {
+          var trimmed = [messages[0]].concat(messages.slice(1).slice(-2).map(function(m){
+            if(Array.isArray(m.content)){
+              return {role:m.role, content:m.content.map(function(p){
+                if(p.type==='text') return {type:'text',text:(p.text||'').substring(0,400)};
+                return p; // keep image part
+              })};
+            }
+            return {role:m.role, content:(m.content||'').substring(0,400)};
+          }));
+          var res3 = await geminiStream(trimmed, sys, onChunk, geminiModels[gi]);
+          if (res3 && res3.trim()) {
+            updateEngineLabel('Gemini · ' + geminiModels[gi].replace('gemini-',''));
+            return res3;
+          }
+        } catch(e3) {}
+      }
+      if (e.status === 401 || e.status === 403) break; // bad key — skip to Groq
+    }
+  }
+
+  // ══ 2. GROQ FALLBACK ══
+  // For images: try Groq vision model first
+  if (useVision) {
+    try {
+      var gr_v = await callGroq(messages, 'vision', 2048, onChunk);
+      if (gr_v && gr_v.trim()) {
+        _lastEngine = 'groq'; updateEngineLabel('Groq · Vision'); return gr_v;
+      }
+    } catch(ev) {
+      // Vision failed — add helpful note to text fallback
+    }
+  }
+
+  // Text-only fallback (strip images for Groq text models)
+  var textMsgs = toTextOnly(messages);
+  if (useVision) {
+    // Tell Groq about the image via text
+    var lastU = textMsgs.filter(function(m){return m.role==='user';}).pop();
+    if (lastU) lastU.content = (lastU.content||'') + ' [Image attached - please analyze from context or ask user to describe it.]';
+  }
+  var groqCtx = [textMsgs[0]].concat(textMsgs.slice(1).slice(-6));
+
+  for (var qi = 0; qi < GROQ_MODELS.length; qi++) {
+    try {
+      var gr = await callGroq(groqCtx, qi, 4000, onChunk);
+      if (gr && gr.trim()) {
+        _lastEngine = 'groq';
+        updateEngineLabel('Groq · ' + GROQ_MODELS[qi].split('-').slice(0,3).join('-'));
+        return gr;
+      }
+    } catch(e4) {
+      lastErr = 'Groq ' + (e4.status || e4.message || e4);
+      if (e4.status === 429) await sleep(600);
+      if (e4.status === 401) throw new Error('Invalid Groq API key');
+      if (e4.status === 400) {
+        try {
+          var miniCtx = [
+            {role:'system', content:'You are JuanAi, a professional AI assistant.'},
+            {role:'user', content:(groqCtx.filter(function(m){return m.role==='user';}).pop()||{content:'Hello'}).content.substring(0,500)}
+          ];
+          var gr2 = await callGroq(miniCtx, qi, 1500, onChunk);
+          if (gr2 && gr2.trim()) { updateEngineLabel('Groq · fast'); return gr2; }
+        } catch(e5) {}
+      }
+    }
+  }
+  throw new Error('All engines failed. Check internet connection.');
+}
+async function groqOnce(userPrompt, systemPrompt, maxTokens) {
+  var sys = systemPrompt || getSys();
+  var prompt = (userPrompt || '').substring(0, 4000);
+  // Try Gemini first, via the same streaming proxy geminiStream already
+  // uses — we just don't pass an onChunk callback since this function
+  // only wants the final accumulated text, not live updates.
+  for (var gi = 0; gi < GEMINI_MODELS.length; gi++) {
+    try {
+      var txt = await geminiStream([{role:'system',content:sys},{role:'user',content:prompt}], sys, null, GEMINI_MODELS[gi]);
+      if (txt && txt.trim()) return txt.trim();
+    } catch(e) {}
+  }
+  // Fallback Groq
+  for (var qi = 0; qi < GROQ_MODELS.length; qi++) {
+    try {
+      var r = await callGroq(
+        [{role:'system',content:sys},{role:'user',content:prompt}],
+        qi, maxTokens||2048, null
+      );
+      if (r && r.trim()) return r.trim();
+    } catch(e2) {}
+  }
+  return null;
+}
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+var activeId=null,isGen=false,prevCode='',convs=[];
+var attachments=[]; // [{type:'image'|'file'|'zip',name,data,content,b64}]
+var isListen=false,rec=null;
+
+// ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
+var SLASH_CMDS=[
+  // ── AI AGENTS ──
+  {cat:'🤖 AI Agents',cmd:'/architect',desc:'Software Architect — design full system architecture'},
+  {cat:'🤖 AI Agents',cmd:'/backend',desc:'Backend Engineer — generate server-side code'},
+  {cat:'🤖 AI Agents',cmd:'/frontend',desc:'Frontend Engineer — build UI components'},
+  {cat:'🤖 AI Agents',cmd:'/database',desc:'Database Engineer — schema, queries, migrations'},
+  {cat:'🤖 AI Agents',cmd:'/devops',desc:'DevOps Engineer — Docker, CI/CD, deployment'},
+  {cat:'🤖 AI Agents',cmd:'/security',desc:'Security Engineer — audit and fix vulnerabilities'},
+  {cat:'🤖 AI Agents',cmd:'/test',desc:'QA Engineer — generate complete test suite'},
+  {cat:'🤖 AI Agents',cmd:'/docs',desc:'Documentation Writer — generate full docs'},
+  {cat:'🤖 AI Agents',cmd:'/optimize',desc:'Performance Optimizer — speed and efficiency'},
+  {cat:'🤖 AI Agents',cmd:'/review',desc:'Code Reviewer — full review with ratings'},
+  // ── CODING ──
+  {cat:'💻 Coding',cmd:'/api',desc:'Generate complete REST or GraphQL API'},
+  {cat:'💻 Coding',cmd:'/auth',desc:'Generate authentication system with JWT'},
+  {cat:'💻 Coding',cmd:'/crud',desc:'Generate complete CRUD operations'},
+  {cat:'💻 Coding',cmd:'/migrate',desc:'Generate database migration scripts'},
+  {cat:'💻 Coding',cmd:'/docker',desc:'Generate Dockerfile and docker-compose'},
+  {cat:'💻 Coding',cmd:'/cicd',desc:'Generate CI/CD pipeline (GitHub Actions)'},
+  {cat:'💻 Coding',cmd:'/debug',desc:'Find and fix all bugs in code'},
+  {cat:'💻 Coding',cmd:'/refactor',desc:'Refactor and clean code structure'},
+  {cat:'💻 Coding',cmd:'/convert',desc:'Convert code between languages'},
+  {cat:'💻 Coding',cmd:'/explain',desc:'Explain code line by line'},
+  {cat:'💻 Coding',cmd:'/readme',desc:'Generate complete README file'},
+  {cat:'💻 Coding',cmd:'/deploy',desc:'Generate deployment configuration'},
+  {cat:'💻 Coding',cmd:'/mock',desc:'Generate mock data and fixtures'},
+  {cat:'💻 Coding',cmd:'/schema',desc:'Generate database schema design'},
+  {cat:'💻 Coding',cmd:'/websocket',desc:'Generate WebSocket server'},
+  {cat:'💻 Coding',cmd:'/microservice',desc:'Generate microservice architecture'},
+  // ── PLANNING ──
+  {cat:'📋 Planning',cmd:'/plan',desc:'Analyze requirements and create implementation plan'},
+  {cat:'📋 Planning',cmd:'/architect',desc:'Design complete system architecture'},
+  {cat:'📋 Planning',cmd:'/roadmap',desc:'Create development roadmap with milestones'},
+  {cat:'📋 Planning',cmd:'/blueprint',desc:'Create detailed implementation blueprint'},
+  {cat:'📋 Planning',cmd:'/estimate',desc:'Estimate project complexity and timeline'},
+  // ── OUTPUT MODES ──
+  {cat:'✏️ Output',cmd:'/ghost',desc:'Final answer only, no explanation'},
+  {cat:'✏️ Output',cmd:'/brief',desc:'3 to 5 lines max'},
+  {cat:'✏️ Output',cmd:'/expand',desc:'Fully detailed response'},
+  {cat:'✏️ Output',cmd:'/stepbystep',desc:'Clear numbered steps'},
+  {cat:'✏️ Output',cmd:'/eli5',desc:'Explain like I am 5'},
+  {cat:'✏️ Output',cmd:'/compare',desc:'Side by side comparison'},
+  {cat:'✏️ Output',cmd:'/proscons',desc:'List pros and cons'},
+  {cat:'✏️ Output',cmd:'/deepdive',desc:'Go extremely detailed'},
+];
+var slashSelIdx=-1;
+
+function updateSlashPopup(val){
+  var popup=document.getElementById('slashPopup');
+  if(!val.startsWith('/')){popup.classList.remove('on');return;}
+  var q=val.toLowerCase();
+  var matches=SLASH_CMDS.filter(function(c){return c.cmd.startsWith(q)||q==='/'});
+  if(!matches.length){popup.classList.remove('on');return;}
+  var html='';var lastCat='';
+  matches.slice(0,18).forEach(function(c,i){
+    if(c.cat!==lastCat){html+='<div class="slash-cat">'+c.cat+'</div>';lastCat=c.cat;}
+    html+='<div class="slash-item'+(i===slashSelIdx?' selected':'')+'" onclick="applySlash(\''+c.cmd+'\')"><span class="si-cmd">'+c.cmd+'</span><span class="si-desc">'+c.desc+'</span></div>';
+  });
+  popup.innerHTML=html;
+  popup.classList.add('on');
+  slashSelIdx=-1;
+}
+
+function applySlash(cmd){
+  var ta=document.getElementById('msgInput');
+  var cur=ta.value;
+  // Replace the /xxx part at start with chosen command + space
+  ta.value=cur.replace(/^\/\S*/,cmd+' ');
+  ta.focus();
+  // Move cursor to end
+  var len=ta.value.length;ta.setSelectionRange(len,len);
+  document.getElementById('slashPopup').classList.remove('on');
+  autoResize(ta);updateCharCount();
+}
+
+function handleSlashKey(e){
+  var popup=document.getElementById('slashPopup');
+  if(!popup.classList.contains('on'))return false;
+  var items=popup.querySelectorAll('.slash-item');
+  if(e.key==='ArrowDown'){e.preventDefault();slashSelIdx=Math.min(slashSelIdx+1,items.length-1);items.forEach(function(el,i){el.classList.toggle('selected',i===slashSelIdx);});if(items[slashSelIdx])items[slashSelIdx].scrollIntoView({block:'nearest'});return true;}
+  if(e.key==='ArrowUp'){e.preventDefault();slashSelIdx=Math.max(slashSelIdx-1,0);items.forEach(function(el,i){el.classList.toggle('selected',i===slashSelIdx);});if(items[slashSelIdx])items[slashSelIdx].scrollIntoView({block:'nearest'});return true;}
+  if(e.key==='Enter'&&slashSelIdx>=0){e.preventDefault();var sel=popup.querySelectorAll('.slash-item')[slashSelIdx];if(sel)sel.click();return true;}
+  if(e.key==='Escape'){popup.classList.remove('on');return true;}
+  return false;
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',function(){
+  var saved=sGet('ju_theme');
+  if(saved)document.documentElement.className=saved;
+  else if(window.matchMedia&&window.matchMedia('(prefers-color-scheme:light)').matches)document.documentElement.classList.add('light');
+  initVoice();
+
+  // ── APK-SAFE STARTUP ──
+  // IndexedDB persists in Android APK WebView even when localStorage is cleared
+  // Step 1: Open IndexedDB
+  // Step 2: Preload all critical keys from IDB into localStorage/memory
+  // Step 3: Then check session — guaranteed to find data even in APK
+  var CRITICAL_KEYS = ['ju_sess','ju_sess_bk1','ju_sess_bk2','ju_creds','ju_creds_bk1','ju_creds_bk2','ju_convs2','ju_convs_bk','ju_active2','ju_theme'];
+
+  function startApp() {
+    loadUsers();
+    if(loadSess()){
+      enterApp();
+    }
+    // Set up event listeners after app init
+    setupInputListeners();
+  }
+
+  initIDB(function(ok) {
+    if (ok) {
+      idbPreload(CRITICAL_KEYS, function() {
+        startApp();
+        testGeminiKey(); // test key after app loads
+      });
+    } else {
+      startApp();
+      testGeminiKey();
+    }
+  });
+}); // end DOMContentLoaded
+
+function setupInputListeners() {
+  var ta=document.getElementById('msgInput');
+  if(!ta)return;
+  ta.addEventListener('keydown',function(e){
+    // Arrow keys — never intercept
+    if(e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='ArrowLeft'||e.key==='ArrowRight'){
+      var popup=document.getElementById('slashPopup');
+      if(popup&&popup.classList.contains('on')&&(e.key==='ArrowUp'||e.key==='ArrowDown')){
+        handleSlashKey(e);
+      }
+      return;
+    }
+    if(e.key==='Escape'){
+      var popup2=document.getElementById('slashPopup');
+      if(popup2)popup2.classList.remove('on');
+      return;
+    }
+    if(e.key==='Enter'){
+      // Handle slash popup selection
+      var popup3=document.getElementById('slashPopup');
+      if(popup3&&popup3.classList.contains('on')&&slashSelIdx>=0){
+        handleSlashKey(e);return;
+      }
+      // On mobile: Enter/Return key (↵) = new line always
+      // Only Ctrl+Enter sends on desktop
+      if(e.ctrlKey||e.metaKey){
+        e.preventDefault();
+        sendMsg();
+        return;
+      }
+      // Everything else (plain Enter, Shift+Enter) = new line
+      // Do NOT preventDefault — let the browser insert the newline naturally
+      return;
+    }
+  });
+  ta.addEventListener('input',function(){
+    autoResize(ta);
+    updateCharCount();
+    // Show slash popup if starts with /
+    updateSlashPopup(ta.value.trimStart());
+  });
+  // Close slash popup on outside click
+  document.addEventListener('click',function(e){
+    var popup=document.getElementById('slashPopup');
+    if(popup&&!popup.contains(e.target)&&e.target!==ta)popup.classList.remove('on');
+  });
+  document.getElementById('lPass').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  document.getElementById('lEmail').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  document.getElementById('rPass').addEventListener('keydown',function(e){if(e.key==='Enter')doRegister();});
+  document.getElementById('gEmail').addEventListener('keydown',function(e){if(e.key==='Enter')confirmGoogle();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('prevOv').classList.contains('on'))closePrev();});
+} // end setupInputListeners
+
+// ─── VOICE ────────────────────────────────────────────────────────────────────
+function initVoice(){var SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){document.getElementById('voiceBtn').style.display='none';return;}rec=new SR();rec.continuous=false;rec.interimResults=true;rec.lang='en-US';rec.onstart=function(){isListen=true;document.getElementById('voiceBtn').classList.add('active');document.getElementById('voiceInd').classList.add('on');};rec.onresult=function(ev){var t='';for(var i=ev.resultIndex;i<ev.results.length;i++)t+=ev.results[i][0].transcript;var ta=document.getElementById('msgInput');ta.value=(ta.getAttribute('data-vb')||'')+t;autoResize(ta);updateCharCount();};rec.onerror=function(ev){stopVoice();if(ev.error==='not-allowed')toast('Microphone access denied','error');};rec.onend=function(){stopVoice();document.getElementById('msgInput').removeAttribute('data-vb');};}
+function toggleVoice(){if(!rec){toast('Voice not supported in this browser','warning');return;}if(isListen){rec.stop();}else{var ta=document.getElementById('msgInput');ta.setAttribute('data-vb',ta.value);try{rec.start();}catch(e){toast('Could not start voice input','error');}}}
+function stopVoice(){isListen=false;document.getElementById('voiceBtn').classList.remove('active');document.getElementById('voiceInd').classList.remove('on');}
+
+// ─── THEME ────────────────────────────────────────────────────────────────────
+function toggleTheme(){var h=document.documentElement;h.classList.toggle('light');sSet('ju_theme',h.classList.contains('light')?'light':'dark');}
+
+// ─── ATTACHMENTS ──────────────────────────────────────────────────────────────
+function trigImgUpload(){document.getElementById('imgInput').click();}
+function trigFileUpload(){document.getElementById('fileInput').click();}
+
+function onImgSelect(e){
+  var f=e.target.files[0];if(!f||!f.type.startsWith('image/'))return;
+  var rd=new FileReader();
+  rd.onload=function(ev){
+    attachments.push({type:'image',name:f.name,b64:ev.target.result,size:f.size});
+    renderAttachRow();
+  };
+  rd.readAsDataURL(f);
+  e.target.value='';
+}
+
+function onFileSelect(e){
+  var f=e.target.files[0];if(!f)return;
+  var isZip=f.name.endsWith('.zip')||f.type==='application/zip'||f.type==='application/x-zip-compressed';
+  if(isZip){
+    // Load JSZip dynamically then extract
+    toast('Reading ZIP file...','info');
+    loadJSZip(function(){
+      var rd=new FileReader();
+      rd.onload=function(ev){
+        JSZip.loadAsync(ev.target.result).then(function(zip){
+          var files=[];
+          var readPromises=[];
+          zip.forEach(function(path,file){
+            if(!file.dir){
+              var ext=(path.split('.').pop()||'').toLowerCase();
+              var textExts=['js','ts','jsx','tsx','html','htm','css','scss','sass','less','json','md','txt','py','php','java','cpp','c','go','rs','rb','swift','kt','xml','yaml','yml','env','sh','bash','sql','vue','svelte','toml','ini','cfg','conf','htaccess'];
+              if(textExts.indexOf(ext)!==-1&&files.length<30){
+                var p=file.async('string').then(function(content){
+                  files.push({path:path,content:content.length>8000?content.substring(0,8000)+'\n... [truncated]':content});
+                }).catch(function(){files.push({path:path,content:'[binary or unreadable]'});});
+                readPromises.push(p);
+              }else{
+                files.push({path:path,content:'[binary file]'});
+              }
+            }
+          });
+          Promise.all(readPromises).then(function(){
+            // Sort: show all paths first, then file contents
+            var allPaths=[];
+            zip.forEach(function(path,file){allPaths.push((file.dir?'📁 ':'📄 ')+path);});
+            var contentStr='=== PROJECT STRUCTURE ('+allPaths.length+' items) ===\n'+allPaths.join('\n')+'\n\n';
+            // Cap total file content at 10000 chars to avoid HTTP 400
+            var totalChars=0;
+            var maxTotal=10000;
+            files.forEach(function(f){
+              if(f.content!=='[binary file]'&&totalChars<maxTotal){
+                var chunk=f.content.substring(0,Math.min(f.content.length,maxTotal-totalChars));
+                contentStr+='=== FILE: '+f.path+' ===\n'+chunk+(chunk.length<f.content.length?'\n...[truncated]':'')+'\n\n';
+                totalChars+=chunk.length;
+              }
+            });
+            if(totalChars>=maxTotal)contentStr+='\n[Some files omitted — context limit reached. Ask about specific files.]';
+            attachments.push({type:'zip',name:f.name,size:f.size,content:contentStr});
+            renderAttachRow();
+            toast('ZIP extracted: '+allPaths.length+' files ready','success');
+          });
+        }).catch(function(err){
+          // Fallback if JSZip fails
+          attachments.push({type:'zip',name:f.name,size:f.size,content:'[ZIP file: '+f.name+' ('+fmtSize(f.size)+'). Could not extract: '+err.message+'. Please describe what is inside this project.]'});
+          renderAttachRow();
+          toast('ZIP attached (extraction failed — describe contents)','warning');
+        });
+      };
+      rd.readAsArrayBuffer(f);
+    });
+  }else{
+    var rd2=new FileReader();
+    rd2.onload=function(ev2){
+      var content=ev2.target.result;
+      if(typeof content==='string'&&content.length>80000)content=content.substring(0,80000)+'\n... [file truncated at 80k chars]';
+      attachments.push({type:'file',name:f.name,size:f.size,content:content});
+      renderAttachRow();
+      toast('File attached: '+f.name,'success');
+    };
+    rd2.onerror=function(){toast('Could not read file','error');};
+    rd2.readAsText(f);
+  }
+  e.target.value='';
+}
+
+function loadJSZip(cb){
+  if(window.JSZip){cb();return;}
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+  s.onload=cb;
+  s.onerror=function(){cb();};// call anyway, will use fallback
+  document.head.appendChild(s);
+}
+
+function renderAttachRow(){
+  var row=document.getElementById('attachRow');
+  if(!attachments.length){row.classList.remove('on');row.innerHTML='';return;}
+  row.classList.add('on');
+  var html='';
+  attachments.forEach(function(att,i){
+    var icon=att.type==='image'?'🖼️':att.type==='zip'?'📦':'📄';
+    if(att.type==='image'){
+      html+='<div class="att-chip img-chip"><img src="'+att.b64+'" alt=""><span class="att-name">'+esc(att.name)+'</span><button class="att-rm" onclick="removeAtt('+i+')">✕</button></div>';
+    }else{
+      html+='<div class="att-chip"><span class="att-icon">'+icon+'</span><span class="att-name">'+esc(att.name)+'</span><span style="font-size:10px;color:var(--tm);margin-left:4px">'+fmtSize(att.size)+'</span><button class="att-rm" onclick="removeAtt('+i+')">✕</button></div>';
+    }
+  });
+  row.innerHTML=html;
+}
+
+function removeAtt(i){attachments.splice(i,1);renderAttachRow();}
+function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
+
+function updateCharCount(){var ta=document.getElementById('msgInput');document.getElementById('charCount').textContent=ta.value.length||'';}
+
+// ─── SAVE ─────────────────────────────────────────────────────────────────────
+function cleanMsg(m){
+  var cp=Object.assign({},m);
+  if(cp.b64&&cp.b64.length>60000)delete cp.b64;
+  if(cp.fileContent&&cp.fileContent.length>3000)cp.fileContent=cp.fileContent.substring(0,3000)+'...[truncated]';
+  return cp;
+}
+function saveCon(){saveConvsToStorage();}
+
+// ─── CONVERSATIONS ────────────────────────────────────────────────────────────
+function genId(){return'c_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);}
+function newChat(){var c={id:genId(),title:'New Chat',msgs:[],createdAt:Date.now()};convs.unshift(c);activeId=c.id;saveCon();renderHist();renderMsgs();closeMob();setTimeout(function(){document.getElementById('msgInput').focus();},80);}
+function switchConv(id){if(isGen)return;activeId=id;sSet('ju_active_backup',id);renderHist();renderMsgs();closeMob();}
+function deleteConv(id,e){if(e){e.stopPropagation();e.preventDefault();}document.getElementById('delModal').classList.add('on');document.getElementById('delConfirm').onclick=function(){convs=convs.filter(function(c){return c.id!==id;});if(activeId===id){activeId=convs.length?convs[0].id:null;if(!activeId){newChat();return;}}saveCon();renderHist();renderMsgs();closeModal('delModal');};}
+function autoTitle(c,txt){if(c.msgs.filter(function(m){return m.r==='ai';}).length===1&&c.title==='New Chat'){c.title=txt.replace(/[#*_`\n]/g,'').trim().substring(0,52)||'New Chat';renderHist();}}
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('collapsed');document.getElementById('overlay').classList.toggle('on');document.getElementById('userMenu').style.display='none';}
+function closeMob(){if(window.innerWidth<=768){document.getElementById('sidebar').classList.add('collapsed');document.getElementById('overlay').classList.remove('on');}}
+
+function renderHist(){
+  var con=document.getElementById('histList');
+  if(isGuest){con.innerHTML='<div class="ghn"><i class="fa-solid fa-clock-rotate-left"></i><p>Sign in to save and access chat history.</p><button onclick="showAuthFromGuest()">Sign In</button></div>';return;}
+  if(!convs.length){con.innerHTML='<div style="padding:20px;text-align:center;color:var(--tm);font-size:12px;line-height:1.6">No conversations yet.<br>Start a new chat!</div>';return;}
+  var tS=new Date();tS.setHours(0,0,0,0);var yS=new Date(tS);yS.setDate(yS.getDate()-1);
+  var html='',lastG='';
+  convs.forEach(function(c){
+    var g=c.createdAt>=tS.getTime()?'Today':c.createdAt>=yS.getTime()?'Yesterday':'Previous';
+    if(g!==lastG){html+='<div class="hist-lbl">'+g+'</div>';lastG=g;}
+    var act=c.id===activeId;
+    html+='<div class="hist-item'+(act?' active':'')+'" onclick="switchConv(\''+c.id+'\')">'
+      +'<div class="hi-icon"><i class="fa-solid fa-message"></i></div>'
+      +'<div class="hi-txt"><div class="hi-title">'+esc(c.title)+'</div><div class="hi-time">'+fmtTime(c.createdAt)+'</div></div>'
+      +'<button class="hi-del" onclick="deleteConv(\''+c.id+'\',event)" title="Delete"><i class="fa-solid fa-trash"></i></button>'
+      +'</div>';
+  });
+  con.innerHTML=html;
+}
+
+function renderMsgs(streaming){
+  var c=convs.find(function(x){return x.id===activeId;});
+  var con=document.getElementById('chatCon');
+  if(!c||!c.msgs.length){con.innerHTML=welcomeHTML();return;}
+
+  // During streaming: ONLY update the last AI message content in-place
+  // This prevents full DOM repaint = no blinking, no jumping
+  if(streaming&&isGen&&con.children.length>0){
+    var last=c.msgs[c.msgs.length-1];
+    if(last&&last.r==='ai'){
+      var lastDiv=con.querySelector('.msg.ai:last-child .mcontent');
+      if(lastDiv){
+        if(!last.t){
+          lastDiv.innerHTML='<div class="typing-ind"><span></span><span></span><span></span></div>';
+        }else{
+          lastDiv.innerHTML=md(last.t);
+        }
+        scrollBot();
+        return; // Done — no full re-render
+      }
+    }
+  }
+
+  // Full render (first load, new message, or after streaming ends)
+  var html='';
+  c.msgs.forEach(function(m,idx){
+    var isLast=idx===c.msgs.length-1;
+    if(m.r==='user'){
+      html+='<div class="msg user"><div class="mav"><i class="fa-solid fa-user" style="font-size:12px"></i></div><div class="mbody"><div class="mname">You</div><div class="mcontent">'+esc(m.t||'')+'</div>';
+      if(m.img)html+='<img class="msg-img" src="'+esc(m.img)+'" alt="Uploaded image">';
+      if(m.fileName&&m.type!=='image')html+='<div style="margin-top:8px;display:inline-flex;align-items:center;gap:7px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:5px 10px;font-size:11px;color:var(--t2);font-weight:600"><i class="fa-solid fa-file-code"></i>'+esc(m.fileName)+'</div>';
+      html+='</div></div>';
+    }else{
+      html+='<div class="msg ai"><div class="mav">J</div><div class="mbody"><div class="mname">JuanAi <span class="tag">AI</span></div>';
+      if(!m.t&&!m.imgUrl&&isLast&&isGen){
+        html+='<div class="mcontent"><div class="typing-ind"><span></span><span></span><span></span></div></div>';
+      }else if(m.imgGenerating){
+        html+='<div class="mcontent"><div class="img-gen-loading"><div class="img-gen-spin"></div><span>✨ Generating image... (may take 10-20 seconds)</span></div></div>';
+      }else if(m.imgUrl){
+        html+='<div class="mcontent">';
+        if(m.t)html+='<p style="margin-bottom:8px">'+md(m.t)+'</p>';
+        html+='<div class="gen-img-wrap">'
+          +'<div class="img-gen-loading" id="imgload_'+idx+'" style="min-height:200px"><div class="img-gen-spin"></div><span>Loading image...</span></div>'
+          +'<img src="'+esc(m.imgUrl)+'" alt="'+esc(m.imgPrompt||'Generated')+'" class="gen-img" style="display:none" '
+          +'onload="this.style.display=\'block\';var l=document.getElementById(\'imgload_'+idx+'\');if(l)l.style.display=\'none\';" '
+          +'onerror="this.parentElement.innerHTML=\'<div style=\\\"padding:16px;color:var(--err);font-size:12px\\\">❌ Image failed to load. Try regenerating.</div>\'">'
+          +'<div class="gen-img-actions">'
+          +'<a href="'+esc(m.imgUrl)+'" target="_blank" download="juanai-image.jpg" class="gen-img-btn"><i class="fa-solid fa-download"></i> Download</a>'
+          +'<button class="gen-img-btn" onclick="regenImage('+idx+')"><i class="fa-solid fa-rotate-right"></i> Regenerate</button>'
+          +'</div>'
+          +'</div></div>';
+      }else{
+        html+='<div class="mcontent">'+(m.t?md(m.t):'')+'</div>';
+        // Show Download + Preview buttons if response has a complete HTML file
+        if(!isGen&&m.t&&(m.t.indexOf('<!DOCTYPE')!==-1||m.t.indexOf('<html')!==-1)){
+          var tMatch=m.t.match(/<title[^>]*>([^<]+)<\/title>/i);
+          var dlN=(tMatch?tMatch[1].toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''):'juanai-app')+'.html';
+          html+='<div class="msg-dl-bar">'
+            +'<button class="msg-dl-btn" onclick="dlMsgHtml('+idx+',\''+dlN+'\')"><i class="fa-solid fa-download"></i> Download '+dlN+'</button>'
+            +'<button class="msg-dl-btn run" onclick="previewMsgHtml('+idx+')"><i class="fa-solid fa-play"></i> Preview</button>'
+            +'</div>';
+        }
+        if(!isGen||!isLast)html+='<div class="msg-acts"><button class="ma-btn" onclick="copyMsg(this,'+idx+')"><i class="fa-regular fa-copy"></i> Copy</button></div>';
+      }
+      html+='</div></div>';
+    }
+  });
+  con.innerHTML=html;
+  scrollBot();
+}
+
+function copyMsg(btn,idx){var c=convs.find(function(x){return x.id===activeId;});if(!c)return;var m=c.msgs[idx];if(!m)return;if(navigator.clipboard)navigator.clipboard.writeText(m.t||'').then(function(){btn.classList.add('copied');btn.innerHTML='<i class="fa-solid fa-check"></i> Copied!';setTimeout(function(){btn.classList.remove('copied');btn.innerHTML='<i class="fa-regular fa-copy"></i> Copy';},2200);});}
+
+function extractHtmlFromMsg(idx){
+  var c=convs.find(function(x){return x.id===activeId;});
+  if(!c)return null;
+  var m=c.msgs[idx];if(!m||!m.t)return null;
+  // Extract first full HTML document from the message
+  var full=m.t;
+  var di=full.indexOf('<!DOCTYPE');var hi=full.indexOf('<html');
+  var start=di!==-1?di:(hi!==-1?hi:-1);
+  if(start!==-1)return full.substring(start);
+  // Try extracting from code block
+  var match=full.match(/```(?:html)?\n?([\s\S]*?)```/);
+  if(match)return match[1];
+  return null;
+}
+
+function dlMsgHtml(idx,fname){
+  var code=extractHtmlFromMsg(idx);
+  if(!code){toast('No downloadable file found','warning');return;}
+  var blob=new Blob([code],{type:'text/html'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download=fname||'juanai-app.html';
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+  toast('Downloaded: '+fname,'success');
+}
+
+function previewMsgHtml(idx){
+  var code=extractHtmlFromMsg(idx);
+  if(!code){toast('No previewable HTML found','warning');return;}
+  openPrev(code);
+}
+function scrollBot(){var a=document.getElementById('chatArea');requestAnimationFrame(function(){a.scrollTop=a.scrollHeight;});}
+
+function welcomeHTML(){
+  var g=CU?'Hi <span>'+esc(CU.name.split(' ')[0])+'</span> — ready to build something great?':'What shall we build today?';
+  return '<div class="welcome">'
+    +'<div class="w-logo"><i class="fa-solid fa-code"></i></div>'
+    +'<h1>Welcome to <span>JuanAi</span></h1>'
+    +'<p>'+g+'</p>'
+    +'<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin-bottom:14px">'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(99,102,241,.15);color:var(--acc);border:1px solid rgba(99,102,241,.2)">🏗️ Architect</span>'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(16,217,160,.1);color:var(--ok);border:1px solid rgba(16,217,160,.2)">⚙️ Backend</span>'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(255,184,0,.1);color:var(--warn);border:1px solid rgba(255,184,0,.2)">🎨 Frontend</span>'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(255,79,107,.1);color:var(--err);border:1px solid rgba(255,79,107,.2)">🔒 Security</span>'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.2)">🗄️ Database</span>'
+    +'<span style="padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(168,85,247,.1);color:#a855f7;border:1px solid rgba(168,85,247,.2)">🧪 QA</span>'
+    +'</div>'
+    +'<div class="suggs">'
+    +'<div class="sg-card" onclick="useSugg(\'/architect Design a complete SaaS platform with auth, payments, dashboard, REST API — full architecture with tech stack recommendations\')"><div class="sg-ic">🏗️</div><div class="sg-tx">Design SaaS Architecture</div></div>'
+    +'<div class="sg-card" onclick="useSugg(\'/api Build a complete Node.js REST API with JWT auth, MongoDB, full CRUD, rate limiting, validation, error handling and Swagger docs\')"><div class="sg-ic">⚡</div><div class="sg-tx">Generate REST API</div></div>'
+    +'<div class="sg-card" onclick="useSugg(\'/security Audit this code for SQL injection, XSS, CSRF, weak authentication, exposed secrets, and all OWASP vulnerabilities — fix everything\')"><div class="sg-ic">🔒</div><div class="sg-tx">Security Audit</div></div>'
+    +'<div class="sg-card" onclick="useSugg(\'Generate image of a futuristic cyberpunk city at night with neon lights\')"><div class="sg-ic">🎨</div><div class="sg-tx">Generate AI Image</div></div>'
+    +'<div class="sg-card" onclick="useSugg(\'/frontend Build a complete admin dashboard with sidebar, charts, stats cards, dark theme, animations, responsive design — production ready\')"><div class="sg-ic">📊</div><div class="sg-tx">Build Dashboard UI</div></div>'
+    +'<div class="sg-card" onclick="useSugg(\'/database Design a complete PostgreSQL schema for e-commerce: users, products, orders, payments, reviews — indexes, foreign keys, ORM models, migrations, sample queries\')"><div class="sg-ic">🗄️</div><div class="sg-tx">Design DB Schema</div></div>'
+    +'</div></div>';
+}
+
+// ─── SEND ─────────────────────────────────────────────────────────────────────
+// ─── IMAGE & VIDEO GENERATION ─────────────────────────────────────────────────
+var IMG_KEYWORDS = ['generate image','generate a image','create image','create a image','make image','make a image','draw','generate photo','create photo','make photo','generate picture','create picture','make picture','generate art','create art','imagine','/imagine','/image','/img','/draw','generate a photo','show me a picture','show me an image','generate an image','generate a picture','create an illustration','make an illustration','generate illustration','design a logo','generate a logo','create a logo','paint','generate wallpaper','create wallpaper'];
+
+var VID_KEYWORDS = ['generate video','create video','make video','generate a video','create a video','make a video','/video','/vid'];
+
+function isImageRequest(text){
+  var l=text.toLowerCase();
+  for(var i=0;i<IMG_KEYWORDS.length;i++)if(l.indexOf(IMG_KEYWORDS[i])!==-1)return true;
+  return false;
+}
+
+function isVideoRequest(text){
+  var l=text.toLowerCase();
+  for(var i=0;i<VID_KEYWORDS.length;i++)if(l.indexOf(VID_KEYWORDS[i])!==-1)return true;
+  return false;
+}
+
+function extractPrompt(text){
+  // Remove the command keyword and return the actual prompt
+  var l=text.toLowerCase();
+  var keywords=IMG_KEYWORDS.concat(VID_KEYWORDS);
+  var clean=text;
+  keywords.forEach(function(kw){
+    var idx=l.indexOf(kw);
+    if(idx!==-1)clean=text.substring(idx+kw.length).trim();
+  });
+  return clean||text;
+}
+
+async function generateImage(c, prompt){
+  var last=c.msgs[c.msgs.length-1];
+  last.imgGenerating=true;
+  last.t='';
+  renderMsgs();
+
+  try{
+    // Pollinations.ai — free, no key needed
+    // Try multiple model variants for reliability
+    var cleanPrompt = prompt.trim() || 'beautiful landscape';
+    var encodedPrompt = encodeURIComponent(cleanPrompt);
+    var seed = Math.floor(Math.random()*999999);
+
+    // Primary URL - Pollinations
+    var imgUrl = 'https://image.pollinations.ai/prompt/' + encodedPrompt
+      + '?width=1024&height=1024&seed=' + seed + '&nologo=true&enhance=true&model=flux';
+
+    last.imgGenerating = false;
+    last.imgUrl = imgUrl;
+    last.imgPrompt = cleanPrompt;
+    last.t = '🎨 Generated: **' + cleanPrompt + '**';
+    isGen=false; updateSend(); renderMsgs();
+    saveCon();
+  } catch(e) {
+    last.imgGenerating = false;
+    last.t = '❌ Image generation failed: ' + (e.message||'Unknown error') + '. Please try again.';
+    isGen=false; updateSend(); renderMsgs(); saveCon();
+  }
+}
+
+async function generateVideo(c, prompt){
+  var last=c.msgs[c.msgs.length-1];
+  last.t='⚠️ **Video generation requires a free API key.**\n\nGet your free key at **replicate.com** (free $5 credit, no card needed):\n1. Go to `replicate.com`\n2. Sign up with GitHub\n3. Go to Account → API Tokens\n4. Copy your token and share it here\n\nOnce you share the key I\'ll enable video generation instantly! 🎬';
+  isGen=false;updateSend();renderMsgs();saveCon();
+}
+
+async function sendMsg(){
+  var ta=document.getElementById('msgInput');
+  var text=ta.value.trim();
+  if((!text&&!attachments.length)||isGen)return;
+
+  // Admin check — the password itself is no longer known client-side at
+  // all (see server.js's /api/chat/stream). We just detect an attempt
+  // (a message starting with "/admin ") and send whatever follows to the
+  // server as adminPasswordAttempt on the next chat request; the server
+  // verifies it and tells us via the X-Admin-Verified response header
+  // whether it actually worked. IS_ADMIN here is purely a DISPLAY flag
+  // (badge/label) — it grants no real privilege by itself, since the
+  // server independently re-checks the password on every request
+  // regardless of what this flag says.
+  var adminAttemptThisMessage = null;
+  if(!IS_ADMIN && text && text.toLowerCase().indexOf('/admin ')===0){
+    adminAttemptThisMessage = text.slice(7).trim();
+    text = '';
+    ta.value = '';
+    if(!attachments.length){
+      var c2=convs.find(function(x){return x.id===activeId;});
+      if(c2){c2.msgs.push({r:'ai',t:'Checking admin credentials…'});renderMsgs();saveCon();}
+    }
+  }
+
+  var c=convs.find(function(x){return x.id===activeId;});
+  if(!c)return;
+
+  // Build user message
+  var um={r:'user',t:text||''};
+  // Attach image
+  var imgAtt=attachments.find(function(a){return a.type==='image';});
+  if(imgAtt){um.img=imgAtt.b64;um.b64=imgAtt.b64;um.imgName=imgAtt.name;}
+  // Attach files/zips
+  var fileAtts=attachments.filter(function(a){return a.type!=='image';});
+  if(fileAtts.length){
+    um.fileName=fileAtts.map(function(a){return a.name;}).join(', ');
+    um.fileContent=fileAtts.map(function(a){return '=== '+a.name+' ===\n'+(a.content||'[binary file]');}).join('\n\n');
+    if(!um.t)um.t='Please analyze the attached file(s) and help me.';
+  }
+
+  c.msgs.push(um);
+  if(c.msgs.length===1||c.title==='New Chat'){c.title=(text||um.fileName||'File Chat').substring(0,52);renderHist();}
+  c.msgs.push({r:'ai',t:''});
+
+  ta.value='';autoResize(ta);updateCharCount();
+  attachments=[];renderAttachRow();
+
+  isGen=true;updateSend();renderMsgs();
+
+  // Check if image or video generation request
+  if(isImageRequest(text)){
+    var imgPrompt=extractPrompt(text)||text;
+    await generateImage(c,imgPrompt);
+  }else if(isVideoRequest(text)){
+    var vidPrompt=extractPrompt(text)||text;
+    await generateVideo(c,vidPrompt);
+  }else{
+    await doGroq(c);
+  }
+  // After response — strip b64 from user message to prevent context bloat on next send
+  if(um.b64){um.b64=null;um.img=um.img||null;} // keep img for display, kill b64 for API
+}
+
+async function doGroq(c){
+  var last=c.msgs[c.msgs.length-1];
+  last.t='';renderMsgs(true);
+
+  // Detect and show active agent
+  var lastUser = c.msgs.filter(function(m){return m.r==='user';}).pop();
+  var agent = lastUser ? detectAgent(lastUser.t) : null;
+  if(agent) {
+    var ct = document.getElementById('connTxt');
+    if(ct) { ct.textContent = agent; ct.style.color = 'var(--warn)'; }
+  }
+
+  // Throttle: only re-render every 15ms during streaming — fast and smooth
+  var renderTimer=null;
+  function scheduleRender(partial){
+    last.t=partial||'';
+    if(renderTimer)return;
+    renderTimer=setTimeout(function(){
+      renderTimer=null;
+      if(c.id===activeId)renderMsgs(true);
+    },15);
+  }
+
+  try{
+    var built=buildMessages(c);
+    var full=await groqStream(built.msgs,function(partial){
+      scheduleRender(partial);
+    },built.hasImage,adminAttemptThisMessage);
+    // Clear any pending timer
+    if(renderTimer){clearTimeout(renderTimer);renderTimer=null;}
+    // Cap stored AI response at 3000 chars to keep future contexts lean
+    var storedText = full && full.trim() ? full : 'Sorry, empty response. Please try again.';
+    last.t = storedText;
+    isGen=false;updateSend();renderMsgs();
+    if(full)autoTitle(c,full);
+    saveCon();
+  }catch(e){
+    if(renderTimer){clearTimeout(renderTimer);renderTimer=null;}
+    last.t='⚠️ **Error:** '+(e.message||'Something went wrong. Please try again.');
+    isGen=false;updateSend();renderMsgs();saveCon();
+    toast('Error: '+(e.message||'Request failed'),'error');
+  }
+}
+
+function updateSend(){var b=document.getElementById('sendBtn');if(isGen){b.disabled=true;b.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>';}else{b.disabled=false;b.innerHTML='<i class="fa-solid fa-arrow-up"></i>';}}
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px';}
+function regenImage(idx){
+  var c=convs.find(function(x){return x.id===activeId;});
+  if(!c||isGen)return;
+  var m=c.msgs[idx];
+  if(!m||!m.imgPrompt)return;
+  // Add new AI message and regenerate
+  c.msgs.push({r:'ai',t:''});
+  isGen=true;updateSend();renderMsgs();
+  generateImage(c,m.imgPrompt);
+}
+
+// ─── MARKDOWN ─────────────────────────────────────────────────────────────────
+function md(text){
+  if(!text)return'';text=String(text);
+  var codeMap=[];
+  text=text.replace(/```(\w*)\n?([\s\S]*?)```/g,function(_,lang,code){var idx=codeMap.length;codeMap.push(buildCodeBlock(lang.trim(),code.replace(/\n$/,'')));return'\x00CB'+idx+'\x00';});
+  var lines=text.split('\n');
+  var out=[],inUL=false,inOL=false,inBQ=false,ulBuf=[],olBuf=[],bqBuf=[];
+  function fUL(){if(inUL){out.push('<ul>'+ulBuf.map(function(l){return'<li>'+il(l)+'</li>';}).join('')+'</ul>');inUL=false;ulBuf=[];}}
+  function fOL(){if(inOL){out.push('<ol>'+olBuf.map(function(l){return'<li>'+il(l)+'</li>';}).join('')+'</ol>');inOL=false;olBuf=[];}}
+  function fBQ(){if(inBQ){out.push('<blockquote>'+bqBuf.map(function(l){return il(l);}).join('<br>')+'</blockquote>');inBQ=false;bqBuf=[];}}
+  function isTableRow(l){return l.trim().startsWith('|')&&l.trim().endsWith('|');}
+  function isSepRow(l){return/^\|[\s\-:|]+\|$/.test(l.trim());}
+  var j=0;
+  while(j<lines.length){
+    var line=lines[j];
+    if(line.indexOf('\x00CB')!==-1){fUL();fOL();fBQ();out.push(line.replace(/\x00CB(\d+)\x00/g,function(_,i){return codeMap[parseInt(i)];}));j++;continue;}
+    if(/^(\-{3,}|\*{3,}|_{3,})$/.test(line.trim())){fUL();fOL();fBQ();out.push('<hr>');j++;continue;}
+    var hm=line.match(/^(#{1,6})\s+(.+)/);
+    if(hm){fUL();fOL();fBQ();out.push('<h'+hm[1].length+'>'+il(hm[2])+'</h'+hm[1].length+'>');j++;continue;}
+    if(line.match(/^>\s?/)){fUL();fOL();if(!inBQ)inBQ=true;bqBuf.push(line.replace(/^>\s?/,''));j++;continue;}else{fBQ();}
+    if(line.match(/^[\*\-\+]\s+/)){fOL();if(!inUL)inUL=true;ulBuf.push(line.replace(/^[\*\-\+]\s+/,''));j++;continue;}else{fUL();}
+    if(line.match(/^\d+\.\s+/)){fUL();if(!inOL)inOL=true;olBuf.push(line.replace(/^\d+\.\s+/,''));j++;continue;}else{fOL();}
+    if(isTableRow(line)&&j+1<lines.length&&isSepRow(lines[j+1])){fUL();fOL();fBQ();var hdrs=line.trim().slice(1,-1).split('|').map(function(c){return c.trim();});var tbl='<table><thead><tr>'+hdrs.map(function(h){return'<th>'+il(h)+'</th>';}).join('')+'</tr></thead><tbody>';j+=2;while(j<lines.length&&isTableRow(lines[j])){var cells=lines[j].trim().slice(1,-1).split('|').map(function(c){return c.trim();});tbl+='<tr>'+cells.map(function(c){return'<td>'+il(c)+'</td>';}).join('')+'</tr>';j++;}tbl+='</tbody></table>';out.push(tbl);continue;}
+    if(line.trim()===''){out.push('');j++;continue;}
+    out.push('<p>'+il(line)+'</p>');j++;
+  }
+  fUL();fOL();fBQ();
+  return out.join('\n');
+}
+function il(s){s=String(s);s=s.replace(/\*\*\*(.*?)\*\*\*/g,'<strong><em>$1</em></strong>');s=s.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');s=s.replace(/__(.*?)__/g,'<strong>$1</strong>');s=s.replace(/\*(.*?)\*/g,'<em>$1</em>');s=s.replace(/_((?!_).*?)_/g,'<em>$1</em>');s=s.replace(/`([^`]+)`/g,'<code class="inline">$1</code>');s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');s=s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img src="$2" alt="$1" style="max-width:100%;border-radius:8px">');s=s.replace(/~~(.*?)~~/g,'<del>$1</del>');return s;}
+function esc(s){if(s==null)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(String(s)));return d.innerHTML;}
+function isRunnable(lang,code){var l=(lang||'').toLowerCase();if(['html','htm','xml','svg'].indexOf(l)!==-1)return true;if(code&&(code.indexOf('<!DOCTYPE')!==-1||code.indexOf('<html')!==-1))return true;return false;}
+function buildCodeBlock(lang,code){
+  var dl=lang||'code';
+  var extMap={'html':'html','css':'css','javascript':'js','js':'js','python':'py','py':'py','typescript':'ts','ts':'ts','java':'java','cpp':'cpp','c':'c','go':'go','rust':'rs','php':'php','ruby':'rb','swift':'swift','kotlin':'kt','sql':'sql','bash':'sh','shell':'sh','json':'json','xml':'xml','yaml':'yml','markdown':'md'};
+  var ext=extMap[dl.toLowerCase()]||'txt';
+  var fname='juanai-code.'+ext;
+  var lineCount=code.split('\n').length;
+  var preview=code.trim().split('\n')[0].substring(0,60)+(code.trim().split('\n').length>1?'...':'');
+
+  var acts='<div class="code-acts">';
+  if(isRunnable(lang,code))acts+='<button class="code-run" onclick="runCode(this)" title="Preview in browser"><i class="fa-solid fa-play"></i> Run</button>';
+  acts+='<button class="code-copy" onclick="copyCode(this)" title="Copy code"><i class="fa-regular fa-copy"></i></button>';
+  acts+='<button class="code-dl" onclick="dlCode(this,\''+esc(fname)+'\')" title="Download file"><i class="fa-solid fa-download"></i></button>';
+  acts+='<button class="code-toggle" onclick="toggleCode(this)"><i class="fa-solid fa-chevron-down"></i> '+lineCount+' lines</button>';
+  acts+='</div>';
+
+  return '<div class="code-block">'
+    +'<div class="code-hdr" onclick="toggleCode(this.querySelector(\'.code-toggle\'))">'
+    +'<span class="code-lang-tag">'+esc(dl)+'</span>'
+    +acts
+    +'</div>'
+    +'<div class="code-body">'  // closed by default
+    +'<pre>'+esc(code)+'</pre>'
+    +'</div>'
+    +'</div>';
+}
+
+function toggleCode(btn){
+  // btn could be the toggle button or called from header click
+  var toggleBtn = btn.classList && btn.classList.contains('code-toggle') ? btn : btn;
+  var block=toggleBtn.closest('.code-block');
+  var body=block.querySelector('.code-body');
+  var icon=toggleBtn.querySelector('i');
+  var isOpen=body.classList.contains('open');
+  body.classList.toggle('open');
+  if(isOpen){
+    icon.className='fa-solid fa-chevron-down';
+  }else{
+    icon.className='fa-solid fa-chevron-up';
+  }
+}
+
+function dlCode(btn,fname){
+  var pre=btn.closest('.code-block').querySelector('pre');
+  var code=pre.textContent;
+  var blob=new Blob([code],{type:'text/plain'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download=fname||'juanai-code.txt';
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+  btn.innerHTML='<i class="fa-solid fa-check"></i>';
+  btn.style.color='var(--ok)';
+  setTimeout(function(){btn.innerHTML='<i class="fa-solid fa-download"></i>';btn.style.color='';},2000);
+}
+function buildFullHTML(code){var t=code.trim();if(t.indexOf('<!DOCTYPE')!==-1||t.indexOf('<html')!==-1)return t;return'<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>Preview</title>\n</head>\n<body>\n'+t+'\n</body>\n</html>';}
+function copyCode(btn){
+  var pre=btn.closest('.code-block').querySelector('pre');
+  if(navigator.clipboard)navigator.clipboard.writeText(pre.textContent).then(function(){
+    btn.innerHTML='<i class="fa-solid fa-check"></i>';
+    btn.classList.add('copied');
+    setTimeout(function(){btn.classList.remove('copied');btn.innerHTML='<i class="fa-regular fa-copy"></i>';},2200);
+  });
+}
+function runCode(btn){
+  var pre=btn.closest('.code-block').querySelector('pre');
+  openPrev(pre.textContent);
+}
+
+// ─── PREVIEW ──────────────────────────────────────────────────────────────────
+function openPrev(code){prevCode=code;document.getElementById('prevOv').classList.add('on');switchPrevTab('preview');document.getElementById('prevIframe').srcdoc=buildFullHTML(code);}
+function closePrev(){document.getElementById('prevOv').classList.remove('on');document.getElementById('prevIframe').srcdoc='';prevCode='';}
+function switchPrevTab(t){var tp=document.getElementById('ptabP'),ts=document.getElementById('ptabS'),ifr=document.getElementById('prevIframe'),src=document.getElementById('prevSrc');if(t==='preview'){tp.classList.add('active');ts.classList.remove('active');ifr.style.display='block';src.style.display='none';}else{ts.classList.add('active');tp.classList.remove('active');ifr.style.display='none';src.style.display='block';document.getElementById('prevSrcCode').textContent=prevCode;}}
+function refreshPrev(){if(prevCode)document.getElementById('prevIframe').srcdoc=buildFullHTML(prevCode);}
+function copyPrevCode(){if(navigator.clipboard&&prevCode)navigator.clipboard.writeText(prevCode).then(function(){toast('Copied!','success');});}
+function dlPrevCode(){if(!prevCode)return;var b=new Blob([prevCode],{type:'text/html'});var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='juanai-app.html';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(u);}
+
+// ─── UI HELPERS ───────────────────────────────────────────────────────────────
+function closeModal(id){document.getElementById(id).classList.remove('on');}
+function switchMainTab(t){
+  var chatWrap=document.getElementById('chatWrap');
+  var fbPanel=document.getElementById('footballPanel');
+  var apiPanel=document.getElementById('apiKeysPanel');
+  var casinoPanel=document.getElementById('casinoPanel');
+  var btnChat=document.getElementById('btnChat');
+  var btnFb=document.getElementById('btnFootball');
+  var btnApi=document.getElementById('btnApiKeys');
+  var btnCasino=document.getElementById('btnCasino');
+  // Hide all
+  if(chatWrap)chatWrap.style.display='none';
+  if(fbPanel)fbPanel.style.display='none';
+  if(apiPanel)apiPanel.style.display='none';
+  if(casinoPanel)casinoPanel.style.display='none';
+  [btnChat,btnFb,btnApi,btnCasino].forEach(function(b){if(b)b.classList.remove('active');});
+  if(t==='chat'){if(chatWrap)chatWrap.style.display='flex';if(btnChat)btnChat.classList.add('active');}
+  else if(t==='football'){if(fbPanel)fbPanel.style.display='flex';if(btnFb)btnFb.classList.add('active');loadFixtures();}
+  else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderApiKeys();}
+  else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
+}
+
+// ─── CASINO — FREE-PLAY DEMO GAMES ─────────────────────────────────────────
+// Both games are original, self-contained demo games — not clones of any
+// real-money product. No backend call, no real currency: balances are just
+// in-memory JS numbers that reset on page reload. If this is ever wired to
+// real money, the odds/RNG must come from a licensed game provider instead
+// of this code — Math.random-based RNG is fine ONLY because nothing real is
+// at stake here.
+var casinoInit=false;
+function initCasino(){
+  if(casinoInit)return;
+  casinoInit=true;
+}
+
+// ── Aviator — real server-authoritative crash game, own page ──
+// Uses whatever API key JuanAi's dashboard already has (the same key used
+// for the football/API Keys panel), so there's nothing extra to set up —
+// if no key exists yet, one is created automatically the first time this
+// is opened, same as clicking "Generate" in the API Keys tab would do.
+async function launchAviator(){
+  // IMPORTANT: window.open() must happen synchronously inside the click
+  // handler, before any `await`. Mobile Chrome (and most browsers) only
+  // allow a popup/new-tab open when it's directly caused by a user
+  // gesture — once we `await` a fetch first, the browser no longer
+  // considers the later window.open() as gesture-triggered and silently
+  // blocks it (no error, tab just never opens). Opening a blank tab FIRST
+  // and then navigating it once the key is ready avoids that entirely.
+  var tab = window.open('', '_blank');
+  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading Aviator…</body>'); }
+  try{
+    var keys = await getApiKeys();
+    var key;
+    if(keys && keys.length){
+      key = keys[0].key;
+    } else {
+      // NOTE: this auto-create fallback path calls an admin-protected
+      // route and will now fail with a clear error for a regular visitor
+      // (no admin secret prompt shown here on purpose — prompting a random
+      // player for your server's admin secret would be its own security
+      // problem). In practice this means: as the admin, generate at least
+      // one API key ONCE via the API Keys tab before sharing this page
+      // publicly, so regular visitors always hit the `keys.length` branch
+      // above and never reach this fallback at all.
+      var resp = await fetch(JUANAI_BACKEND_URL + '/internal/apikeys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: 'Aviator (auto-created)' })
+      });
+      if(!resp.ok) throw new Error('Backend rejected key creation');
+      var created = await resp.json();
+      key = created && created.key;
+    }
+    if(!key){
+      toast('Could not get a JuanAi API key — check the API Keys tab','error');
+      if(tab) tab.close();
+      return;
+    }
+    var url = '/casino/aviator.html?key='+encodeURIComponent(key);
+    if(tab){ tab.location.href = url; } else { window.open(url, '_blank'); }
+  }catch(e){
+    toast('Could not launch Aviator: '+e.message, 'error');
+    if(tab) tab.close();
+  }
+}
+
+
+// ─── FOOTBALL ENGINE ──────────────────────────────────────────────────────────
+// Real fixtures now come from JuanAi's backend (server.js -> footballData.js),
+// which calls football-data.org server-side with no CORS restriction. The
+// browser no longer needs proxy workarounds — see loadFixtures() below.
+// REAL BUG FIX: this used to be a manually-typed 12-item list, capped at
+// whatever leagues someone happened to type in at the time — the actual
+// user-reported symptom was only ever seeing a handful of leagues (Premier
+// League, Bundesliga, Eredivisie, Ligue 1, Championship, Serie A) even
+// though football-data.org's plan can cover more. That specific 6-league
+// subset was never a deliberate list anywhere in this file — it's just
+// whichever of the OTHER hardcoded list (COVERED_COMPETITIONS, in the
+// backend's footballData.js) happened to have live/scheduled matches on
+// the days checked. This array itself was actually dead code (defined,
+// never read anywhere else in this file — grep confirms it) - the real fix
+// lives in footballData.js's getCompetitionCodes(), which now calls
+// football-data.org's own GET /v4/competitions endpoint to discover
+// whatever competitions the account's plan actually has access to, instead
+// of a fixed list. Keeping this array (now populated dynamically from the
+// backend's /internal/competitions endpoint, see loadCompetitionsList()
+// below) so the league FILTER dropdown has real competition names/codes to
+// offer, sourced from the same dynamic API response rather than a second,
+// separately-maintained manual list that could drift out of sync with it.
+var FB_COMPETITIONS = [];
+var fbSelectedLeagueCode = ''; // '' = show all leagues
+var fbVisibleMatches = []; // last-rendered set, so the league filter can re-render without refetching
+
+// Populates the league filter dropdown from the backend's own dynamic
+// competitions list (which itself comes straight from football-data.org's
+// GET /v4/competitions — see footballData.js). Called once, lazily, the
+// first time fixtures are loaded — no separate app-init hook needed.
+async function loadCompetitionsList(){
+  try{
+    var resp = await fetch(JUANAI_BACKEND_URL + '/internal/competitions');
+    if(!resp.ok) throw new Error('Backend returned ' + resp.status);
+    var data = await resp.json();
+    FB_COMPETITIONS = data.competitions || [];
+    var sel = document.getElementById('fbLeagueFilter');
+    if(!sel) return;
+    var prevValue = sel.value;
+    var html = '<option value="">All Leagues</option>';
+    FB_COMPETITIONS
+      .slice()
+      .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); })
+      .forEach(function(c){
+        html += '<option value="' + esc(c.code||'') + '">' + esc(c.name||c.code||'Unknown') + '</option>';
+      });
+    sel.innerHTML = html;
+    sel.value = prevValue; // preserve selection across refreshes, if still valid
+  }catch(e){
+    // Non-fatal: the "All Leagues" default option still works fine even if
+    // this fetch fails — matches keep loading and grouping exactly as
+    // before, just without a populated filter dropdown until it succeeds.
+    console.error('[JuanAi] failed to load competitions list: ' + e.message);
+  }
+}
+
+function onLeagueFilterChange(){
+  fbSelectedLeagueCode = document.getElementById('fbLeagueFilter').value;
+  renderFixtures(fbVisibleMatches);
+}
+
+var fbMatches = [];
+var fbAnalyzedCount = 0;
+var fbAnalyzing = false;
+
+// Get date string for days ahead
+function getFbDate(daysAhead){
+  var d = new Date();
+  d.setDate(d.getDate() + parseInt(daysAhead||0));
+  return d.toISOString().split('T')[0];
+}
+
+// Fixtures + odds now come from JuanAi's own backend (server.js), which:
+//  - fetches REAL matches from football-data.org server-side (no CORS issue)
+//  - runs AI analysis automatically in the background (scheduler.js)
+// This function just displays whatever the backend already has. It does NOT
+// fetch from football-data.org directly in the browser anymore, and there is
+// no demo/sample fixture fallback — if the backend has nothing yet, say so.
+async function loadFixtures(silent){
+  if(FB_COMPETITIONS.length === 0){
+    loadCompetitionsList(); // fire-and-forget — fills the filter dropdown once ready, doesn't block fixtures from loading
+  }
+  var days = document.getElementById('fbDays').value;
+  var dateStr = getFbDate(days);
+
+  if(!silent){
+    document.getElementById('fixturesList').innerHTML =
+      '<div style="text-align:center;padding:30px;color:var(--t2)"><div class="img-gen-spin" style="margin:0 auto 10px"></div><div style="font-size:13px">Loading fixtures for ' + dateStr + '...</div></div>';
+  }
+
+  try{
+    var resp = await fetch(JUANAI_BACKEND_URL + '/internal/fixtures-view?days=' + days);
+    if(!resp.ok) throw new Error('Backend returned ' + resp.status);
+    var data = await resp.json();
+    var matches = data.matches || [];
+
+    if(!matches.length){
+      if(!silent){
+        document.getElementById('fixturesList').innerHTML =
+          '<div style="text-align:center;padding:30px;color:var(--t2)">'
+          + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
+          + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
+          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
+          + '</div>';
+      }
+      fbMatches = [];
+      updateFbStats([]);
+      if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); }
+      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, 20000);
+      return;
+    }
+
+    fbMatches = matches;
+    var STALE_MATCH_CUTOFF_MS = 3 * 60 * 60 * 1000; // same 3h cutoff as the backend's real-time safety filter and background expiry job
+    // Finished matches are deleted server-side automatically (see db.js's
+    // expireOldMatches, run every 2 min) — this filter is just a client-side
+    // safety net for the brief window before that job catches a match, not
+    // a toggle-able view anymore, since there's no reason to ever want to
+    // see a finished match once the backend guarantees it'll be deleted.
+    var visibleMatches = matches.filter(function(m){
+      if(m.status === 'FINISHED') return false;
+      if(m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
+      return true;
+    });
+    fbVisibleMatches = visibleMatches; // cached so the league filter dropdown can re-render without refetching
+    renderFixtures(visibleMatches);
+    updateFbStats(visibleMatches); // stats now reflect only what's actually shown, matching the deleted-finished-matches behavior
+    // No need to trigger analysis manually — the backend's scheduler already
+    // analyzes any match missing odds, automatically, in the background.
+    // We just need to keep checking back until it's done — see
+    // scheduleAutoPoll() below, which silently re-calls loadFixtures().
+    scheduleAutoPoll(visibleMatches);
+
+  }catch(e){
+    document.getElementById('fixturesList').innerHTML =
+      '<div style="text-align:center;padding:24px;color:var(--err)">'
+      + '<i class="fa-solid fa-circle-exclamation" style="font-size:28px;display:block;margin-bottom:10px"></i>'
+      + '<div style="font-size:13px;font-weight:700;margin-bottom:6px">Can\'t reach JuanAi backend</div>'
+      + '<div style="font-size:11px;color:var(--t2);line-height:1.6">Make sure <code>node server.js</code> is running at <code>' + JUANAI_BACKEND_URL + '</code>, then click Refresh.</div>'
+      + '</div>';
+  }
+}
+
+// ── Auto-poll: no manual "Generate AI Odds" clicking needed ──────────────
+// The scheduler in scheduler.js is already analyzing matches in the
+// background at its own pace (paced to respect free-tier API limits, so it
+// can take a couple minutes per match). This just quietly re-fetches the
+// fixtures view every 20s, ONLY while at least one visible match is still
+// waiting on odds, and stops once everything's analyzed — so there's no
+// endless polling once the page is fully up to date.
+var fbAutoPollTimer = null;
+function scheduleAutoPoll(matches){
+  if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
+  // Finished matches are excluded here — there's nothing to analyze for a
+  // game that's already over, so one lacking odds (e.g. it ended before the
+  // scheduler got to it) shouldn't keep the page silently polling forever.
+  var stillWaiting = (matches||[]).some(function(m){ return !m.aiOdds && m.status !== 'FINISHED'; });
+  if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
+  fbAutoPollTimer = setTimeout(function(){
+    loadFixtures(true); // silent refresh — no spinner reset, no user action needed
+  }, 20000);
+}
+
+function updateFbStats(matches){
+  document.getElementById('fbTotalMatches').textContent = matches.length;
+  var live = matches.filter(function(m){return m.status==='IN_PLAY'||m.status==='PAUSED';}).length;
+  document.getElementById('fbLive').textContent = live;
+  var leagues = new Set(matches.map(function(m){return m.competition&&m.competition.code;})).size;
+  document.getElementById('fbLeagues').textContent = leagues;
+  // Count analyzed — aiOdds now comes directly from the backend's fixture data
+  var analyzed = matches.filter(function(m){return !!m.aiOdds;}).length;
+  document.getElementById('fbAnalyzed').textContent = analyzed;
+}
+
+function renderFixtures(matches){
+  // Applies the league filter dropdown (fbSelectedLeagueCode) client-side,
+  // so switching leagues doesn't need a backend round-trip — matches for
+  // every accessible league are already in `matches`, fetched once from
+  // the backend's now-dynamic /internal/fixtures-view.
+  if(fbSelectedLeagueCode){
+    matches = matches.filter(function(m){ return m.competition && m.competition.code === fbSelectedLeagueCode; });
+  }
+  if(!matches.length){
+    document.getElementById('fixturesList').innerHTML =
+      '<div style="text-align:center;padding:40px;color:var(--tm)"><i class="fa-solid fa-calendar-xmark" style="font-size:28px;opacity:.4;display:block;margin-bottom:8px"></i><div>No matches found for this date</div></div>';
+    return;
+  }
+
+  // Group by competition
+  var byComp = {};
+  matches.forEach(function(m){
+    var cn = (m.competition&&m.competition.name)||'Other';
+    if(!byComp[cn]) byComp[cn] = {matches:[],area:m.area};
+    byComp[cn].matches.push(m);
+  });
+
+  // Sort matches within each competition chronologically (soonest kickoff first)
+  Object.keys(byComp).forEach(function(cn){
+    byComp[cn].matches.sort(function(a,b){
+      var ta = a.utcDate ? new Date(a.utcDate).getTime() : Infinity;
+      var tb = b.utcDate ? new Date(b.utcDate).getTime() : Infinity;
+      return ta - tb;
+    });
+  });
+
+  // Order the competition groups themselves by their earliest kickoff, so the
+  // whole page reads top-to-bottom as "what's coming up soonest" rather than
+  // whatever order the API happened to return competitions in.
+  var compOrder = Object.keys(byComp).sort(function(cnA,cnB){
+    var earliestA = byComp[cnA].matches[0] && byComp[cnA].matches[0].utcDate ? new Date(byComp[cnA].matches[0].utcDate).getTime() : Infinity;
+    var earliestB = byComp[cnB].matches[0] && byComp[cnB].matches[0].utcDate ? new Date(byComp[cnB].matches[0].utcDate).getTime() : Infinity;
+    return earliestA - earliestB;
+  });
+
+  var html = '';
+  var days = document.getElementById('fbDays').value;
+
+  compOrder.forEach(function(compName){
+    var group = byComp[compName];
+    html += '<div style="margin-bottom:20px">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:10px;border:1px solid var(--bdr)">'
+      + '<span style="font-size:14px">' + (getCompFlag(group.area&&group.area.name) || '⚽') + '</span>'
+      + '<span style="font-size:13px;font-weight:700">' + esc(compName) + '</span>'
+      + '<span style="margin-left:auto;font-size:10px;color:var(--tm);font-weight:600">' + group.matches.length + ' matches</span>'
+      + '</div>';
+
+    group.matches.forEach(function(m){
+      // aiOdds comes straight from the backend's /internal/fixtures-view response,
+      // which is the scheduler's real, freshly-analyzed data. We do NOT read any
+      // cached localStorage odds here anymore — a stale browser cache from
+      // earlier testing could otherwise silently override real server data with
+      // old/fake-looking odds, which is exactly the kind of mismatch that made
+      // matches look wrong. The server is the single source of truth.
+      var savedOdds = m.aiOdds || null;
+
+      var statusLabel = getMatchStatus(m);
+      var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : m.status==='AWAITING_RESULT' ? '#e8a33d' : 'var(--acc)';
+      var kickoffDate = m.utcDate ? new Date(m.utcDate).toLocaleDateString([],{month:'short',day:'numeric'}) : '';
+      var kickoffTime = m.utcDate ? new Date(m.utcDate).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '--:--';
+      var kickoff = kickoffDate ? (kickoffDate + ' · ' + kickoffTime) : kickoffTime;
+      var isLiveOrHalftime = m.status === 'IN_PLAY' || m.status === 'PAUSED';
+      var score = m.score && m.score.fullTime && m.score.fullTime.home !== null
+        ? m.score.fullTime.home + ' - ' + m.score.fullTime.away
+        : m.score && m.score.halfTime && m.score.halfTime.home !== null
+        ? m.score.halfTime.home + ' - ' + m.score.halfTime.away + ' (HT)'
+        : isLiveOrHalftime
+        ? '0 - 0' // match is live/half-time but the provider hasn't posted a nonzero score yet — this IS the real state (no goals so far), not a placeholder standing in for missing data
+        : kickoff;
+
+      html += '<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:8px;transition:.2s" id="match_' + m.id + '">';
+
+      // Match header
+      html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+        + '<div style="flex:1;font-size:13px;font-weight:700;text-align:center">' + esc(m.homeTeam&&m.homeTeam.shortName||m.homeTeam&&m.homeTeam.name||'TBD') + '</div>'
+        + '<div style="text-align:center;min-width:60px">'
+        + '<div style="font-size:14px;font-weight:800;color:var(--t1)">' + score + '</div>'
+        + '<div style="font-size:9px;font-weight:700;color:' + statusColor + ';margin-top:2px">' + statusLabel + '</div>'
+        + '</div>'
+        + '<div style="flex:1;font-size:13px;font-weight:700;text-align:center">' + esc(m.awayTeam&&m.awayTeam.shortName||m.awayTeam&&m.awayTeam.name||'TBD') + '</div>'
+        + '</div>';
+
+      // AI Odds
+      if(savedOdds){
+        html += renderOddsBlock(savedOdds, m.id, days);
+      }else{
+        html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" id="odds_loading_' + m.id + '">'
+          + '<div class="img-gen-spin" style="width:16px;height:16px"></div>'
+          + '<div style="font-size:10px;color:var(--t2)">AI analyzing automatically&hellip;</div>'
+          + '</div>';
+      }
+
+      html += '</div>';
+    });
+
+    html += '</div>';
+  });
+
+  document.getElementById('fixturesList').innerHTML = html;
+}
+
+function renderOddsBlock(odds, matchId, days){
+  var liveBadge = odds.isLiveRepriced
+    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,79,107,.15);color:var(--err);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800"><span style="width:5px;height:5px;border-radius:50%;background:var(--err);display:inline-block;animation:pulse 1.5s infinite"></span> LIVE-PRICED' + (odds.liveAt && odds.liveAt.minute ? ' · ' + odds.liveAt.minute + "'" : '') + '</span>'
+    : '';
+  var marginBadge = (odds.marginApplied != null)
+    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(16,217,160,.12);color:var(--ok);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800">+' + (odds.marginApplied * 100).toFixed(0) + '% MARGIN</span>'
+    : '';
+  // Real market odds (from SharpAPI) get a distinct green header instead of
+  // the AI-estimate warning — these are genuine sportsbook prices, not a
+  // model's guess, so the disclaimer language is different and more
+  // reassuring. Live-repriced odds always fall back to the AI warning since
+  // live repricing never uses real odds (see analyzeMatch in ai.js).
+  var headerHtml = (odds.isRealMarketOdds && !odds.isLiveRepriced)
+    ? '<div style="font-size:9px;color:var(--ok);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ Real Market Odds' + (odds.realOddsSource ? ' (' + esc(odds.realOddsSource) + ')' : '') + marginBadge + '</div>'
+    : '<div style="font-size:9px;color:var(--warn);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ AI Estimate — NOT Safe for Real-Money Bets' + marginBadge + liveBadge + '</div>';
+  var html = '<div style="margin-top:6px">'
+    + headerHtml
+    // 1X2
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
+    + oddsBtn('1', odds.homeWin, '#6366f1')
+    + oddsBtn('X', odds.draw, '#ffb800')
+    + oddsBtn('2', odds.awayWin, '#ff4f6b')
+    + '</div>'
+    // Over/Under + BTTS — only shown when actually available. SharpAPI's
+    // free tier only covers moneyline (1X2), so real-odds matches won't have
+    // these; showing '?' placeholders for markets we simply don't have data
+    // for is more confusing than just omitting the row.
+    + ((odds.over25 || odds.btts) ? (
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
+      + oddsBtn('O2.5', odds.over25, '#10d9a0')
+      + oddsBtn('U2.5', odds.under25, '#38bdf8')
+      + oddsBtn('BTTS', odds.btts, '#a855f7')
+      + oddsBtn('No', odds.bttsNo, '#8896b0')
+      + '</div>'
+    ) : '')
+    // Double Chance — always shown, since these are derived directly from
+    // the real (or AI) 1X2 odds and are always computable.
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px">'
+    + oddsBtn('1X', odds.dc_home_draw, '#6366f1')
+    + oddsBtn('12', odds.dc_home_away, '#ff4f6b')
+    + oddsBtn('X2', odds.dc_draw_away, '#ffb800')
+    + '</div>';
+
+  // Prediction bar
+  if(odds.prediction){
+    var confColor = odds.confidence >= 70 ? 'var(--ok)' : odds.confidence >= 50 ? 'var(--warn)' : 'var(--err)';
+    html += '<div style="background:var(--bg3);border-radius:8px;padding:8px 10px;font-size:11px;border:1px solid var(--bdr)">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
+      + '<span style="font-weight:700;color:var(--ok)">🎯 ' + esc(odds.prediction) + '</span>'
+      + '<span style="font-weight:700;color:' + confColor + '">' + odds.confidence + '% confident</span>'
+      + '</div>'
+      + (odds.valueBet ? '<div style="color:var(--warn);font-weight:700;margin-bottom:4px">💡 Value Bet: ' + esc(odds.valueBet) + '</div>' : '')
+      + (odds.consistencyWarning ? '<div style="color:var(--err);font-weight:700;margin-bottom:4px;font-size:11px">⚠️ ' + esc(odds.consistencyWarning) + '</div>' : '')
+      + (odds.analysis ? '<div style="color:var(--t2);line-height:1.5;margin-top:4px">' + esc(odds.analysis.substring(0,180)) + (odds.analysis.length>180?'...':'') + '</div>' : '')
+      + '</div>';
+  }
+
+  html += '<div style="display:flex;justify-content:flex-end;margin-top:6px">'
+    + '<button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:1px solid var(--bdr);color:var(--tm);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-solid fa-rotate-right"></i> Re-analyze</button>'
+    + '</div>';
+
+  html += '</div>';
+  return html;
+}
+
+function oddsBtn(label, val, color){
+  var display = val ? parseFloat(val).toFixed(2) : '?';
+  return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:7px;padding:6px 4px;text-align:center">'
+    + '<div style="font-size:9px;color:var(--tm);font-weight:700;margin-bottom:2px">' + label + '</div>'
+    + '<div style="font-size:13px;font-weight:800;color:' + color + '">' + display + '</div>'
+    + '</div>';
+}
+
+function getMatchStatus(m){
+  var s = m.status;
+  if(s==='SCHEDULED') return 'Upcoming';
+  if(s==='TIMED') return 'Scheduled';
+  if(s==='PAUSED') return '⏸ Half Time';
+  if(s==='FINISHED') return 'FT';
+  if(s==='AWAITING_RESULT') return '⏳ Result Pending'; // match should be over by now, but no confirmed final score has arrived yet — see footballData.js's convertOddsApiIoEvent for why this exists as its own state instead of guessing FINISHED with a possibly-wrong score
+  if(s==='POSTPONED') return 'Postponed';
+  if(s==='CANCELLED') return 'Cancelled';
+  if(s==='IN_PLAY'){
+    var minuteInfo = getDisplayMinute(m);
+    return minuteInfo ? ('🔴 ' + minuteInfo) : '🔴 LIVE';
+  }
+  return s || 'Unknown';
+}
+
+// Returns a display string for the current match minute, e.g. "62'" — real
+// minute data when football-data.org provides it (source !== 'odds-api.io'),
+// or a rough estimate from kickoff time otherwise, clearly marked with a
+// "~" since odds-api.io doesn't expose a true match clock (no stoppage time,
+// half-time break, or extra time accounted for — it's just wall-clock time
+// since kickoff, so it will drift from the real minute as a match goes on).
+function getDisplayMinute(m){
+  // The server now computes this directly (see footballData.js's
+  // estimateMatchMinute, which properly accounts for half-time — the old
+  // client-side version here used raw elapsed time with no half-time
+  // adjustment, which is exactly what caused matches to show impossible
+  // values like "111'"). Real minute from football-data.org, or a
+  // half-time-aware estimate for odds-api.io matches — either way, this
+  // field is now the single source of truth, also exposed via /api/fixtures
+  // so external sites like BetaKE see the same value.
+  if(m.minute != null){
+    return (m.minuteIsEstimated ? '~' : '') + m.minute + "'";
+  }
+  return null;
+}
+
+function getCompFlag(areaName){
+  if(!areaName) return '⚽';
+  var n = areaName.toLowerCase();
+  if(n.includes('england')) return '🏴󠁧󠁢󠁥󠁮󠁧󠁿';
+  if(n.includes('spain')) return '🇪🇸';
+  if(n.includes('italy')) return '🇮🇹';
+  if(n.includes('germany')) return '🇩🇪';
+  if(n.includes('france')) return '🇫🇷';
+  if(n.includes('kenya')) return '🇰🇪';
+  if(n.includes('brazil')) return '🇧🇷';
+  if(n.includes('europe')) return '🇪🇺';
+  if(n.includes('world')) return '🌍';
+  if(n.includes('netherlands')) return '🇳🇱';
+  if(n.includes('portugal')) return '🇵🇹';
+  return '⚽';
+}
+
+// ── AI ANALYSIS & ODDS — now runs automatically on the backend (scheduler.js) ──
+// The browser no longer calls Groq/Gemini directly for match analysis, and
+// there is no fixture "demo" mode. This button just asks the backend to
+// (re-)analyze one match on demand; the backend's scheduler already does
+// this automatically in the background for every match, on a timer.
+async function analyzeMatch(matchId, days){
+  var el = document.getElementById('odds_loading_' + matchId);
+  var matchEl = document.getElementById('match_' + matchId);
+  if(el) el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px;color:var(--t2);font-size:11px"><div class="img-gen-spin" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div>Analyzing with AI...</div>';
+
+  try{
+    var resp = await fetch(JUANAI_BACKEND_URL + '/internal/analyze-now', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ matchId: matchId, days: days })
+    });
+    if(!resp.ok) throw new Error('Backend returned ' + resp.status);
+    var data = await resp.json();
+    var odds = data.odds;
+    if(!odds) throw new Error('No odds in backend response');
+
+    if(matchEl){
+      var oddsDiv = matchEl.querySelector('[id^="odds_loading_"]');
+      if(oddsDiv) oddsDiv.outerHTML = renderOddsBlock(odds, matchId, days);
+    }
+    var m = fbMatches.find(function(mm){ return String(mm.id) === String(matchId); });
+    if(m){ m.aiOdds = odds; m.aiPrediction = odds.prediction; m.aiConfidence = odds.confidence; }
+    updateFbStats(fbMatches);
+
+  }catch(e){
+    if(el) el.innerHTML = '<div style="color:var(--err);font-size:11px;padding:6px">❌ Analysis failed (' + esc(e.message) + '). <button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:none;color:var(--acc);cursor:pointer;font-weight:700;font-family:\'Inter\',sans-serif">Retry</button></div>';
+  }
+}
+
+function analyzeAllMatches(){
+  toast('The backend already analyzes every match automatically in the background — no need to trigger this manually. Use Refresh to pull the latest results.', 'info');
+}
+
+// ── API KEY MANAGEMENT — now backed by the real JuanAi backend server ─────────
+async function generateApiKey(){
+  var name = document.getElementById('apiKeyName').value.trim();
+  if(!name){ toast('Enter a key name first','warning'); return; }
+
+  try{
+    var resp = await fetchInternal('/internal/apikeys', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name: name })
+    });
+    if(!resp.ok) throw new Error('Backend rejected request');
+    document.getElementById('apiKeyName').value = '';
+    await renderApiKeys();
+    toast('API key generated: ' + name, 'success');
+  }catch(e){
+    toast(e.message === 'Invalid admin secret — try again' ? e.message : 'Could not reach JuanAi backend at ' + JUANAI_BACKEND_URL + ' — is server.js running?', 'error');
+  }
+}
+
+async function getApiKeys(){
+  try{
+    var resp = await fetchInternal('/internal/apikeys');
+    if(!resp.ok) throw new Error('bad response');
+    return await resp.json();
+  }catch(e){
+    return null; // null = backend unreachable or admin secret rejected, distinct from [] = no keys yet
+  }
+}
+
+async function revokeApiKey(id){
+  if(!confirm('Revoke this API key? Betting site using it will lose access.')) return;
+  try{
+    await fetchInternal('/internal/apikeys/' + id, { method: 'DELETE' });
+    await renderApiKeys();
+    toast('Key revoked','info');
+  }catch(e){
+    toast(e.message === 'Invalid admin secret — try again' ? e.message : 'Could not reach JuanAi backend to revoke key', 'error');
+  }
+}
+
+function copyApiKey(key){
+  navigator.clipboard.writeText(key);
+  toast('Key copied to clipboard','success');
+}
+
+async function renderApiKeys(){
+  var el = document.getElementById('apiKeysList');
+  if(!el) return;
+  el.innerHTML = '<div style="color:var(--tm);font-size:12px">Loading...</div>';
+  var keys = await getApiKeys();
+
+  if(keys === null){
+    el.innerHTML = '<div style="color:var(--err);font-size:12px">⚠️ Can\'t reach JuanAi backend at <code>' + JUANAI_BACKEND_URL + '</code>. Run <code>node server.js</code> (see README) then refresh this panel.</div>';
+    return;
+  }
+
+  var storageBanner = '';
+  try{
+    var statusResp = await fetch(JUANAI_BACKEND_URL + '/api/status');
+    if(statusResp.ok){
+      var status = await statusResp.json();
+      var mongo = status.apiKeyStorage;
+      if(mongo && !mongo.connected){
+        storageBanner = '<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--err)">'
+          + '⚠️ <b>Keys will NOT survive a restart:</b> ' + esc(mongo.note || 'MongoDB not connected') + '. '
+          + (mongo.configured ? 'Check MONGO_URI is correct and Atlas Network Access allows this server\'s IP.' : 'Set MONGO_URI in Render\'s Environment tab.')
+          + '</div>';
+      }
+    }
+  }catch(e){ /* status check is best-effort — don't block the panel on it */ }
+
+  if(!keys.length){
+    el.innerHTML = storageBanner + '<div style="color:var(--tm);font-size:12px">No API keys yet. Generate one above.</div>';
+    return;
+  }
+  el.innerHTML = storageBanner + keys.map(function(k){
+    return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:12px;margin-bottom:8px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+      + '<div style="font-size:13px;font-weight:700">' + esc(k.name) + '</div>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button onclick="copyApiKey(\'' + k.key + '\')" style="background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-regular fa-copy"></i> Copy</button>'
+      + '<button onclick="revokeApiKey(' + k.id + ')" style="background:rgba(255,79,107,.1);color:var(--err);border:1px solid rgba(255,79,107,.2);border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif">Revoke</button>'
+      + '</div></div>'
+      + '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--ok);background:var(--bg2);border-radius:6px;padding:6px 10px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + k.key + '</div>'
+      + '<div style="font-size:10px;color:var(--tm)">Created: ' + new Date(k.createdAt).toLocaleDateString() + ' · ' + (k.requests||0) + ' requests · Enforced by JuanAi backend</div>'
+      + '</div>';
+  }).join('');
+}
+function toast(msg,type){
+  var con=document.getElementById('toast-con');
+  var colors={success:'var(--ok)',warning:'var(--warn)',info:'var(--acc)',error:'var(--err)'};
+  var icons={success:'✅',warning:'⚠️',info:'ℹ️',error:'❌'};
+  var el=document.createElement('div');
+  el.className='toast-el';
+  el.style.borderColor=colors[type]||colors.info;
+  el.textContent=(icons[type]||'')+'  '+msg;
+  con.appendChild(el);
+  setTimeout(function(){el.style.opacity='0';el.style.transform='translateX(12px)';el.style.transition='all .3s ease';setTimeout(function(){el.remove();},320);},3200);
+}
+function fmtTime(ts){var d=new Date(ts),n=new Date();if(d.toDateString()===n.toDateString())return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});return d.toLocaleDateString([],{month:'short',day:'numeric'});}
+</script>
+</body>
+</html>
