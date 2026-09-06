@@ -987,7 +987,16 @@ async function poll(){
 function updHist(){
   if(!HIST.length) return;
   const bar=document.getElementById('hbar');
-  const chips=HIST.slice().reverse().slice(0,14).map(v=>{
+  // REAL BUG FIX: HIST comes from casino.js's `history` array, which is
+  // built with history.unshift(round.crashPoint) — i.e. it's ALREADY
+  // newest-first (see that file's own comment on the array). Calling
+  // .reverse() here flipped it to oldest-first before slicing the first
+  // 14, which meant this was actually displaying the OLDEST 14 rounds on
+  // record, not the most recent ones — so a freshly-finished round (like
+  // a new crash point) would never appear here at all once history grew
+  // past ~14 entries, while stale old rounds stayed stuck on screen.
+  // Slicing directly (no reverse) shows the true most recent rounds.
+  const chips=HIST.slice(0,14).map(v=>{
     let cl='b';
     if(v>=10)cl='p';else if(v>=3)cl='y';else if(v<1.5)cl='r';
     return `<span class="hc ${cl}">${v.toFixed(2)}x</span>`;
