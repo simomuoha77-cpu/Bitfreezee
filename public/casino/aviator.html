@@ -858,8 +858,42 @@ function animLoop(ts){
     const mv=document.getElementById('mv');
     mv.className='mval fly';
     mv.textContent=localMulti.toFixed(2)+'x';
-    const tN=Math.min(elapsed/24,.95);
-    const rN=Math.min(Math.log(Math.max(localMulti,1.001))*.40,.92);
+    // REAL BUG FIX: these used to be hard Math.min() clamps — tN capped at
+    // .95 once elapsed passed 24*.95≈22.8s, rN capped at .92 once the
+    // multiplier crossed ~10x. Once EITHER cap was hit, the plane didn't
+    // slow down near the edge, it completely FROZE there (both values are
+    // literal constants past that point) — visibly stuck pinned in the
+    // corner for the rest of any round that ran a bit longer or higher
+    // than that, exactly what was reported ("hits the end of the screen").
+    // Real Spribe never does this: the plane keeps inching toward the edge
+    // forever, always slightly closer, never fully arriving or stopping.
+    //
+    // Kept as a plain linear ramp (pixel-identical to the old formula) for
+    // ordinary rounds — most rounds resolve well before this cutoff, so
+    // this doesn't change how the vast majority of rounds look or feel at
+    // all. Only past the cutoff (a round running longer/higher than usual)
+    // does it switch to an asymptotic approach for the REMAINING distance
+    // to the cap, so it keeps closing in on the edge forever without ever
+    // technically reaching it or freezing solid — that switch is what
+    // actually fixes the reported bug, without touching normal gameplay.
+    const T_CUTOFF=20, T_CAP=.95, T_RATE=8;
+    let tN;
+    if (elapsed<=T_CUTOFF) {
+      tN = elapsed/24;
+    } else {
+      const baseAtCutoff = T_CUTOFF/24;
+      const remaining = T_CAP-baseAtCutoff;
+      tN = baseAtCutoff + remaining*(1-Math.exp(-(elapsed-T_CUTOFF)/T_RATE));
+    }
+    const R_CUTOFF=.75, R_CAP=.92, R_RATE=.35;
+    const rRaw = Math.log(Math.max(localMulti,1.001))*.40;
+    let rN;
+    if (rRaw<=R_CUTOFF) {
+      rN = rRaw;
+    } else {
+      const remaining = R_CAP-R_CUTOFF;
+      rN = R_CUTOFF + remaining*(1-Math.exp(-(rRaw-R_CUTOFF)/R_RATE));
+    }
     pathPts.push({t:tN,r:rN});
     if(pathPts.length>800) pathPts.shift();
     if(Math.floor(localMulti*2)>Math.floor(lastTickM*2)){playTick();lastTickM=localMulti;}
