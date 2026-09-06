@@ -962,7 +962,13 @@ async function poll(){
     const tok=localStorage.getItem('token');
     const headers={'Content-Type':'application/json'};
     if(tok) headers['Authorization']='Bearer '+tok;
-    const r=await fetch('/api/aviator/state',{headers});
+    // cache:'no-store' as a second, independent safety net alongside the
+    // server's Cache-Control header (see noCacheAviator in server.js) —
+    // this is what actually fixed a page reopening mid-flight sometimes
+    // showing a stale 'waiting' countdown instead of the real in-progress
+    // flight: some mobile browsers' back/forward-cache or aggressive HTTP
+    // caching can otherwise still short-circuit the network request.
+    const r=await fetch('/api/aviator/state',{headers,cache:'no-store'});
     if(r.status===401){showT('Invalid or missing API key — reload with ?key=jsk_xxx','tl');return;}
     const d=(await r.json()).data;
     if(!d) return;
@@ -1010,7 +1016,7 @@ async function poll(){
         }
       });updBtns();
     }
-    fetch('/api/aviator/players',{headers}).then(r=>r.json()).then(d=>{
+    fetch('/api/aviator/players',{headers,cache:'no-store'}).then(r=>r.json()).then(d=>{
       PLAYERS=d.data||[];
       document.getElementById('pc').textContent=PLAYERS.length;
       renderBL();

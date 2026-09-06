@@ -430,7 +430,25 @@ function extractUserToken(req) {
 // GET /api/casino/aviator/state?key=jsk_xxx&utoken=...
 // Returns the current round's status/history/your balance & bets. Poll
 // this every ~300ms from the client, same as the football live-match data.
-app.get('/api/casino/aviator/state', requireApiKey, (req, res) => {
+// REAL BUG FIX for "opening Aviator sometimes shows the countdown instead
+// of resuming mid-flight, even though a round IS actively flying": there
+// was no Cache-Control header on the state endpoints below, so a browser
+// (especially on mobile, where back/forward-cache and aggressive HTTP
+// caching are common) could serve a STALE cached response — captured from
+// an earlier 'waiting' moment — instead of actually hitting the network on
+// page open/reload. The server-side status/elapsedMs computation itself
+// was already correct and already global (one shared round for everyone,
+// not per-session), so every client polling at the same instant already
+// got the identical, correctly-synced state — the missing piece was
+// purely making sure that fresh state is what actually reaches the
+// browser on the very first request of a new page load, not a cached one.
+function noCacheAviator(req, res, next) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  next();
+}
+
+app.get('/api/casino/aviator/state', requireApiKey, noCacheAviator, (req, res) => {
   res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
 });
 
@@ -465,7 +483,7 @@ app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
 // call instead. There is only ONE game engine underneath both paths, so
 // behavior is guaranteed identical; pick whichever path is more
 // convenient when integrating.
-app.get('/api/aviator/state', requireApiKey, (req, res) => {
+app.get('/api/aviator/state', requireApiKey, noCacheAviator, (req, res) => {
   res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
 });
 app.get('/api/aviator/players', requireApiKey, (req, res) => {
