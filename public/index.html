@@ -720,6 +720,15 @@ app.get('/games/today', async (req, res) => {<br>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
         </div>
 
+        <!-- JETX — same engine as Aviator, own independent round -->
+        <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <h3 style="margin-bottom:6px"><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> JetX</h3>
+            <div style="font-size:12px;color:var(--t2);line-height:1.6">Same server-authoritative crash engine as Aviator, its own independent round and crash points — never synced with Aviator's round.</div>
+          </div>
+          <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchJetX()">Play ⏯️</button>
+        </div>
+
       </div>
     </div>
 
@@ -2497,6 +2506,41 @@ async function launchAviator(){
     if(tab){ tab.location.href = url; } else { window.open(url, '_blank'); }
   }catch(e){
     toast('Could not launch Aviator: '+e.message, 'error');
+    if(tab) tab.close();
+  }
+}
+
+// ── JetX — same server-authoritative engine as Aviator (see casino.js's
+// GAME_IDS), its own independent round/timer/crash-point, separate page.
+// Identical launch mechanics to launchAviator() above — see its comments
+// for why the tab opens synchronously before any await.
+async function launchJetX(){
+  var tab = window.open('', '_blank');
+  if(tab){ tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading JetX…</body>'); }
+  try{
+    var keys = await getApiKeys();
+    var key;
+    if(keys && keys.length){
+      key = keys[0].key;
+    } else {
+      var resp = await fetch(JUANAI_BACKEND_URL + '/internal/apikeys', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: 'JetX (auto-created)' })
+      });
+      if(!resp.ok) throw new Error('Backend rejected key creation');
+      var created = await resp.json();
+      key = created && created.key;
+    }
+    if(!key){
+      toast('Could not get a JuanAi API key — check the API Keys tab','error');
+      if(tab) tab.close();
+      return;
+    }
+    var url = '/casino/jetx.html?key='+encodeURIComponent(key);
+    if(tab){ tab.location.href = url; } else { window.open(url, '_blank'); }
+  }catch(e){
+    toast('Could not launch JetX: '+e.message, 'error');
     if(tab) tab.close();
   }
 }

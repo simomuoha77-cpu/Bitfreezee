@@ -63,6 +63,15 @@ const GAMES = [
     rtp: 97, // approximate theoretical RTP of the current rollCrashPoint() distribution — see NOTE below
     status: 'active',
   },
+  {
+    id: 'jetx',
+    name: 'JetX',
+    category: 'crash',
+    thumbnail: '/casino/assets/jetx-thumb.png', // partner should host/replace with their own art if this path 404s
+    gameUrl: '/casino/jetx.html', // append ?key=...&utoken=... when embedding, see userToken.js
+    rtp: 97, // same underlying rollCrashPoint() distribution as Aviator — see NOTE below
+    status: 'active',
+  },
 ];
 // NOTE ON rtp: this is a reasonable estimate for the current house-edge
 // exponential distribution in casino.js's rollCrashPoint(), NOT a
@@ -119,7 +128,7 @@ async function placeBet(apiKey, userId, gameId, slot, stake) {
   // STEP 2: now that money has actually moved, try to place the bet in the
   // shared round engine.
   const sessionKey = `partner:${apiKey}:${gameId}:${userId}`;
-  const result = casino.placeBetForSession(sessionKey, slot, Number(stake));
+  const result = casino.placeBetForSession(gameId, sessionKey, slot, Number(stake));
   if (!result.success) {
     // ROLLBACK: the debit succeeded but the bet itself couldn't be placed
     // (e.g. round closed in the split second between the debit call and
@@ -173,7 +182,7 @@ async function getBetResult(apiKey, betId) {
     // partner-side bets are cashed out via cashOut() below, not the
     // frontend UI).
     const sessionKey = `partner:${bet.apiKey}:${bet.gameId}:${bet.userId}`;
-    const resolved = casino.checkResolution(sessionKey, bet.slot, bet.roundId);
+    const resolved = casino.checkResolution(bet.gameId, sessionKey, bet.slot, bet.roundId);
     if (resolved) {
       bet.status = resolved.won ? 'won' : 'lost';
       bet.multiplier = resolved.multiplier;
@@ -231,7 +240,7 @@ async function cashOut(apiKey, betId) {
   if (bet.status !== 'pending') return { success: false, message: `Bet already resolved as '${bet.status}'` };
 
   const sessionKey = `partner:${bet.apiKey}:${bet.gameId}:${bet.userId}`;
-  const result = casino.cashOutForSession(sessionKey, bet.slot);
+  const result = casino.cashOutForSession(bet.gameId, sessionKey, bet.slot);
   if (!result.success) return result;
 
   bet.status = 'won';

@@ -449,20 +449,20 @@ function noCacheAviator(req, res, next) {
 }
 
 app.get('/api/casino/aviator/state', requireApiKey, noCacheAviator, (req, res) => {
-  res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
+  res.json({ success: true, data: casino.getPublicState('aviator', req.apiKey, extractUserToken(req)) });
 });
 
 // GET /api/casino/aviator/players?key=jsk_xxx
 // Lightweight anonymized list of bets placed in the current round, for the
 // "All Bets" table. No real user identity — see casino.js's getPlayersView.
 app.get('/api/casino/aviator/players', requireApiKey, (req, res) => {
-  res.json({ success: true, data: casino.getPlayersView() });
+  res.json({ success: true, data: casino.getPlayersView('aviator') });
 });
 
 // POST /api/casino/aviator/bet?key=jsk_xxx&utoken=...   body: { slot: 1|2, stake: number }
 app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
   const { slot, stake } = req.body || {};
-  const result = casino.placeBet(req.apiKey, extractUserToken(req), slot, Number(stake));
+  const result = casino.placeBet('aviator', req.apiKey, extractUserToken(req), slot, Number(stake));
   res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -471,7 +471,7 @@ app.post('/api/casino/aviator/bet', requireApiKey, (req, res) => {
 // server recomputes it from its own clock. See casino.js's cashOut().
 app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
   const { slot } = req.body || {};
-  const result = casino.cashOut(req.apiKey, extractUserToken(req), slot);
+  const result = casino.cashOut('aviator', req.apiKey, extractUserToken(req), slot);
   res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -484,19 +484,43 @@ app.post('/api/casino/aviator/cashout', requireApiKey, (req, res) => {
 // behavior is guaranteed identical; pick whichever path is more
 // convenient when integrating.
 app.get('/api/aviator/state', requireApiKey, noCacheAviator, (req, res) => {
-  res.json({ success: true, data: casino.getPublicState(req.apiKey, extractUserToken(req)) });
+  res.json({ success: true, data: casino.getPublicState('aviator', req.apiKey, extractUserToken(req)) });
 });
 app.get('/api/aviator/players', requireApiKey, (req, res) => {
-  res.json({ success: true, data: casino.getPlayersView() });
+  res.json({ success: true, data: casino.getPlayersView('aviator') });
 });
 app.post('/api/aviator/bet', requireApiKey, (req, res) => {
   const { slot, stake } = req.body || {};
-  const result = casino.placeBet(req.apiKey, extractUserToken(req), slot, Number(stake));
+  const result = casino.placeBet('aviator', req.apiKey, extractUserToken(req), slot, Number(stake));
   res.status(result.success ? 200 : 400).json(result);
 });
 app.post('/api/aviator/cashout', requireApiKey, (req, res) => {
   const { slot } = req.body || {};
-  const result = casino.cashOut(req.apiKey, extractUserToken(req), slot);
+  const result = casino.cashOut('aviator', req.apiKey, extractUserToken(req), slot);
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// ── /api/jetx/* — same engine as Aviator, own independent round ──────
+// JetX is a SEPARATE game from Aviator (own timer, own crash points, own
+// player pool — see casino.js's GAME_IDS) built on the exact same
+// server-authoritative round engine, just re-skinned client-side (see
+// public/casino/jetx.html). Same requireApiKey auth, same optional
+// ?utoken= per-user identity, same no-client-trusted-multiplier guarantee
+// on cashout.
+app.get('/api/jetx/state', requireApiKey, noCacheAviator, (req, res) => {
+  res.json({ success: true, data: casino.getPublicState('jetx', req.apiKey, extractUserToken(req)) });
+});
+app.get('/api/jetx/players', requireApiKey, (req, res) => {
+  res.json({ success: true, data: casino.getPlayersView('jetx') });
+});
+app.post('/api/jetx/bet', requireApiKey, (req, res) => {
+  const { slot, stake } = req.body || {};
+  const result = casino.placeBet('jetx', req.apiKey, extractUserToken(req), slot, Number(stake));
+  res.status(result.success ? 200 : 400).json(result);
+});
+app.post('/api/jetx/cashout', requireApiKey, (req, res) => {
+  const { slot } = req.body || {};
+  const result = casino.cashOut('jetx', req.apiKey, extractUserToken(req), slot);
   res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -878,11 +902,14 @@ app.get('/internal/competitions', async (req, res) => {
 
 // GET /internal/casino/exposure — read-only risk monitoring: current
 // round's total staked amount vs the configured MAX_ROUND_EXPOSURE cap
-// (see casino.js). Requires X-Admin-Secret header — this is house-side
-// risk data, deliberately NOT exposed via the public /api/casino/* or
-// /api/aviator/* endpoints.
+// (see casino.js), for every registered game (Aviator, JetX). Requires
+// X-Admin-Secret header — this is house-side risk data, deliberately NOT
+// exposed via the public /api/casino/* or /api/aviator/*, /api/jetx/*
+// endpoints.
 app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
-  res.json(casino.getRoundExposure());
+  const byGame = {};
+  casino.GAME_IDS.forEach(gameId => { byGame[gameId] = casino.getRoundExposure(gameId); });
+  res.json(byGame);
 });
 
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,

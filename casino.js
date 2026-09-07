@@ -74,20 +74,35 @@ const MAX_ROUND_EXPOSURE = 2000000; // KES 2,000,000 total stakes per round — 
 const STARTING_BALANCE = 1000;
 const HISTORY_LEN = 30;
 
-// One shared round at a time — like a real Aviator-style game, everyone
-// watching sees and bets into the same round simultaneously. This also
-// means the server only ever needs to roll ONE crash point at a time,
-// which keeps the RNG surface small and easy to reason about.
-let round = null; // { id, status: 'waiting'|'flying'|'crashed', startedAt, waitEndsAt, crashPoint, crashedAt }
-let history = []; // recent crash points, newest first — display only
+// MULTI-GAME ENGINE: this module used to run exactly ONE shared round
+// (hardcoded, implicitly "Aviator"). Adding JetX as a second, genuinely
+// independent crash game (its own timer, its own crash points, its own
+// player pool — the same way real Aviator and real JetX never share a
+// round with each other) meant every piece of round/session/rate-limit
+// state below had to become keyed by gameId instead of being a bare
+// module-level singleton. GAME_IDS is the list of games this engine
+// currently runs a round for; adding a future third game means adding its
+// id here and registering it in casinoIntegration.js's GAMES list — no
+// other change needed, since every function below is already generic.
+const GAME_IDS = ['aviator', 'jetx'];
 
-// Per-user session state (bets + free-play "aviator balance"). Keyed by
-// a session key that's either "u:<verifiedUserId>" (when the site passes
-// a signed user token) or "k:<apiKey>" (fallback, old shared-per-key
-// behavior). This is intentionally simple in-memory storage — see
-// FREE-PLAY SCOPE note above for why that's fine here and what would need
-// to change for real money.
-const sessions = new Map(); // sessionKey -> { balance, bets: { 1: {...}|null, 2: {...}|null } }
+// One shared round PER GAME at a time — everyone watching a given game
+// sees and bets into the same round simultaneously, same as before, just
+// now there's one such round per gameId instead of exactly one globally.
+const rounds = new Map(); // gameId -> { id, status, startedAt, waitEndsAt, crashPoint, crashedAt, totalStaked }
+const historyByGame = new Map(); // gameId -> recent crash points, newest first — display only
+
+// Per-user session state (bets + free-play balance). Keyed by a composite
+// "<gameId>:<sessionKey>" string, where sessionKey itself is either
+// "u:<verifiedUserId>" (signed token) or "k:<apiKey>" (fallback) for the
+// free-play frontend, or casinoIntegration.js's own
+// "partner:<apiKey>:<gameId>:<userId>" for real-money partner bets (that
+// one already embeds gameId, but composing it again here is harmless —
+// just an extra layer of uniqueness, never a collision risk). Prefixing
+// with gameId is what actually keeps a user's Aviator bet and JetX bet
+// from colliding in the same two bet slots — without it, playing both
+// games as the same user would silently share one bet-slot pair.
+const sessions = new Map(); // "<gameId>:<sessionKey>" -> { balance, bets: { 1: {...}|null, 2: {...}|null } }
 
 // Resolves the session key to use for a request: verified user id if a
 // valid signed token was supplied, otherwise falls back to the API key
@@ -99,11 +114,12 @@ function resolveSessionKey(apiKey, signedToken) {
   return { sessionKey: `k:${apiKey}`, verified: false };
 }
 
-function getSession(sessionKey) {
-  let s = sessions.get(sessionKey);
+function getSession(gameId, sessionKey) {
+  const key = gameId + ':' + sessionKey;
+  let s = sessions.get(key);
   if (!s) {
     s = { balance: STARTING_BALANCE, bets: { 1: null, 2: null } };
-    sessions.set(sessionKey, s);
+    sessions.set(key, s);
   }
   return s;
 }
@@ -117,12 +133,13 @@ const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX = 5; // max bet+cashout actions per session per window
 const rateBuckets = new Map(); // sessionKey -> { windowStart, count }
 
-function checkRateLimit(sessionKey) {
+function checkRateLimit(gameId, sessionKey) {
+  const key = gameId + ':' + sessionKey;
   const now = Date.now();
-  let b = rateBuckets.get(sessionKey);
+  let b = rateBuckets.get(key);
   if (!b || now - b.windowStart > RATE_LIMIT_WINDOW_MS) {
     b = { windowStart: now, count: 0 };
-    rateBuckets.set(sessionKey, b);
+    rateBuckets.set(key, b);
   }
   b.count++;
   return b.count <= RATE_LIMIT_MAX;
@@ -142,7 +159,8 @@ function rollCrashPoint() {
   return Math.max(1.01, Math.min(point, 50));
 }
 
-function currentMultiplier() {
+function currentMultiplier(gameId) {
+  const round = rounds.get(gameId);
   if (!round || round.status !== 'flying') return round ? round.crashPoint || 1 : 1;
   const elapsed = (Date.now() - round.startedAt) / 1000;
   // Same reasoning as tick()'s MAX_REASONABLE_FLIGHT_SEC guard: cap the
@@ -157,9 +175,9 @@ function currentMultiplier() {
   return Math.min(Math.exp(GROWTH_RATE * cappedElapsed), round.crashPoint);
 }
 
-function startNewRound() {
+function startNewRound(gameId) {
   const id = 'rnd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  round = {
+  rounds.set(gameId, {
     id,
     status: 'waiting',
     startedAt: null,
@@ -167,14 +185,18 @@ function startNewRound() {
     crashPoint: rollCrashPoint(), // rolled NOW, but never exposed to clients until status==='crashed'
     crashedAt: null,
     totalStaked: 0, // sum of all accepted bets this round — see MAX_ROUND_EXPOSURE below
-  };
-  // Clear all sessions' bets for the new round — a bet only ever applies
-  // to the round it was placed in.
-  sessions.forEach(s => { s.bets = { 1: null, 2: null }; });
+  });
+  // Clear THIS GAME's sessions' bets for the new round — a bet only ever
+  // applies to the round (and game) it was placed in. Sessions are keyed
+  // "<gameId>:<sessionKey>", so only touching keys with this gameId's
+  // prefix leaves every other game's in-flight bets completely untouched.
+  const prefix = gameId + ':';
+  sessions.forEach((s, key) => { if (key.startsWith(prefix)) s.bets = { 1: null, 2: null }; });
 }
 
-function tick() {
-  if (!round) { startNewRound(); return; }
+function tick(gameId) {
+  const round = rounds.get(gameId);
+  if (!round) { startNewRound(gameId); return; }
   if (round.status === 'waiting' && Date.now() >= round.waitEndsAt) {
     round.status = 'flying';
     round.startedAt = Date.now();
@@ -199,38 +221,47 @@ function tick() {
     if (elapsedSec > MAX_REASONABLE_FLIGHT_SEC) {
       round.status = 'crashed';
       round.crashedAt = Date.now();
-      history.unshift(round.crashPoint);
-      history = history.slice(0, HISTORY_LEN);
-      setTimeout(startNewRound, 2500);
+      const hist = historyByGame.get(gameId) || [];
+      hist.unshift(round.crashPoint);
+      historyByGame.set(gameId, hist.slice(0, HISTORY_LEN));
+      setTimeout(() => startNewRound(gameId), 2500);
       return;
     }
-    const mult = currentMultiplier();
+    const mult = currentMultiplier(gameId);
     if (mult >= round.crashPoint) {
       round.status = 'crashed';
       round.crashedAt = Date.now();
-      history.unshift(round.crashPoint);
-      history = history.slice(0, HISTORY_LEN);
-      setTimeout(startNewRound, 2500); // brief pause on the crash screen before the next round
+      const hist = historyByGame.get(gameId) || [];
+      hist.unshift(round.crashPoint);
+      historyByGame.set(gameId, hist.slice(0, HISTORY_LEN));
+      setTimeout(() => startNewRound(gameId), 2500); // brief pause on the crash screen before the next round
     }
   }
 }
-setInterval(tick, 150); // server's own clock — independent of any client polling
-startNewRound();
+// Each game runs its own independent tick loop — same 150ms server clock
+// cadence as before, just once per registered game instead of once
+// globally. A slow/crashing tick for one game can't stall another's timer
+// since each interval only ever touches its own gameId's round.
+GAME_IDS.forEach(gameId => {
+  setInterval(() => tick(gameId), 150);
+  startNewRound(gameId);
+});
 
 // ── Public API used by server.js routes ──────────────────────────────
 // Every function takes (apiKey, signedToken, ...) — signedToken is
 // optional (site may not have wired up per-user tokens yet), and is
 // verified via userToken.js before ever being trusted as an identity.
 
-function getPublicState(apiKey, signedToken) {
+function getPublicState(gameId, apiKey, signedToken) {
+  const round = rounds.get(gameId);
   const { sessionKey, verified } = resolveSessionKey(apiKey, signedToken);
-  const s = getSession(sessionKey);
+  const s = getSession(gameId, sessionKey);
   const base = {
     roundId: round.id,
     status: round.status,
     waitSeconds: round.status === 'waiting' ? Math.max(0, Math.ceil((round.waitEndsAt - Date.now()) / 1000)) : 0,
     elapsedMs: round.status === 'flying' ? Date.now() - round.startedAt : 0,
-    history,
+    history: historyByGame.get(gameId) || [],
     balance: s.balance,
     bets: {
       1: s.bets[1] ? { stake: s.bets[1].stake, cashedOut: s.bets[1].cashedOut } : null,
@@ -255,26 +286,28 @@ function getPublicState(apiKey, signedToken) {
 // timing, and outcome — never two divergent implementations to keep in
 // sync.
 
-function placeBetCore(sessionKey, slot, stake) {
+function placeBetCore(gameId, sessionKey, slot, stake) {
+  const round = rounds.get(gameId);
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
   if (!Number.isFinite(stake) || stake < MIN_BET) return { success: false, message: `Minimum bet is KES ${MIN_BET}` };
   if (stake > MAX_BET) return { success: false, message: `Maximum bet is KES ${MAX_BET}` };
-  if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
+  if (!checkRateLimit(gameId, sessionKey)) return { success: false, message: 'Too many requests — slow down' };
   if (round.status !== 'waiting') return { success: false, message: 'Betting is closed for this round' };
   if (round.totalStaked + stake > MAX_ROUND_EXPOSURE) {
     return { success: false, message: 'This round has reached its maximum total stake limit — try the next round' };
   }
-  const s = getSession(sessionKey);
+  const s = getSession(gameId, sessionKey);
   if (s.bets[slot]) return { success: false, message: 'Bet already placed for this slot' };
   s.bets[slot] = { stake, cashedOut: false, roundId: round.id };
   round.totalStaked += stake;
   return { success: true, roundId: round.id };
 }
 
-function cashOutCore(sessionKey, slot) {
+function cashOutCore(gameId, sessionKey, slot) {
+  const round = rounds.get(gameId);
   if (slot !== 1 && slot !== 2) return { success: false, message: 'Invalid bet slot' };
-  if (!checkRateLimit(sessionKey)) return { success: false, message: 'Too many requests — slow down' };
-  const s = getSession(sessionKey);
+  if (!checkRateLimit(gameId, sessionKey)) return { success: false, message: 'Too many requests — slow down' };
+  const s = getSession(gameId, sessionKey);
   const bet = s.bets[slot];
   if (!bet || bet.roundId !== round.id) return { success: false, message: 'No active bet in this round' };
   if (bet.cashedOut) return { success: false, message: 'Already cashed out' };
@@ -287,7 +320,7 @@ function cashOutCore(sessionKey, slot) {
   // closes the classic crash-game exploit of firing a cashout request
   // right as/after a crash and hoping the server trusts client-reported
   // timing.
-  const mult = currentMultiplier();
+  const mult = currentMultiplier(gameId);
   if (mult >= round.crashPoint) return { success: false, message: 'Too late — round already crashed' };
   bet.cashedOut = true;
   const won = Math.floor(bet.stake * mult * 100) / 100;
@@ -299,8 +332,9 @@ function cashOutCore(sessionKey, slot) {
 // any balance concept. Returns null while still pending (round hasn't
 // crashed and the bet hasn't been cashed out), or { won, multiplier,
 // winAmount } once resolved.
-function checkResolution(sessionKey, slot, roundId) {
-  const s = getSession(sessionKey);
+function checkResolution(gameId, sessionKey, slot, roundId) {
+  const round = rounds.get(gameId);
+  const s = getSession(gameId, sessionKey);
   const bet = s.bets[slot];
   // If the bet's round has moved on (a new round has started, clearing
   // bets — see startNewRound()) and we still have no record, it means the
@@ -316,7 +350,7 @@ function checkResolution(sessionKey, slot, roundId) {
     return null; // still pending, nothing to report yet
   }
   if (bet.cashedOut) {
-    const mult = currentMultiplier();
+    const mult = currentMultiplier(gameId);
     return { won: true, multiplier: mult, winAmount: Math.floor(bet.stake * mult * 100) / 100 };
   }
   if (round.status === 'crashed') {
@@ -327,11 +361,11 @@ function checkResolution(sessionKey, slot, roundId) {
 
 // ── Balance-aware wrappers (free-play frontend only) ───────────────────
 
-function placeBet(apiKey, signedToken, slot, stake) {
+function placeBet(gameId, apiKey, signedToken, slot, stake) {
   const { sessionKey } = resolveSessionKey(apiKey, signedToken);
-  const s = getSession(sessionKey);
+  const s = getSession(gameId, sessionKey);
   if (stake > s.balance) return { success: false, message: 'Insufficient balance' };
-  const result = placeBetCore(sessionKey, slot, stake);
+  const result = placeBetCore(gameId, sessionKey, slot, stake);
   if (!result.success) return result;
   // Balance can only ever go DOWN here by exactly the staked amount, never
   // below zero (guaranteed by the check above) — this is the "you can only
@@ -340,10 +374,10 @@ function placeBet(apiKey, signedToken, slot, stake) {
   return { success: true, newBalance: s.balance };
 }
 
-function cashOut(apiKey, signedToken, slot) {
+function cashOut(gameId, apiKey, signedToken, slot) {
   const { sessionKey } = resolveSessionKey(apiKey, signedToken);
-  const s = getSession(sessionKey);
-  const result = cashOutCore(sessionKey, slot);
+  const s = getSession(gameId, sessionKey);
+  const result = cashOutCore(gameId, sessionKey, slot);
   if (!result.success) return result;
   // Win is ALWAYS computed by cashOutCore from the server's own stake +
   // server's own clock-derived multiplier — never from any number the
@@ -357,21 +391,26 @@ function cashOut(apiKey, signedToken, slot) {
 // import the *Core functions directly — keeps the "no balance concept
 // here" boundary obvious at the call site.
 
-function placeBetForSession(sessionKey, slot, stake) {
-  return placeBetCore(sessionKey, slot, stake);
+function placeBetForSession(gameId, sessionKey, slot, stake) {
+  return placeBetCore(gameId, sessionKey, slot, stake);
 }
 
-function cashOutForSession(sessionKey, slot) {
-  return cashOutCore(sessionKey, slot);
+function cashOutForSession(gameId, sessionKey, slot) {
+  return cashOutCore(gameId, sessionKey, slot);
 }
 
-function getPlayersView() {
-  // Aggregate a lightweight, anonymized view across all sessions for the
-  // "players" list the frontend shows — no real identity is ever exposed
-  // here, just counts/amounts, regardless of whether a session is keyed by
-  // verified user id or by API key fallback.
+function getPlayersView(gameId) {
+  // Aggregate a lightweight, anonymized view across all of THIS GAME's
+  // sessions for the "players" list the frontend shows — no real identity
+  // is ever exposed here, just counts/amounts, regardless of whether a
+  // session is keyed by verified user id or by API key fallback. Filtered
+  // to this gameId's sessions only (see the sessions Map's key format
+  // above) so JetX's bet list can never leak an Aviator bet or vice versa.
+  const round = rounds.get(gameId);
+  const prefix = gameId + ':';
   const rows = [];
   sessions.forEach((s, key) => {
+    if (!key.startsWith(prefix)) return;
     [1, 2].forEach(slot => {
       const b = s.bets[slot];
       if (b && b.roundId === round.id) {
@@ -379,8 +418,8 @@ function getPlayersView() {
           username: 'Player',
           stake: b.stake,
           cashedOut: b.cashedOut,
-          cashoutMultiplier: b.cashedOut ? currentMultiplier() : null,
-          won: b.cashedOut ? Math.floor(b.stake * currentMultiplier() * 100) / 100 : null,
+          cashoutMultiplier: b.cashedOut ? currentMultiplier(gameId) : null,
+          won: b.cashedOut ? Math.floor(b.stake * currentMultiplier(gameId) * 100) / 100 : null,
         });
       }
     });
@@ -392,7 +431,8 @@ function getPlayersView() {
 // getPublicState's response (see that function's comment for why: this is
 // house-side risk data, not something end users need or should see).
 // Exposed via server.js's /internal/* routes for ops/admin monitoring.
-function getRoundExposure() {
+function getRoundExposure(gameId) {
+  const round = rounds.get(gameId);
   return {
     roundId: round.id,
     status: round.status,
@@ -402,5 +442,5 @@ function getRoundExposure() {
   };
 }
 
-module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution, getRoundExposure };
+module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution, getRoundExposure, GAME_IDS };
 
