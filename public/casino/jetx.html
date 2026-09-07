@@ -103,10 +103,10 @@ body.fs .game-wrap{
   font-weight:900;line-height:1;
 }
 .mval.fly{
-  color:#fff;
-  text-shadow:0 0 50px rgba(180,160,255,.55),0 0 100px rgba(120,80,255,.3);
+  color:#3ddc6f;
+  text-shadow:0 0 50px rgba(61,220,111,.55),0 0 100px rgba(61,220,111,.3);
 }
-.mval.crash{color:#3d7bff;text-shadow:0 0 30px rgba(61,123,255,.7)}
+.mval.crash{color:#ff4d4d;text-shadow:0 0 30px rgba(255,77,77,.7)}
 .mval.wait{display:none}
 
 /* ── WAIT OVERLAY ── */
@@ -596,98 +596,93 @@ function toggleFS(){
 function draw(){
   const W=cv.width,H=cv.height;
   cx.clearRect(0,0,W,H);
+  const crashed=(ST==='crashed');
 
-  // ── Background: deep violet like Spribe ──
-  cx.fillStyle='#100c1c';cx.fillRect(0,0,W,H);
+  // ── JETX SKY BACKGROUND — this is the actual visual identity that
+  // separates JetX from Aviator: a horizon scene (sky, sun/glow, drifting
+  // clouds), NOT Aviator's radial-rays-from-a-corner void. No trajectory
+  // graph line is ever drawn here — real JetX has no such line; the
+  // multiplier is conveyed purely by the rocket's flight and the big
+  // number overlay.
+  const skyTop = crashed ? '#2a1030' : '#2b1f5c';
+  const skyBottom = crashed ? '#120814' : '#5b3fa8';
+  const sky = cx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0, skyTop);
+  sky.addColorStop(1, skyBottom);
+  cx.fillStyle = sky;
+  cx.fillRect(0,0,W,H);
 
-  // Center glow — purple/blue like Spribe
-  if(flightActive){
-    const cg=cx.createRadialGradient(W*.5,H*.42,0,W*.5,H*.42,W*.52);
-    cg.addColorStop(0,'rgba(110,60,220,0.30)');
-    cg.addColorStop(.4,'rgba(70,30,170,0.14)');
-    cg.addColorStop(1,'rgba(0,0,0,0)');
-    cx.save();cx.beginPath();cx.arc(W*.5,H*.42,W*.52,0,Math.PI*2);
-    cx.fillStyle=cg;cx.fill();cx.restore();
-  }
+  // Soft glow low on the horizon, like a distant sun — anchors the scene
+  // the same way JetX's reference screenshots have a bright horizon band.
+  const horizonY = H*0.72;
+  const glow = cx.createRadialGradient(W*0.5,horizonY,0,W*0.5,horizonY,W*0.6);
+  glow.addColorStop(0, crashed ? 'rgba(255,80,60,0.25)' : 'rgba(255,190,120,0.22)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  cx.fillStyle = glow;
+  cx.fillRect(0,0,W,H);
 
-  // ── Radial rays from bottom-left ──
-  const OX=W*0.04,OY=H*0.96;
+  // Drifting clouds — simple overlapping ellipse clusters, parallax-drift
+  // slowly leftward over time so the sky doesn't feel static. Positions
+  // are deterministic (seeded by index, not Math.random() per frame) so
+  // they don't jitter frame to frame.
+  const cloudDrift = (Date.now()/1000 * 6) % (W+300) ;
   cx.save();
-  for(let i=0;i<36;i++){
-    const ang=(i/35)*Math.PI*.58+Math.PI*0.04;
-    const r=W*2.8,dA=Math.PI*.018;
-    const gr=cx.createLinearGradient(OX,OY,OX+Math.cos(ang)*r,OY-Math.sin(ang)*r);
-    gr.addColorStop(0,'rgba(60,45,90,0.40)');
-    gr.addColorStop(.35,'rgba(35,25,55,0.10)');
-    gr.addColorStop(1,'rgba(0,0,0,0)');
-    cx.beginPath();cx.moveTo(OX,OY);
-    cx.lineTo(OX+Math.cos(ang-dA)*r,OY-Math.sin(ang-dA)*r);
-    cx.lineTo(OX+Math.cos(ang+dA)*r,OY-Math.sin(ang+dA)*r);
-    cx.closePath();cx.fillStyle=gr;cx.fill();
+  cx.globalAlpha = crashed ? 0.35 : 0.55;
+  for(let i=0;i<6;i++){
+    const baseX = (i*180 + 60) - cloudDrift;
+    const cxPos = ((baseX % (W+300)) + (W+300)) % (W+300) - 150;
+    const cyPos = H*0.18 + (i%3)*H*0.09;
+    const scale = 0.7 + (i%3)*0.25;
+    cx.fillStyle = '#ffffff';
+    cx.beginPath();
+    cx.ellipse(cxPos, cyPos, 38*scale, 14*scale, 0, 0, Math.PI*2);
+    cx.ellipse(cxPos+26*scale, cyPos+4*scale, 26*scale, 11*scale, 0, 0, Math.PI*2);
+    cx.ellipse(cxPos-24*scale, cyPos+3*scale, 24*scale, 10*scale, 0, 0, Math.PI*2);
+    cx.fill();
   }
   cx.restore();
 
   if(pathPts.length<2) return;
 
-  const crashed=(ST==='crashed');
-  const pts=pathPts.map(p=>({
-    x:OX+p.t*(W*.94),
-    y:OY-p.r*(H*.88)
+  // ── ROCKET FLIGHT PATH — real JetX flies roughly horizontally, drifting
+  // gently upward, cruising left-to-right across the scene — NOT a steep
+  // diagonal climb from a corner (that's Aviator's shape). p.t (0..1,
+  // driven by elapsed time) maps to horizontal position across nearly the
+  // full width; p.r (0..1, driven by the multiplier) maps to only a
+  // gentle upward drift, not the near-vertical climb Aviator uses.
+  const startX = W*0.08, startY = H*0.58;
+  const pts = pathPts.map(p => ({
+    x: startX + p.t*(W*0.86),
+    y: startY - p.r*(H*0.30) - Math.sin(p.t*Math.PI*2.2)*H*0.02, // gentle bob, not a straight line
   }));
 
-  // ── BIG RED FILL — matches screenshot exactly ──
-  const tip2=pts[pts.length-1];
-  cx.save();
+  const tip = pts[pts.length-1];
+  const prev = pts[pts.length-2] || tip;
+  const angle = Math.atan2(tip.y-prev.y, tip.x-prev.x);
 
-  // Layer 1: main vivid red gradient top→bottom
-  cx.beginPath();cx.moveTo(OX,OY);
-  for(let i=0;i<pts.length;i++) cx.lineTo(pts[i].x,pts[i].y);
-  cx.lineTo(tip2.x,OY);cx.closePath();
-  const fg=cx.createLinearGradient(0,tip2.y,0,OY);
+  // Contrail — small fading puffs behind the rocket, the actual JetX
+  // signature instead of Aviator's solid red trail line. Drawn from a
+  // sparse sample of recent path points so it doesn't need its own
+  // separate state to track.
   if(!crashed){
-    fg.addColorStop(0,'rgba(255,60,50,0.62)');
-    fg.addColorStop(0.25,'rgba(230,20,45,0.52)');
-    fg.addColorStop(0.6,'rgba(160,5,30,0.32)');
-    fg.addColorStop(1,'rgba(50,0,10,0.12)');
-  } else {
-    fg.addColorStop(0,'rgba(61,123,255,0.40)');
-    fg.addColorStop(1,'rgba(50,0,10,0.08)');
+    const sampleEvery = Math.max(1, Math.floor(pts.length/26));
+    for(let i=pts.length-1; i>=0; i-=sampleEvery){
+      const age = (pts.length-1-i) / pts.length; // 0=newest .. 1=oldest
+      const alpha = Math.max(0, 0.5*(1-age));
+      if(alpha<=0.02) continue;
+      cx.save();
+      cx.globalAlpha = alpha;
+      cx.fillStyle = '#ffffff';
+      cx.beginPath();
+      cx.arc(pts[i].x, pts[i].y, 5+age*6, 0, Math.PI*2);
+      cx.fill();
+      cx.restore();
+    }
   }
-  cx.fillStyle=fg;cx.fill();
 
-  // Layer 2: warm radial glow from origin (bottom-left warmth like screenshot)
-  cx.beginPath();cx.moveTo(OX,OY);
-  for(let i=0;i<pts.length;i++) cx.lineTo(pts[i].x,pts[i].y);
-  cx.lineTo(tip2.x,OY);cx.closePath();
-  const lg=cx.createRadialGradient(OX,OY,0,OX,OY,H*0.75);
-  lg.addColorStop(0,'rgba(220,10,35,0.40)');
-  lg.addColorStop(0.45,'rgba(140,5,20,0.18)');
-  lg.addColorStop(1,'rgba(0,0,0,0)');
-  cx.fillStyle=lg;cx.fill();
-
-  cx.restore();
-
-  // ── Trail line ──
-  cx.save();
-  cx.shadowBlur=crashed?8:24;
-  cx.shadowColor=crashed?'rgba(61,123,255,.5)':'rgba(255,70,90,.75)';
-  cx.strokeStyle=crashed?'#3d7bff':'#ff3355';cx.lineWidth=3;
-  cx.lineJoin='round';cx.lineCap='round';
-  cx.beginPath();cx.moveTo(pts[0].x,pts[0].y);
-  for(let i=1;i<pts.length-1;i++){
-    const mx=(pts[i].x+pts[i+1].x)/2,my=(pts[i].y+pts[i+1].y)/2;
-    cx.quadraticCurveTo(pts[i].x,pts[i].y,mx,my);
-  }
-  cx.lineTo(pts[pts.length-1].x,pts[pts.length-1].y);
-  cx.stroke();cx.restore();
-
-  // ── ROCKET — vector-drawn (no external image asset needed), angled to
-  // match the current flight direction, JetX-style silver body + blue
-  // window + orange flame ──
-  const tip=pts[pts.length-1];
-  if(!crashed&&pts.length>3){
-    const prev=pts[pts.length-2]||tip;
-    const angle=Math.atan2(tip.y-prev.y,tip.x-prev.x);
+  // ── ROCKET — vector-drawn, angled along the current (shallow) flight
+  // direction, JetX-style silver body + blue window + orange flame ──
+  if(!crashed && pts.length>3){
     cx.save();
     cx.translate(tip.x,tip.y);
     cx.rotate(angle);
@@ -695,14 +690,20 @@ function draw(){
     drawRocketShape(cx);
     cx.restore();
   } else if(crashed){
+    // Explosion burst instead of Aviator's "flew off and tumbled" pose —
+    // real JetX shows the rocket breaking apart at the crash point.
     cx.save();
     cx.translate(tip.x,tip.y);
-    cx.rotate(Math.PI*.65); // tumbling after the explosion
-    cx.globalAlpha=0.75;
-    drawRocketShape(cx);
+    const burstGrad = cx.createRadialGradient(0,0,0,0,0,46);
+    burstGrad.addColorStop(0,'rgba(255,220,120,0.9)');
+    burstGrad.addColorStop(0.4,'rgba(255,100,40,0.7)');
+    burstGrad.addColorStop(1,'rgba(255,40,20,0)');
+    cx.fillStyle=burstGrad;
+    cx.beginPath();cx.arc(0,0,46,0,Math.PI*2);cx.fill();
     cx.restore();
   }
 }
+
 
 // Draws a simple rocket (nose cone + body + window + fins + flame),
 // pointing along +x — caller rotates/translates before calling this so it
