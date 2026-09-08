@@ -353,7 +353,25 @@ body.fs .game-wrap{
 <!-- TOPBAR -->
 <div class="topbar">
   <button class="back-btn" onclick="history.back()">← Go Back</button>
-  <div class="avi-logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 0 8px rgba(61,123,255,.6));transform:rotate(45deg)"><path d="M12 2c2 3 3 7 3 10 0 2-1 4-3 6-2-2-3-4-3-6 0-3 1-7 3-10z" fill="#dfe8ff" stroke="#3d7bff" stroke-width="1"/><circle cx="12" cy="9" r="1.6" fill="#3d7bff"/><path d="M9 14l-2.5 3.5L9 17z" fill="#3d7bff"/><path d="M15 14l2.5 3.5L15 17z" fill="#3d7bff"/><path d="M10.5 17.5c.5 2 1 3 1.5 4 .5-1 1-2 1.5-4-.5.5-1 .8-1.5.8s-1-.3-1.5-.8z" fill="#ff8a3d"/></svg>JetX</div>
+  <div class="avi-logo"><svg width="30" height="30" viewBox="0 0 100 100" style="filter:drop-shadow(0 0 6px rgba(255,204,0,.5))">
+    <!-- REAL FIX: matches the actual JetX brand mark (white fighter jet
+         banking up-right, yellow swept wing beneath, trailing motion
+         streaks) instead of the generic rocket used before. -->
+    <g transform="translate(50,50) rotate(-35) translate(-50,-50)">
+      <!-- motion streaks trailing behind the jet -->
+      <path d="M8 70 L38 62 L34 68 L10 76 Z" fill="#ffcc00" opacity="0.85"/>
+      <path d="M4 58 L34 52 L30 58 L6 64 Z" fill="#fff" opacity="0.55"/>
+      <path d="M2 46 L26 42 L23 47 L4 51 Z" fill="#ffcc00" opacity="0.4"/>
+      <!-- lower swept wing (yellow) -->
+      <path d="M46 58 L78 74 L70 76 L40 64 Z" fill="#ffcc00"/>
+      <!-- fuselage (white), nose at top-right -->
+      <path d="M84 14 C 70 26, 56 40, 44 56 L38 62 L46 58 L58 50 C 68 40, 78 28, 88 18 Z" fill="#f4f7ff"/>
+      <!-- upper wing / tailfin accent (white, slightly offset for depth) -->
+      <path d="M50 46 L30 34 L38 32 L56 42 Z" fill="#e2e8f5"/>
+      <!-- nose tip highlight -->
+      <circle cx="86" cy="16" r="3" fill="#ffcc00"/>
+    </g>
+  </svg>JetX</div>
   <div style="display:flex;align-items:center">
     <div class="bal" title="Your SafariBet balance">
       <span id="bv">0.00</span><span class="bal-kes">KES</span>
@@ -541,6 +559,14 @@ let AUTO={1:{running:false,placedThisRound:false},2:{running:false,placedThisRou
 // identical base64 data. That's not "a different sound", it's the same
 // sound. Replaced with a small Web Audio API synth so JetX has its own
 // distinct rocket-launch hum and explosion, with zero shared assets.
+// PROFESSIONAL AUDIO REWRITE: the previous version used a static low
+// (~90Hz) detuned-sawtooth drone for the whole flight and a heavy bass
+// "thud" on crash — in practice that read as a discouraging, alarm-like
+// foghorn during play and a punishing doom-boom on loss, which is the
+// wrong emotional register for a betting game. Real crash-game audio
+// does the opposite: an energetic, rising tone that builds excitement as
+// the multiplier climbs, and a short, bright, arcade-style "pop" on
+// crash rather than a heavy detonation. Rewritten to match that.
 let _ac=null;
 function getAC(){
   if(!_ac){ try{ _ac = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ _ac=null; } }
@@ -548,8 +574,10 @@ function getAC(){
   return _ac;
 }
 
-// Continuous rocket-engine drone: layered detuned saw oscillators with a
-// slow filter sweep, distinct in timbre from Aviator's sampled loop.
+// Flight tone: a clean, airy sine+triangle pair starting around a
+// pleasant mid pitch, with gentle rising shimmer as the multiplier
+// grows — mirrors the "climbing" feel players expect, without the
+// static drone.
 let _engine=null;
 function startJet(instant){
   const ac = getAC();
@@ -559,32 +587,56 @@ function startJet(instant){
     const master = ac.createGain();
     master.gain.value = 0;
     master.connect(ac.destination);
-    master.gain.linearRampToValueAtTime(0.18, ac.currentTime + (instant?0.05:0.4));
+    master.gain.linearRampToValueAtTime(0.14, ac.currentTime + (instant?0.05:0.35));
 
     const filter = ac.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 700;
+    filter.frequency.value = 1400;
+    filter.Q.value = 0.6;
     filter.connect(master);
 
-    const oscs = [90, 91.5, 181].map((freq,i)=>{
-      const o = ac.createOscillator();
-      o.type = i<2 ? 'sawtooth' : 'triangle';
-      o.frequency.value = freq;
-      o.connect(filter);
-      o.start();
-      return o;
-    });
+    // Base tone + a soft fifth above it — pleasant, not alarming.
+    const base = ac.createOscillator();
+    base.type = 'sine';
+    base.frequency.value = 220;
+    base.connect(filter);
+    base.start();
 
-    // Slow filter wobble so the drone doesn't sound static.
-    const lfo = ac.createOscillator();
-    lfo.frequency.value = 0.6;
-    const lfoGain = ac.createGain();
-    lfoGain.gain.value = 220;
-    lfo.connect(lfoGain);
-    lfoGain.connect(filter.frequency);
-    lfo.start();
+    const fifth = ac.createOscillator();
+    fifth.type = 'triangle';
+    fifth.frequency.value = 330;
+    const fifthGain = ac.createGain();
+    fifthGain.gain.value = 0.35;
+    fifth.connect(fifthGain);
+    fifthGain.connect(filter);
+    fifth.start();
 
-    _engine = { master, filter, oscs, lfo };
+    // Airy shimmer layer, very quiet, adds motion without harshness.
+    const shimmer = ac.createOscillator();
+    shimmer.type = 'sine';
+    shimmer.frequency.value = 660;
+    const shimmerGain = ac.createGain();
+    shimmerGain.gain.value = 0.08;
+    shimmer.connect(shimmerGain);
+    shimmerGain.connect(filter);
+    shimmer.start();
+
+    _engine = { master, filter, base, fifth, shimmer, startedAt: ac.currentTime };
+  }catch(e){}
+}
+// Called every animation frame while flying (see animLoop) so pitch
+// rises smoothly with the multiplier instead of staying static.
+function updateJetPitch(mult){
+  if(!_engine) return;
+  try{
+    const ac = getAC();
+    if(!ac) return;
+    const t = ac.currentTime;
+    const rise = Math.min(mult, 12); // cap the rise so it never gets shrill
+    _engine.base.frequency.setTargetAtTime(220 + rise*14, t, 0.15);
+    _engine.fifth.frequency.setTargetAtTime(330 + rise*21, t, 0.15);
+    _engine.shimmer.frequency.setTargetAtTime(660 + rise*40, t, 0.15);
+    _engine.filter.frequency.setTargetAtTime(1400 + rise*90, t, 0.2);
   }catch(e){}
 }
 function stopJet(){
@@ -594,55 +646,59 @@ function stopJet(){
     const now = ac ? ac.currentTime : 0;
     _engine.master.gain.cancelScheduledValues(now);
     _engine.master.gain.setValueAtTime(_engine.master.gain.value, now);
-    _engine.master.gain.linearRampToValueAtTime(0, now + 0.12);
+    _engine.master.gain.linearRampToValueAtTime(0, now + 0.1);
     const e = _engine;
     setTimeout(()=>{
       try{
-        e.oscs.forEach(o=>o.stop());
-        e.lfo.stop();
+        e.base.stop(); e.fifth.stop(); e.shimmer.stop();
       }catch(err){}
-    }, 200);
+    }, 180);
   }catch(e){}
   _engine = null;
 }
-// Explosion burst: filtered noise pop, nothing like Aviator's sampled crash.
+// Crash: a short, bright "pop" — a quick pitched click plus a brief
+// high-passed noise tick. Snappy and arcade-like, not a heavy explosion
+// that reads as punishing.
 function playCrash(){
   stopJet();
   const ac = getAC();
   if(ac){
     try{
-      const dur = 0.5;
+      const t = ac.currentTime;
+
+      // Pitched click: short descending sine, gives a clear "pop" without bass rumble.
+      const click = ac.createOscillator();
+      click.type = 'sine';
+      click.frequency.setValueAtTime(520, t);
+      click.frequency.exponentialRampToValueAtTime(180, t + 0.12);
+      const clickGain = ac.createGain();
+      clickGain.gain.setValueAtTime(0.35, t);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      click.connect(clickGain);
+      clickGain.connect(ac.destination);
+      click.start(t);
+      click.stop(t + 0.15);
+
+      // Brief bright noise tick (high-passed, very short) for texture.
+      const dur = 0.12;
       const buf = ac.createBuffer(1, ac.sampleRate*dur, ac.sampleRate);
       const data = buf.getChannelData(0);
       for(let i=0;i<data.length;i++){
-        data[i] = (Math.random()*2-1) * Math.pow(1 - i/data.length, 2);
+        data[i] = (Math.random()*2-1) * Math.pow(1 - i/data.length, 3);
       }
       const noise = ac.createBufferSource();
       noise.buffer = buf;
-      const filter = ac.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(2200, ac.currentTime);
-      filter.frequency.exponentialRampToValueAtTime(200, ac.currentTime + dur);
-      const gain = ac.createGain();
-      gain.gain.setValueAtTime(0.5, ac.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-      noise.connect(filter);
-      filter.connect(gain);
-      gain.connect(ac.destination);
-      noise.start();
-      noise.stop(ac.currentTime + dur);
-
-      const thud = ac.createOscillator();
-      thud.type = 'sine';
-      thud.frequency.setValueAtTime(110, ac.currentTime);
-      thud.frequency.exponentialRampToValueAtTime(30, ac.currentTime + 0.3);
-      const thudGain = ac.createGain();
-      thudGain.gain.setValueAtTime(0.4, ac.currentTime);
-      thudGain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.3);
-      thud.connect(thudGain);
-      thudGain.connect(ac.destination);
-      thud.start();
-      thud.stop(ac.currentTime + 0.3);
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 1200;
+      const noiseGain = ac.createGain();
+      noiseGain.gain.setValueAtTime(0.25, t);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      noise.connect(hp);
+      hp.connect(noiseGain);
+      noiseGain.connect(ac.destination);
+      noise.start(t);
+      noise.stop(t + dur);
     }catch(e){}
   }
   document.getElementById('gw').classList.add('cf');
@@ -970,6 +1026,7 @@ function animLoop(ts){
     // elapsed value through would render as a giant unreadable number
     // instead of a normal multiplier.
     localMulti=Math.min(Math.exp(0.09*elapsed),60);
+    updateJetPitch(localMulti);
     const mv=document.getElementById('mv');
     mv.className='mval fly';
     mv.textContent=localMulti.toFixed(2)+'x';
