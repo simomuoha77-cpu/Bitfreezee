@@ -539,6 +539,12 @@ let BET1=null,BET2=null,USER=null;
 let QUEUED={1:null,2:null};
 let lastRound=null,prevST='waiting',lastTickM=0;
 let localMulti=1.00,flightActive=false,flyStart=null,pathPts=[];
+// Drives the new camera-follow flight scene in draw(): frozenElapsed
+// locks the jet/background at the exact instant of a crash (so nothing
+// keeps scrolling once the round is over); resetFadeStart times the
+// short cross-fade back to the calm idle scene once the next round's
+// waiting period begins.
+let frozenElapsed=null, resetFadeStart=null;
 let waitTimer=null,countVal=5,countdownRound=null;
 
 // (Rocket is now drawn as vectors — see drawRocketShape() — no external image asset needed)
@@ -729,114 +735,208 @@ function toggleFS(){
   requestAnimationFrame(()=>requestAnimationFrame(resizeCanvas));
 }
 
+// ── FLIGHT SCENE ────────────────────────────────────────────────────────
+// Complete rewrite from the old "point travels along path.t/path.r across
+// a mostly-static backdrop" approach (still visually a straight-ish
+// diagonal, same shape family as Aviator) to a camera-follow scene: the
+// jet stays roughly centered on screen with an organic curved bob/bank,
+// and the WORLD scrolls past it in multiple parallax layers — the actual
+// visual difference the brief asked for, not just a different sprite.
+function mixC(c1,c2,t){t=Math.min(Math.max(t,0),1);return [c1[0]+(c2[0]-c1[0])*t,c1[1]+(c2[1]-c1[1])*t,c1[2]+(c2[2]-c1[2])*t];}
+function rgbStr(c){return `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;}
+
+const ALT_PALS=[
+  {top:[43,31,92],  bottom:[91,63,168], horizon:[255,190,120]}, // low atmosphere — warm horizon
+  {top:[24,28,74],  bottom:[58,74,150], horizon:[170,200,255]}, // mid altitude — cool blue
+  {top:[8,8,28],    bottom:[20,18,58],  horizon:[120,140,220]}, // near space — dark indigo
+];
+const CRASH_PAL={top:[42,10,20],bottom:[18,6,10],horizon:[255,80,60]};
+
 function draw(){
   const W=cv.width,H=cv.height;
   cx.clearRect(0,0,W,H);
+  const now=performance.now();
   const crashed=(ST==='crashed');
 
-  // ── JETX SKY BACKGROUND — this is the actual visual identity that
-  // separates JetX from Aviator: a horizon scene (sky, sun/glow, drifting
-  // clouds), NOT Aviator's radial-rays-from-a-corner void. No trajectory
-  // graph line is ever drawn here — real JetX has no such line; the
-  // multiplier is conveyed purely by the rocket's flight and the big
-  // number overlay.
-  const skyTop = crashed ? '#2a1030' : '#2b1f5c';
-  const skyBottom = crashed ? '#120814' : '#5b3fa8';
-  const sky = cx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0, skyTop);
-  sky.addColorStop(1, skyBottom);
-  cx.fillStyle = sky;
-  cx.fillRect(0,0,W,H);
+  // elapsed: live while flying, frozen at the crash instant while the
+  // crash is showing, null (idle scene) before a round has started.
+  let elapsed=null;
+  if(flightActive && flyStart!==null) elapsed=(now-flyStart)/1000;
+  else if(crashed && frozenElapsed!==null) elapsed=frozenElapsed;
+  const flying=elapsed!==null;
 
-  // Soft glow low on the horizon, like a distant sun — anchors the scene
-  // the same way JetX's reference screenshots have a bright horizon band.
-  const horizonY = H*0.72;
-  const glow = cx.createRadialGradient(W*0.5,horizonY,0,W*0.5,horizonY,W*0.6);
-  glow.addColorStop(0, crashed ? 'rgba(255,80,60,0.25)' : 'rgba(255,190,120,0.22)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  cx.fillStyle = glow;
-  cx.fillRect(0,0,W,H);
+  // Reset fade: 0 = just crashed, 1 = fully back to idle. Blends the
+  // crash-red palette back to normal over ~650ms once a fresh round
+  // begins, instead of the scene snapping back instantly.
+  let resetFade=1;
+  if(resetFadeStart!==null){
+    resetFade=Math.min((now-resetFadeStart)/650,1);
+    if(resetFade>=1) resetFadeStart=null;
+  }
 
-  // Drifting clouds — simple overlapping ellipse clusters, parallax-drift
-  // slowly leftward over time so the sky doesn't feel static. Positions
-  // are deterministic (seeded by index, not Math.random() per frame) so
-  // they don't jitter frame to frame.
-  const cloudDrift = (Date.now()/1000 * 6) % (W+300) ;
-  cx.save();
-  cx.globalAlpha = crashed ? 0.35 : 0.55;
+  // ── ALTITUDE-BASED PALETTE — the environment itself visibly changes as
+  // the multiplier climbs: thick warm low-atmosphere haze near 1x, cooling
+  // to high-altitude blue by ~5x, thinning into near-space indigo with
+  // stars beyond ~15x. Smooth log-based cross-fade, never a hard cut.
+  const altT=flying?Math.min(Math.log(Math.max(localMulti,1))/2.7,2):0;
+  let altPal;
+  if(altT<=1) altPal={top:mixC(ALT_PALS[0].top,ALT_PALS[1].top,altT),bottom:mixC(ALT_PALS[0].bottom,ALT_PALS[1].bottom,altT),horizon:mixC(ALT_PALS[0].horizon,ALT_PALS[1].horizon,altT)};
+  else altPal={top:mixC(ALT_PALS[1].top,ALT_PALS[2].top,altT-1),bottom:mixC(ALT_PALS[1].bottom,ALT_PALS[2].bottom,altT-1),horizon:mixC(ALT_PALS[1].horizon,ALT_PALS[2].horizon,altT-1)};
+
+  let pal=altPal;
+  if(crashed) pal=CRASH_PAL;
+  else if(resetFadeStart!==null) pal={top:mixC(CRASH_PAL.top,altPal.top,resetFade),bottom:mixC(CRASH_PAL.bottom,altPal.bottom,resetFade),horizon:mixC(CRASH_PAL.horizon,altPal.horizon,resetFade)};
+
+  const sky=cx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,rgbStr(pal.top));
+  sky.addColorStop(1,rgbStr(pal.bottom));
+  cx.fillStyle=sky;cx.fillRect(0,0,W,H);
+
+  const horizonY=H*0.72;
+  const glow=cx.createRadialGradient(W*0.5,horizonY,0,W*0.5,horizonY,W*0.6);
+  glow.addColorStop(0,`rgba(${pal.horizon[0]|0},${pal.horizon[1]|0},${pal.horizon[2]|0},0.28)`);
+  glow.addColorStop(1,'rgba(0,0,0,0)');
+  cx.fillStyle=glow;cx.fillRect(0,0,W,H);
+
+  // ── SCROLL PHASE — always strictly increasing while flying (never
+  // plateaus to zero motion, only the RATE eases toward a cruise speed),
+  // so the world keeps visibly moving no matter how long a round runs.
+  // Idle scenes drift on wall-clock time at a much gentler ambient rate.
+  const cruiseSpeed=flying?Math.min(70+elapsed*10,420):16;
+  const scrollBase=flying?elapsed*cruiseSpeed:(now/1000)*cruiseSpeed;
+
+  // ── STARS (fade in at altitude) — farthest layer, barely moves ──
+  const starAlpha=flying?Math.max(0,Math.min((altT-0.6)/0.6,1))*0.8:0;
+  if(starAlpha>0.01){
+    cx.save();cx.globalAlpha=starAlpha;cx.fillStyle='#fff';
+    const span=W+120;
+    for(let i=0;i<26;i++){
+      const bx=(i*137)%span;
+      const x=(((bx-scrollBase*0.03)%span)+span)%span-60;
+      const y=(i*53)%(H*0.65);
+      cx.beginPath();cx.arc(x,y,1+((i%3)*0.6),0,Math.PI*2);cx.fill();
+    }
+    cx.restore();
+  }
+
+  // ── DISTANT SKYLINE SILHOUETTE (fades out as altitude rises) ──
+  const cityAlpha=flying?Math.max(0,1-altT*0.9):0.5;
+  if(cityAlpha>0.02){
+    cx.save();cx.globalAlpha=cityAlpha*0.5;cx.fillStyle='#140f2e';
+    const span=W+240;
+    for(let i=0;i<7;i++){
+      const bx=i*170;
+      const x=(((bx-scrollBase*0.12)%span)+span)%span-120;
+      const w=60+((i*37)%40),h=H*(0.08+((i*29)%5)/40);
+      cx.fillRect(x,horizonY-h,w,h);
+    }
+    cx.restore();
+  }
+
+  // ── MID CLOUDS — parallax layer, always present, denser at low alt ──
+  const midAlpha=(crashed?0.3:0.55)*(1-altT*0.35);
+  cx.save();cx.globalAlpha=Math.max(midAlpha,0.15);
+  const midSpan=W+300;
   for(let i=0;i<6;i++){
-    const baseX = (i*180 + 60) - cloudDrift;
-    const cxPos = ((baseX % (W+300)) + (W+300)) % (W+300) - 150;
-    const cyPos = H*0.18 + (i%3)*H*0.09;
-    const scale = 0.7 + (i%3)*0.25;
-    cx.fillStyle = '#ffffff';
+    const bx=i*180+60;
+    const x=(((bx-scrollBase*0.35)%midSpan)+midSpan)%midSpan-150;
+    const y=H*0.18+(i%3)*H*0.09;
+    const s=0.7+(i%3)*0.25;
+    cx.fillStyle='#ffffff';
     cx.beginPath();
-    cx.ellipse(cxPos, cyPos, 38*scale, 14*scale, 0, 0, Math.PI*2);
-    cx.ellipse(cxPos+26*scale, cyPos+4*scale, 26*scale, 11*scale, 0, 0, Math.PI*2);
-    cx.ellipse(cxPos-24*scale, cyPos+3*scale, 24*scale, 10*scale, 0, 0, Math.PI*2);
+    cx.ellipse(x,y,38*s,14*s,0,0,Math.PI*2);
+    cx.ellipse(x+26*s,y+4*s,26*s,11*s,0,0,Math.PI*2);
+    cx.ellipse(x-24*s,y+3*s,24*s,10*s,0,0,Math.PI*2);
     cx.fill();
   }
   cx.restore();
 
-  if(pathPts.length<2) return;
-
-  // ── ROCKET FLIGHT PATH — real JetX flies roughly horizontally, drifting
-  // gently upward, cruising left-to-right across the scene — NOT a steep
-  // diagonal climb from a corner (that's Aviator's shape). p.t (0..1,
-  // driven by elapsed time) maps to horizontal position across nearly the
-  // full width; p.r (0..1, driven by the multiplier) maps to only a
-  // gentle upward drift, not the near-vertical climb Aviator uses.
-  const startX = W*0.08, startY = H*0.58;
-  const pts = pathPts.map(p => ({
-    x: startX + p.t*(W*0.86),
-    y: startY - p.r*(H*0.30) - Math.sin(p.t*Math.PI*2.2)*H*0.02, // gentle bob, not a straight line
-  }));
-
-  const tip = pts[pts.length-1];
-  const prev = pts[pts.length-2] || tip;
-  const angle = Math.atan2(tip.y-prev.y, tip.x-prev.x);
-
-  // Contrail — small fading puffs behind the rocket, the actual JetX
-  // signature instead of Aviator's solid red trail line. Drawn from a
-  // sparse sample of recent path points so it doesn't need its own
-  // separate state to track.
-  if(!crashed){
-    const sampleEvery = Math.max(1, Math.floor(pts.length/26));
-    for(let i=pts.length-1; i>=0; i-=sampleEvery){
-      const age = (pts.length-1-i) / pts.length; // 0=newest .. 1=oldest
-      const alpha = Math.max(0, 0.5*(1-age));
-      if(alpha<=0.02) continue;
-      cx.save();
-      cx.globalAlpha = alpha;
-      cx.fillStyle = '#ffffff';
-      cx.beginPath();
-      cx.arc(pts[i].x, pts[i].y, 5+age*6, 0, Math.PI*2);
-      cx.fill();
-      cx.restore();
-    }
+  // ── JET POSITION — organic curved bob/bank, camera roughly follows it
+  // (screen X stays near 34% across) instead of the jet traversing the
+  // canvas end to end. Climb tied to log(multiplier); wobble is two
+  // out-of-phase sine waves so the path isn't a single clean curve either.
+  let jetX=W*0.22, jetY=H*0.68, angle=-0.05;
+  if(flying){
+    const climb=Math.min(Math.log(Math.max(localMulti,1))*0.16,0.30);
+    const wob=t=>Math.sin(t*0.9)*0.028+Math.sin(t*0.37+1.1)*0.016;
+    const wobX=t=>Math.sin(t*0.5+0.4)*0.02;
+    jetX=W*(0.34+wobX(elapsed));
+    jetY=H*(0.56-climb+wob(elapsed));
+    const dt=0.1, e2=Math.max(elapsed-dt,0);
+    const climb2=Math.min(Math.log(Math.max(Math.exp(0.09*e2),1))*0.16,0.30);
+    const jx2=W*(0.34+wobX(e2)), jy2=H*(0.56-climb2+wob(e2));
+    angle=-0.12+Math.atan2(jetY-jy2,jetX-jx2)*0.55;
+  } else if(!crashed){
+    const t=now/1000;
+    jetY=H*0.68+Math.sin(t*1.2)*H*0.01;
+    angle=-0.05+Math.sin(t*0.8)*0.03;
   }
 
-  // ── ROCKET — vector-drawn, angled along the current (shallow) flight
-  // direction, JetX-style silver body + blue window + orange flame ──
-  if(!crashed && pts.length>3){
+  // ── EXHAUST TRAIL — fixed relative to the jet (not a history array):
+  // fading puffs at set offsets behind it, drifting slightly with the
+  // same wobble so they read as "left behind by the scrolling world".
+  if(flying && !crashed){
     cx.save();
-    cx.translate(tip.x,tip.y);
+    for(let i=1;i<=7;i++){
+      const age=i/7;
+      const back=i*10;
+      const px=jetX-Math.cos(angle)*back;
+      const py=jetY-Math.sin(angle)*back+Math.sin(elapsed*2-i)*3;
+      cx.globalAlpha=Math.max(0,0.4*(1-age));
+      cx.fillStyle='#ffffff';
+      cx.beginPath();cx.arc(px,py,4+age*5,0,Math.PI*2);cx.fill();
+    }
+    cx.restore();
+  }
+
+  // ── FOREGROUND SPEED STREAKS — fastest parallax layer, gives the
+  // strongest sense of forward velocity, intensifies as elapsed grows.
+  if(flying && !crashed){
+    const speedT=Math.min(elapsed/8,1);
+    cx.save();cx.globalAlpha=0.25*speedT;cx.strokeStyle='#ffffff';cx.lineWidth=2;
+    const span=W+200;
+    for(let i=0;i<5;i++){
+      const bx=i*160;
+      const x=(((bx-scrollBase*0.9)%span)+span)%span-100;
+      const y=H*(0.3+(i%3)*0.18);
+      const len=30+speedT*40;
+      cx.beginPath();cx.moveTo(x,y);cx.lineTo(x-len,y);cx.stroke();
+    }
+    cx.restore();
+  }
+
+  // ── JET / EXPLOSION ──
+  if(!crashed && flying){
+    cx.save();
+    cx.translate(jetX,jetY);
     cx.rotate(angle);
     cx.shadowBlur=18;cx.shadowColor='rgba(61,123,255,.6)';
     drawRocketShape(cx);
     cx.restore();
-  } else if(crashed){
-    // Explosion burst instead of Aviator's "flew off and tumbled" pose —
-    // real JetX shows the rocket breaking apart at the crash point.
+  } else if(!crashed){
+    // Idle pre-round pose — jet sits near the start area, gently idling.
     cx.save();
-    cx.translate(tip.x,tip.y);
-    const burstGrad = cx.createRadialGradient(0,0,0,0,0,46);
-    burstGrad.addColorStop(0,'rgba(255,220,120,0.9)');
-    burstGrad.addColorStop(0.4,'rgba(255,100,40,0.7)');
-    burstGrad.addColorStop(1,'rgba(255,40,20,0)');
-    cx.fillStyle=burstGrad;
+    cx.translate(jetX,jetY);
+    cx.rotate(angle);
+    cx.shadowBlur=10;cx.shadowColor='rgba(61,123,255,.4)';
+    drawRocketShape(cx);
+    cx.restore();
+  } else {
+    // Crash: jet stopped dead at its frozen position, explosion burst
+    // plus a brief flash that fades as resetFade advances.
+    cx.save();
+    cx.translate(jetX,jetY);
+    const burst=cx.createRadialGradient(0,0,0,0,0,46);
+    burst.addColorStop(0,'rgba(255,220,120,0.9)');
+    burst.addColorStop(0.4,'rgba(255,100,40,0.7)');
+    burst.addColorStop(1,'rgba(255,40,20,0)');
+    cx.fillStyle=burst;
     cx.beginPath();cx.arc(0,0,46,0,Math.PI*2);cx.fill();
     cx.restore();
+    if(resetFadeStart===null){
+      // still fresh crash (fade hasn't started yet) — flash the screen
+      cx.save();cx.globalAlpha=0.12;cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.restore();
+    }
   }
 }
 
@@ -1156,6 +1256,7 @@ async function poll(){
     if(ST==='waiting'){
       if(flightActive){stopFlight();pathPts=[];}
       stopJet();
+      frozenElapsed=null; resetFadeStart=performance.now(); // begin the smooth reset-to-idle fade
       mv.className='mval wait';mv.style.display='none';
       wo.classList.add('on');
       startCountdown(d.waitSeconds||5,d.roundId||lastRound||'init');
@@ -1187,6 +1288,11 @@ async function poll(){
         startFlight(d.elapsedMs||0);
       }
     } else if(ST==='crashed'){
+      // Freeze the flight scene at exactly the elapsed time it crashed —
+      // captured once, on the first tick where we observe the crash
+      // (flightActive is still true here iff this is that first tick),
+      // so the background/jet don't keep advancing after impact.
+      if(flightActive && flyStart!==null) frozenElapsed=(performance.now()-flyStart)/1000;
       if(flightActive) stopFlight();
       stopJet();
       if(prevST==='flying') playCrash();
