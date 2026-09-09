@@ -894,7 +894,10 @@ function draw(){
     gGrad.addColorStop(1,'#0a0912');
     cx.fillStyle=gGrad;
     cx.fillRect(0,groundY0,W,H-groundY0);
-    cx.strokeStyle='#ffcc00';cx.lineWidth=3;
+    // Before the round actually starts (still waiting for next round),
+    // this line renders black instead of yellow — yellow is kept only
+    // once the jet is actively taxiing/flying.
+    cx.strokeStyle=flying?'#ffcc00':'#000000';cx.lineWidth=3;
     cx.setLineDash([22,18]);
     cx.beginPath();
     cx.moveTo(0,groundY0+(H-groundY0)*0.5);
