@@ -865,6 +865,11 @@ function draw(){
 
   // ── GROUND / RUNWAY — jet starts and ends here.
   const groundY0=H*0.90;
+  // The jet now taxis/accelerates on the ground for this many seconds
+  // after the round starts before actually lifting off — previously it
+  // began climbing at elapsed=0, i.e. immediately, which read as an
+  // instant takeoff instead of a run-up.
+  const TAXI_SEC=3;
   // The jet image is anchored at its NOSE, and most of the artwork sits
   // BELOW the nose in the source image. The previous version drew the
   // image at a fixed 160x106px regardless of canvas size — on a normal
@@ -880,7 +885,7 @@ function draw(){
   const jetNoseY=JET_IMG_NOSE_Y*(jetDispH/JET_IMG_H);
   const jetBottomOffset=jetDispH-jetNoseY; // how far the art extends below the nose anchor
   const groundedY=groundY0-jetBottomOffset*0.8; // nose-anchor Y so the jet's body rests on the strip
-  const climbForGround = flying ? (1-Math.exp(-elapsed/9)) : 0;
+  const climbForGround = flying ? (1-Math.exp(-Math.max(elapsed-TAXI_SEC,0)/9)) : 0;
   const groundAlpha = crashed ? 0 : Math.max(0, 1-climbForGround);
   if(groundAlpha>0.02){
     cx.save();cx.globalAlpha=groundAlpha;
@@ -899,23 +904,34 @@ function draw(){
     cx.restore();
   }
 
-  // ── JET POSITION — smooth curved diagonal climb (ground, lower-left →
-  // sky, upper-right). Two different monotonic easing shapes for X vs Y
-  // (X: smoothstep, Y: ease-out) so the path genuinely curves — steep
-  // climb right after liftoff, leveling off toward cruise — and never
-  // reverses or freezes. Now starts from `groundedY` (the jet's actual
-  // computed resting position) instead of a guessed screen fraction.
+  // ── JET POSITION — taxis on the ground for TAXI_SEC first (visible
+  // run-up along the strip, nose gradually lifting), THEN climbs on a
+  // smooth curved path (ground, lower-left → sky, upper-right). Two
+  // different monotonic easing shapes for X vs Y during the climb (X:
+  // smoothstep, Y: ease-out) so the path genuinely curves — steep climb
+  // right after liftoff, leveling off toward cruise — and never reverses
+  // or freezes. Starts from `groundedY` (the jet's actual computed
+  // resting position) instead of a guessed screen fraction.
   let jetX=W*0.16, jetY=groundedY, angle=-0.12; // idle: on the strip, nose slightly up
-  if(flying){
-    const prog=1-Math.exp(-elapsed/9); // 0 at liftoff, smoothly approaches 1, never freezes
-    const xArc=prog*prog*(3-2*prog);   // smoothstep — slow start, accelerates, eases in
-    const yArc=Math.sin(Math.min(prog,1)*Math.PI*0.5); // ease-out — climbs fast, then levels off
-    jetX=W*(0.16+xArc*0.5);
+  if(flying && elapsed<TAXI_SEC){
+    // ground roll: rolls forward along the strip, staying grounded,
+    // nose gradually lifting as it picks up speed.
+    const taxiT=elapsed/TAXI_SEC;
+    const taxiEase=taxiT*taxiT;
+    jetX=W*(0.16+taxiEase*0.07);
+    jetY=groundedY;
+    angle=-0.12-taxiEase*0.18;
+  } else if(flying){
+    const fe=elapsed-TAXI_SEC; // flight-elapsed, i.e. time since actual liftoff
+    const prog=1-Math.exp(-fe/9); // 0 at liftoff, smoothly approaches 1, never freezes
+    const xArc=1-(1-prog)*(1-prog);    // ease-out, nonzero slope at liftoff (unlike smoothstep)
+    const yArc=Math.sin(Math.min(prog,1)*Math.PI*0.5); // different ease-out shape — curves the path
+    jetX=W*(0.23+xArc*0.43);
     jetY=groundedY-yArc*0.5*H;
-    const dt=0.08, e2=Math.max(elapsed-dt,0);
-    const prog2=1-Math.exp(-e2/9);
-    const xArc2=prog2*prog2*(3-2*prog2), yArc2=Math.sin(Math.min(prog2,1)*Math.PI*0.5);
-    const jx2=W*(0.16+xArc2*0.5), jy2=groundedY-yArc2*0.5*H;
+    const dt=0.08, fe2=Math.max(fe-dt,0);
+    const prog2=1-Math.exp(-fe2/9);
+    const xArc2=1-(1-prog2)*(1-prog2), yArc2=Math.sin(Math.min(prog2,1)*Math.PI*0.5);
+    const jx2=W*(0.23+xArc2*0.43), jy2=groundedY-yArc2*0.5*H;
     angle=Math.atan2(jetY-jy2,jetX-jx2);
   } else if(!crashed){
     const t=now/1000;
@@ -956,16 +972,30 @@ function draw(){
   } else {
     cx.save();
     cx.translate(jetX,jetY);
-    const burst=cx.createRadialGradient(0,0,0,0,0,50);
-    burst.addColorStop(0,'rgba(255,230,140,0.95)');
-    burst.addColorStop(0.35,'rgba(255,120,40,0.8)');
-    burst.addColorStop(0.7,'rgba(200,40,20,0.4)');
-    burst.addColorStop(1,'rgba(200,40,20,0)');
+    // Bigger, more dramatic burst to match the reference crash panel —
+    // core flash, a wider fire body, and a few flying ember streaks.
+    const burst=cx.createRadialGradient(0,0,0,0,0,78);
+    burst.addColorStop(0,'rgba(255,245,200,0.98)');
+    burst.addColorStop(0.22,'rgba(255,210,110,0.95)');
+    burst.addColorStop(0.5,'rgba(255,120,40,0.75)');
+    burst.addColorStop(0.78,'rgba(200,50,20,0.35)');
+    burst.addColorStop(1,'rgba(200,50,20,0)');
     cx.fillStyle=burst;
-    cx.beginPath();cx.arc(0,0,50,0,Math.PI*2);cx.fill();
+    cx.beginPath();cx.arc(0,0,78,0,Math.PI*2);cx.fill();
+    // ember streaks flung outward from the blast center
+    cx.strokeStyle='rgba(255,200,120,0.85)';
+    for(let i=0;i<8;i++){
+      const a=(i/8)*Math.PI*2+0.3;
+      const len=26+((i*17)%22);
+      cx.lineWidth=2.5;
+      cx.beginPath();
+      cx.moveTo(Math.cos(a)*18,Math.sin(a)*18);
+      cx.lineTo(Math.cos(a)*(18+len),Math.sin(a)*(18+len));
+      cx.stroke();
+    }
     cx.restore();
     if(resetFadeStart===null){
-      cx.save();cx.globalAlpha=0.12;cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.restore();
+      cx.save();cx.globalAlpha=0.16;cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.restore();
     }
   }
 }
