@@ -721,12 +721,12 @@ const jetImg=new Image();
 let jetImgReady=false;
 jetImg.onload=()=>{jetImgReady=true;};
 jetImg.src=JET_IMG_SRC;
-function drawJetImage(cx,angle){
+function drawJetImage(cx,angle,dispW,dispH,noseX,noseY){
   // Falls back to the vector shape for the handful of frames before the
   // image finishes loading, so there's never a blank gap.
   if(!jetImgReady){ cx.rotate(angle); drawRocketShape(cx); return; }
   cx.rotate(angle-JET_IMG_BASE_ANGLE);
-  cx.drawImage(jetImg,-JET_IMG_NOSE_X,-JET_IMG_NOSE_Y,JET_IMG_W,JET_IMG_H);
+  cx.drawImage(jetImg,-noseX,-noseY,dispW,dispH);
 }
 
 function resizeCanvas(){
@@ -865,7 +865,21 @@ function draw(){
 
   // ── GROUND / RUNWAY — jet starts and ends here.
   const groundY0=H*0.90;
-  const GROUND_Y=0.85;
+  // The jet image is anchored at its NOSE, and most of the artwork sits
+  // BELOW the nose in the source image. The previous version drew the
+  // image at a fixed 160x106px regardless of canvas size — on a normal
+  // mobile canvas that's oversized, so a large chunk of the jet's body
+  // extended past the ground line into/under it (the "starting
+  // underground" bug). Fixed by sizing the jet relative to canvas width,
+  // and by anchoring its IDLE position off the artwork's actual bottom
+  // edge (computed here) instead of a guessed fraction of screen height,
+  // so the jet's body sits ON the strip regardless of canvas shape.
+  const jetDispW=Math.max(44,Math.min(W*0.15,120));
+  const jetDispH=jetDispW*(JET_IMG_H/JET_IMG_W);
+  const jetNoseX=JET_IMG_NOSE_X*(jetDispW/JET_IMG_W);
+  const jetNoseY=JET_IMG_NOSE_Y*(jetDispH/JET_IMG_H);
+  const jetBottomOffset=jetDispH-jetNoseY; // how far the art extends below the nose anchor
+  const groundedY=groundY0-jetBottomOffset*0.8; // nose-anchor Y so the jet's body rests on the strip
   const climbForGround = flying ? (1-Math.exp(-elapsed/9)) : 0;
   const groundAlpha = crashed ? 0 : Math.max(0, 1-climbForGround);
   if(groundAlpha>0.02){
@@ -886,33 +900,26 @@ function draw(){
   }
 
   // ── JET POSITION — smooth curved diagonal climb (ground, lower-left →
-  // sky, upper-right). Fixed from the previous version, which had two
-  // real bugs causing the "confused" motion: (1) a "bow" term that rose
-  // then reversed direction mid-flight — the jet visibly wobbled/dipped
-  // back down even while the multiplier kept climbing; (2) X and Y used
-  // the identical easing curve, which actually made the path perfectly
-  // straight (the opposite of "curved") once the bow was ignored. Fixed
-  // by using two DIFFERENT monotonic easing shapes for X vs Y — X eases
-  // in like a smoothstep, Y eases out fast-then-flattens — which curves
-  // the path (steep climb right after liftoff, leveling off toward
-  // cruise, like a real aircraft) while guaranteeing it never reverses.
-  // `prog` is now elapsed-based and asymptotic (never hard-caps), so
-  // motion never freezes even on a very long round.
-  let jetX=W*0.16, jetY=H*GROUND_Y, angle=-0.12; // idle: on the strip, nose slightly up
+  // sky, upper-right). Two different monotonic easing shapes for X vs Y
+  // (X: smoothstep, Y: ease-out) so the path genuinely curves — steep
+  // climb right after liftoff, leveling off toward cruise — and never
+  // reverses or freezes. Now starts from `groundedY` (the jet's actual
+  // computed resting position) instead of a guessed screen fraction.
+  let jetX=W*0.16, jetY=groundedY, angle=-0.12; // idle: on the strip, nose slightly up
   if(flying){
     const prog=1-Math.exp(-elapsed/9); // 0 at liftoff, smoothly approaches 1, never freezes
     const xArc=prog*prog*(3-2*prog);   // smoothstep — slow start, accelerates, eases in
     const yArc=Math.sin(Math.min(prog,1)*Math.PI*0.5); // ease-out — climbs fast, then levels off
     jetX=W*(0.16+xArc*0.5);
-    jetY=H*(GROUND_Y-yArc*0.5);
+    jetY=groundedY-yArc*0.5*H;
     const dt=0.08, e2=Math.max(elapsed-dt,0);
     const prog2=1-Math.exp(-e2/9);
     const xArc2=prog2*prog2*(3-2*prog2), yArc2=Math.sin(Math.min(prog2,1)*Math.PI*0.5);
-    const jx2=W*(0.16+xArc2*0.5), jy2=H*(GROUND_Y-yArc2*0.5);
+    const jx2=W*(0.16+xArc2*0.5), jy2=groundedY-yArc2*0.5*H;
     angle=Math.atan2(jetY-jy2,jetX-jx2);
   } else if(!crashed){
     const t=now/1000;
-    jetY=H*GROUND_Y+Math.sin(t*1.1)*H*0.004;
+    jetY=groundedY+Math.sin(t*1.1)*H*0.004;
     angle=-0.12+Math.sin(t*0.7)*0.02;
   }
 
@@ -944,7 +951,7 @@ function draw(){
     cx.translate(jetX,jetY);
     cx.shadowBlur=flying?18:10;
     cx.shadowColor= flying ? 'rgba(255,204,0,.55)' : 'rgba(255,204,0,.35)';
-    drawJetImage(cx,angle);
+    drawJetImage(cx,angle,jetDispW,jetDispH,jetNoseX,jetNoseY);
     cx.restore();
   } else {
     cx.save();
@@ -1322,7 +1329,7 @@ async function poll(){
       if(prevST==='flying') playCrash();
       const cp=d.crashPoint||localMulti;
       mv.className='mval crash';mv.style.display='block';
-      mv.textContent='Exploded @ '+cp.toFixed(2)+'×';
+      mv.textContent='Bom @ '+cp.toFixed(2)+'×';
       [BET1,BET2].forEach((b,i)=>{
         if(b&&!b.cashedOut){
           b.cashedOut=true;
