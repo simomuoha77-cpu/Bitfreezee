@@ -847,29 +847,58 @@ function draw(){
     cx.restore();
   }
 
-  // ── JET POSITION — ascending, camera-follow style: screen position
-  // stays in a moderate zone (not literally flying to the top edge) while
-  // the world scrolls to sell the climb. Curved/organic, not a straight
-  // diagonal: a general up-right trend with layered sine perturbation on
-  // both axes so the path wanders rather than tracing one clean line.
-  let jetX=W*0.24, jetY=H*0.72, angle=-0.9; // idle: near start area, nose already angled up like it's about to launch
+  // ── GROUND / RUNWAY — the actual gap: there was no ground at all, so
+  // the idle jet was just floating against the sky. Real JetX starts the
+  // jet sitting on a strip at the bottom before launch. Fades out as the
+  // jet climbs away from it (tied to the same `climb` value below), so it
+  // reads as "left the ground behind" once airborne.
+  const groundY0=H*0.90;
+  const climbForGround = flying ? Math.min(Math.log(Math.max(localMulti,1))*0.22,0.55) : 0;
+  const groundAlpha = crashed ? 0 : Math.max(0, 1-climbForGround/0.55);
+  if(groundAlpha>0.02){
+    cx.save();cx.globalAlpha=groundAlpha;
+    const gGrad=cx.createLinearGradient(0,groundY0,0,H);
+    gGrad.addColorStop(0,'#1c1a2e');
+    gGrad.addColorStop(1,'#0a0912');
+    cx.fillStyle=gGrad;
+    cx.fillRect(0,groundY0,W,H-groundY0);
+    // dashed centerline, scrolls with the world so it doesn't look static
+    cx.strokeStyle='#ffcc00';cx.lineWidth=3;
+    cx.setLineDash([22,18]);
+    cx.lineDashOffset=-scrollBase*0.5;
+    cx.beginPath();
+    cx.moveTo(0,groundY0+(H-groundY0)*0.5);
+    cx.lineTo(W,groundY0+(H-groundY0)*0.5);
+    cx.stroke();
+    cx.setLineDash([]);
+    cx.restore();
+  }
+
+  // ── JET POSITION — starts sitting ON the ground strip above, then
+  // climbs away from it as the multiplier rises (camera-follow: screen
+  // position eases into a cruise zone while the world scrolls to sell
+  // the climb). Curved/organic, not a straight diagonal: layered sine
+  // perturbation on both axes on top of the climb trend.
+  const GROUND_Y=0.85;
+  let jetX=W*0.22, jetY=H*GROUND_Y, angle=-0.08; // idle: sitting on the strip, nose only slightly up
   if(flying){
-    const climb=Math.min(Math.log(Math.max(localMulti,1))*0.11,0.22); // screen easing, not literal top-of-canvas travel
+    const climb=Math.min(Math.log(Math.max(localMulti,1))*0.22,0.55); // 0 at liftoff (ground) up to cruise altitude
     const driftR=Math.min(elapsed*0.01,0.10);
     const wobY=t=>Math.sin(t*1.1)*0.02+Math.sin(t*0.41+0.7)*0.014;
     const wobX=t=>Math.sin(t*0.6+0.3)*0.022+Math.sin(t*1.4)*0.008;
-    jetX=W*(0.4+driftR+wobX(elapsed));
-    jetY=H*(0.58-climb+wobY(elapsed));
+    jetX=W*(0.28+driftR+wobX(elapsed));
+    jetY=H*(GROUND_Y-climb+wobY(elapsed));
     const dt=0.1, e2=Math.max(elapsed-dt,0);
-    const climb2=Math.min(Math.log(Math.max(Math.exp(0.09*e2),1))*0.11,0.22);
+    const climb2=Math.min(Math.log(Math.max(Math.exp(0.09*e2),1))*0.22,0.55);
     const driftR2=Math.min(e2*0.01,0.10);
-    const jx2=W*(0.4+driftR2+wobX(e2)), jy2=H*(0.58-climb2+wobY(e2));
-    const steepen=Math.min(altT*0.25,0.4); // nose pitches up a bit more at altitude
-    angle=-0.95-steepen+Math.atan2(jetY-jy2,jetX-jx2)*0.5;
+    const jx2=W*(0.28+driftR2+wobX(e2)), jy2=H*(GROUND_Y-climb2+wobY(e2));
+    const climbProgress=climb/0.55; // 0 at ground, 1 at full cruise climb
+    const baseAngle=-0.1-climbProgress*0.85; // near-level at liftoff, steep bank once climbing
+    angle=baseAngle+Math.atan2(jetY-jy2,jetX-jx2)*0.5;
   } else if(!crashed){
     const t=now/1000;
-    jetY=H*0.72+Math.sin(t*1.1)*H*0.008;
-    angle=-0.9+Math.sin(t*0.7)*0.03;
+    jetY=H*GROUND_Y+Math.sin(t*1.1)*H*0.004; // small idle settle, still grounded
+    angle=-0.08+Math.sin(t*0.7)*0.02;
   }
 
   // ── STREAK TRAIL — yellow/white motion streaks behind the jet (the
