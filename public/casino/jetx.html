@@ -526,6 +526,10 @@ let localMulti=1.00,flightActive=false,flyStart=null,pathPts=[];
 // short cross-fade back to the calm idle scene once the next round's
 // waiting period begins.
 let frozenElapsed=null, resetFadeStart=null;
+// Rolling buffer of recent on-screen jet positions, used to draw the
+// glowing curved trail behind it (matches the reference: a continuous
+// glowing path, not fixed dash marks).
+let trailBuf=[];
 let waitTimer=null,countVal=5,countdownRound=null;
 
 // (Rocket is now drawn as vectors — see drawRocketShape() — no external image asset needed)
@@ -742,15 +746,20 @@ function toggleFS(){
 
 // (world moves past a roughly screen-fixed jet) so it's still not a
 // simple straight-line point-travels-a-path shape like Aviator.
+// ── FLIGHT SCENE — rebuilt from the reference storyboard supplied ──────
+// (ground start → curved diagonal climb → crash → reset). Warm dusk sky
+// with mountains and clouds, a smooth curved climb (not straight up, not
+// a noisy wander), and a continuous glowing trail behind the jet.
 function mixC(c1,c2,t){t=Math.min(Math.max(t,0),1);return [c1[0]+(c2[0]-c1[0])*t,c1[1]+(c2[1]-c1[1])*t,c1[2]+(c2[2]-c1[2])*t];}
 function rgbStr(c){return `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;}
+function rgba(c,a){return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;}
 
 const ALT_PALS=[
-  {top:[10,10,26],  bottom:[26,20,50], horizon:[255,204,0]},   // low altitude — dark, warm horizon glow near the ground
-  {top:[6,6,18],    bottom:[14,12,34], horizon:[130,150,255]}, // mid altitude — cooler, dimmer horizon
-  {top:[2,2,10],    bottom:[6,5,16],   horizon:[90,100,200]},  // near space — near-black, stars dominant
+  {top:[20,22,52], bottom:[46,40,92],  horizon:[255,170,60]},  // low altitude — warm dusk near the ground
+  {top:[13,15,38], bottom:[30,27,64],  horizon:[255,150,95]},  // mid altitude — cooling slightly
+  {top:[7,7,20],   bottom:[15,13,34],  horizon:[190,125,140]}, // high altitude — dim, stars take over
 ];
-const CRASH_PAL={top:[36,8,16],bottom:[16,5,8],horizon:[255,70,50]};
+const CRASH_PAL={top:[38,9,17],bottom:[17,5,9],horizon:[255,80,55]};
 
 function draw(){
   const W=cv.width,H=cv.height;
@@ -769,8 +778,6 @@ function draw(){
     if(resetFade>=1) resetFadeStart=null;
   }
 
-  // Altitude progression — dark from the very start (matches the real
-  // dark background), getting even darker/starrier as it climbs.
   const altT=flying?Math.min(Math.log(Math.max(localMulti,1))/2.7,2):0;
   let altPal;
   if(altT<=1) altPal={top:mixC(ALT_PALS[0].top,ALT_PALS[1].top,altT),bottom:mixC(ALT_PALS[0].bottom,ALT_PALS[1].bottom,altT),horizon:mixC(ALT_PALS[0].horizon,ALT_PALS[1].horizon,altT)};
@@ -782,83 +789,89 @@ function draw(){
 
   const sky=cx.createLinearGradient(0,0,0,H);
   sky.addColorStop(0,rgbStr(pal.top));
-  sky.addColorStop(1,rgbStr(pal.bottom));
+  sky.addColorStop(0.65,rgbStr(pal.bottom));
+  sky.addColorStop(1,rgbStr(mixC(pal.bottom,pal.horizon,0.35)));
   cx.fillStyle=sky;cx.fillRect(0,0,W,H);
 
-  // Low warm glow near the bottom (ground lights / horizon), fades as it climbs.
-  const horizonY=H*0.86;
-  const glowA=flying?Math.max(0.05,0.3-altT*0.13):0.28;
-  const glow=cx.createRadialGradient(W*0.5,horizonY,0,W*0.5,horizonY,W*0.7);
-  glow.addColorStop(0,`rgba(${pal.horizon[0]|0},${pal.horizon[1]|0},${pal.horizon[2]|0},${glowA})`);
+  // Warm horizon glow, offset to one side like a low sun — matches the
+  // reference art's light source.
+  const horizonY=H*0.78;
+  const glowA=flying?Math.max(0.12,0.4-altT*0.15):0.38;
+  const glow=cx.createRadialGradient(W*0.72,horizonY,0,W*0.72,horizonY,W*0.65);
+  glow.addColorStop(0,rgba(pal.horizon,glowA));
   glow.addColorStop(1,'rgba(0,0,0,0)');
   cx.fillStyle=glow;cx.fillRect(0,0,W,H);
 
-  // ── SCROLL — world moves DOWNWARD past the jet (the jet flies straight
-  // up, so relative to it, everything else streams down) — never
-  // plateaus to zero speed, only eases toward a cruise rate.
-  const cruiseSpeed=flying?Math.min(60+elapsed*9,360):14;
+  // ── SCROLL — world streams past the jet as it climbs the curved path.
+  const cruiseSpeed=flying?Math.min(50+elapsed*8,300):12;
   const scrollBase=flying?elapsed*cruiseSpeed:(now/1000)*cruiseSpeed;
 
-  // ── STARS — present from the very start (dark sky throughout), denser
-  // and brighter at altitude. Fixed X (no sideways drift — the flight is
-  // straight up, so the world doesn't drift sideways either), scroll
-  // downward past the jet.
-  cx.save();
-  const starBase=flying?0.5+altT*0.25:0.4;
-  cx.fillStyle='#fff';
-  const vspan=H+120;
-  for(let i=0;i<34;i++){
-    const x=(i*47)%W;
-    const by=(i*61)%vspan;
-    const y=(((by+scrollBase*0.05)%vspan)+vspan)%vspan-60;
-    cx.globalAlpha=starBase*(0.4+((i%4)*0.2));
-    cx.beginPath();cx.arc(x,y,1+((i%3)*0.7),0,Math.PI*2);cx.fill();
-  }
-  cx.restore();
-
-  // ── DISTANT LOW GROUND SILHOUETTE — a faint skyline anchored to the
-  // bottom edge, present at low altitude, fades away as it climbs
-  // (leaving Earth behind) — static horizontally, straight-up flight.
-  const cityAlpha=flying?Math.max(0,0.4-altT*0.35):0.3;
-  if(cityAlpha>0.02){
-    cx.save();cx.globalAlpha=cityAlpha;cx.fillStyle='#0c0a1e';
-    for(let i=0;i<7;i++){
-      const x=i*170-60;
-      const w=60+((i*37)%40),h=H*(0.05+((i*29)%5)/50);
-      cx.fillRect(x,H-h,w,h);
+  // ── STARS — fade in at altitude only (dusk sky is too bright for stars
+  // near the ground).
+  const starAlpha=flying?Math.max(0,Math.min((altT-0.5)/0.7,1))*0.8:0;
+  if(starAlpha>0.01){
+    cx.save();cx.globalAlpha=starAlpha;cx.fillStyle='#fff';
+    const span=W+120;
+    for(let i=0;i<24;i++){
+      const bx=(i*113)%span;
+      const x=(((bx-scrollBase*0.04)%span)+span)%span-60;
+      const y=(i*47)%(H*0.6);
+      cx.beginPath();cx.arc(x,y,1+((i%3)*0.6),0,Math.PI*2);cx.fill();
     }
     cx.restore();
   }
 
-  // ── THIN WISPY CLOUD LAYER — mid parallax, sparse and dark-tinted,
-  // fixed X, scrolls downward past the climbing jet.
-  const cloudAlpha=(crashed?0.18:0.3)*(1-altT*0.4);
-  if(cloudAlpha>0.02){
-    cx.save();cx.globalAlpha=Math.max(cloudAlpha,0.05);
-    const cvspan=H+200;
-    for(let i=0;i<5;i++){
-      const x=i*150+60;
-      const by=(i*97)%cvspan;
-      const y=(((by+scrollBase*0.3)%cvspan)+cvspan)%cvspan-100;
+  // ── DISTANT MOUNTAINS — layered jagged silhouettes near the bottom,
+  // matching the reference art's mountain range. Two depths, slow
+  // parallax, fade slightly as altitude increases (leaving them below).
+  const mtnAlpha=flying?Math.max(0.15,0.5-altT*0.18):0.45;
+  function mountainRow(baseY,amp,color,speed,seed){
+    cx.save();cx.globalAlpha=mtnAlpha;cx.fillStyle=color;
+    const span=W+400;
+    cx.beginPath();
+    cx.moveTo(-200,H);
+    for(let x=-200;x<=W+200;x+=40){
+      const sx=(((x-scrollBase*speed+seed)%span)+span)%span;
+      const n=Math.sin(sx*0.011)*0.6+Math.sin(sx*0.023+seed)*0.4;
+      cx.lineTo(x, baseY - n*amp);
+    }
+    cx.lineTo(W+200,H);
+    cx.closePath();cx.fill();
+    cx.restore();
+  }
+  mountainRow(H*0.85, H*0.10, '#161230', 0.08, 10);
+  mountainRow(H*0.88, H*0.07, '#0d0a20', 0.14, 70);
+
+  // ── CLOUDS — soft layered ellipses, warm-rimmed near the horizon,
+  // cooler higher up. Fades with altitude as the jet climbs above them.
+  const cloudAlpha=(crashed?0.2:0.5)*(1-altT*0.4);
+  if(cloudAlpha>0.03){
+    cx.save();cx.globalAlpha=Math.max(cloudAlpha,0.06);
+    const mspan=W+320;
+    for(let i=0;i<6;i++){
+      const bx=i*190+50;
+      const x=(((bx-scrollBase*0.28)%mspan)+mspan)%mspan-160;
+      const y=H*0.42+(i%3)*H*0.13;
       const s=0.8+(i%3)*0.3;
-      cx.fillStyle='#8a92c0';
+      cx.fillStyle= i%2===0 ? '#cfd6ee' : '#9aa2cc';
       cx.beginPath();
-      cx.ellipse(x,y,44*s,10*s,0,0,Math.PI*2);
-      cx.ellipse(x+30*s,y+3*s,28*s,8*s,0,0,Math.PI*2);
+      cx.ellipse(x,y,46*s,12*s,0,0,Math.PI*2);
+      cx.ellipse(x+30*s,y+4*s,30*s,9*s,0,0,Math.PI*2);
+      cx.ellipse(x-26*s,y+3*s,26*s,8*s,0,0,Math.PI*2);
       cx.fill();
     }
     cx.restore();
   }
 
-  // ── GROUND / RUNWAY — the jet sits on this before launch, then leaves
-  // it behind as it climbs straight up.
+  // ── GROUND / RUNWAY — jet starts and ends here.
   const groundY0=H*0.90;
-  const climbForGround = flying ? Math.min(Math.log(Math.max(localMulti,1))*0.22,0.55) : 0;
-  const groundAlpha = crashed ? 0 : Math.max(0, 1-climbForGround/0.55);
+  const GROUND_Y=0.85;
+  const climbForGround = flying ? Math.min(Math.log(Math.max(localMulti,1))/2.2,1) : 0;
+  const groundAlpha = crashed ? 0 : Math.max(0, 1-climbForGround);
   if(groundAlpha>0.02){
     cx.save();cx.globalAlpha=groundAlpha;
     const gGrad=cx.createLinearGradient(0,groundY0,0,H);
-    gGrad.addColorStop(0,'#1c1a2e');
+    gGrad.addColorStop(0,'#211c30');
     gGrad.addColorStop(1,'#0a0912');
     cx.fillStyle=gGrad;
     cx.fillRect(0,groundY0,W,H-groundY0);
@@ -872,59 +885,52 @@ function draw(){
     cx.restore();
   }
 
-  // ── JET POSITION — straight up, camera-follow: fixed horizontal
-  // position (no sideways drift/banking), only climbing vertically as
-  // the multiplier rises, with a very small idle bob so it doesn't look
-  // frozen. Nose points straight up throughout — no diagonal bank.
-  const GROUND_Y=0.85;
-  const JET_X=0.26; // fixed screen column — jet never moves sideways
-  let jetX=W*JET_X, jetY=H*GROUND_Y, angle=-Math.PI/2; // idle: on the strip, nose already pointing up
+  // ── JET POSITION — smooth curved diagonal climb (ground, lower-left →
+  // sky, upper-right), NOT a straight line and NOT purely vertical: the
+  // rightward progress is tied to the same eased climb value as the
+  // upward progress, plus one gentle large-scale arc (a soft hump partway
+  // through) so the path visibly bows rather than ramping linearly, with
+  // a small continuous wobble on top for a "real flight" liveliness
+  // (much smaller than a jitter — this is one smooth curve, not noise).
+  let jetX=W*0.16, jetY=H*GROUND_Y, angle=-0.12; // idle: on the strip, nose slightly up
   if(flying){
-    const climb=Math.min(Math.log(Math.max(localMulti,1))*0.22,0.55); // 0 at liftoff (ground) up to cruise altitude
-    const wobY=Math.sin(elapsed*1.1)*0.006; // tiny vertical settle only, no sideways sway
-    jetX=W*JET_X;
-    jetY=H*(GROUND_Y-climb+wobY);
-    angle=-Math.PI/2; // straight up, always
+    const prog=Math.min(Math.log(Math.max(localMulti,1))/2.2,1); // 0 at liftoff .. 1 at cruise altitude
+    const arc=Math.sin(prog*Math.PI*0.5); // eased 0..1
+    const bow=Math.sin(prog*Math.PI)*0.05; // gentle mid-flight upward bow
+    const wob=Math.sin(elapsed*1.0)*0.008;
+    jetX=W*(0.16+arc*0.5);
+    jetY=H*(GROUND_Y-arc*0.5-bow+wob);
+    const dp=0.02, prog2=Math.max(prog-dp,0);
+    const arc2=Math.sin(prog2*Math.PI*0.5), bow2=Math.sin(prog2*Math.PI)*0.05;
+    const jx2=W*(0.16+arc2*0.5), jy2=H*(GROUND_Y-arc2*0.5-bow2);
+    angle=Math.atan2(jetY-jy2,jetX-jx2);
   } else if(!crashed){
     const t=now/1000;
     jetY=H*GROUND_Y+Math.sin(t*1.1)*H*0.004;
-    angle=-Math.PI/2;
+    angle=-0.12+Math.sin(t*0.7)*0.02;
   }
 
-  // ── STREAK TRAIL — yellow/white motion streaks trailing straight down
-  // behind the jet.
+  // ── TRAIL — continuous glowing curved line through recent jet
+  // positions (not fixed dash marks), fading from the jet backward.
   if(flying && !crashed){
+    trailBuf.push({x:jetX,y:jetY});
+    if(trailBuf.length>46) trailBuf.shift();
+  }
+  if(trailBuf.length>2){
     cx.save();
-    for(let i=1;i<=6;i++){
-      const age=i/6, back=i*9;
-      const px=jetX, py=jetY+back;
-      cx.globalAlpha=Math.max(0,0.55*(1-age));
-      cx.strokeStyle= i%2===0 ? '#ffcc00' : '#ffffff';
-      cx.lineWidth=3-age*1.5;
-      cx.beginPath();
-      cx.moveTo(px,py-6);
-      cx.lineTo(px,py+6);
-      cx.stroke();
+    for(let i=1;i<trailBuf.length;i++){
+      const age=1-i/trailBuf.length; // 0 near jet .. 1 oldest
+      const a=Math.max(0,0.55*(1-age));
+      if(a<=0.01) continue;
+      const p0=trailBuf[i-1],p1=trailBuf[i];
+      cx.strokeStyle= i%3===0 ? '#ffcc00' : '#7fd4ff';
+      cx.lineWidth=Math.max(1,5*(1-age));
+      cx.globalAlpha=a;
+      cx.shadowBlur=10;cx.shadowColor='rgba(120,200,255,.6)';
+      cx.beginPath();cx.moveTo(p0.x,p0.y);cx.lineTo(p1.x,p1.y);cx.stroke();
     }
     cx.restore();
   }
-
-  // ── FOREGROUND SPEED PARTICLES — fast parallax, streaking straight
-  // down, strongest sense-of-speed layer.
-  if(flying && !crashed){
-    const speedT=Math.min(elapsed/8,1);
-    cx.save();cx.globalAlpha=0.22*speedT;cx.strokeStyle='#ffffff';cx.lineWidth=2;
-    const pvspan=H+160;
-    for(let i=0;i<6;i++){
-      const x=(i*113)%W;
-      const by=(i*137)%pvspan;
-      const y=(((by+scrollBase*0.85)%pvspan)+pvspan)%pvspan-80;
-      const len=24+speedT*36;
-      cx.beginPath();cx.moveTo(x,y);cx.lineTo(x,y-len);cx.stroke();
-    }
-    cx.restore();
-  }
-
 
   // ── JET / EXPLOSION ──
   if(!crashed){
@@ -937,12 +943,13 @@ function draw(){
   } else {
     cx.save();
     cx.translate(jetX,jetY);
-    const burst=cx.createRadialGradient(0,0,0,0,0,46);
-    burst.addColorStop(0,'rgba(255,220,120,0.9)');
-    burst.addColorStop(0.4,'rgba(255,100,40,0.7)');
-    burst.addColorStop(1,'rgba(255,40,20,0)');
+    const burst=cx.createRadialGradient(0,0,0,0,0,50);
+    burst.addColorStop(0,'rgba(255,230,140,0.95)');
+    burst.addColorStop(0.35,'rgba(255,120,40,0.8)');
+    burst.addColorStop(0.7,'rgba(200,40,20,0.4)');
+    burst.addColorStop(1,'rgba(200,40,20,0)');
     cx.fillStyle=burst;
-    cx.beginPath();cx.arc(0,0,46,0,Math.PI*2);cx.fill();
+    cx.beginPath();cx.arc(0,0,50,0,Math.PI*2);cx.fill();
     cx.restore();
     if(resetFadeStart===null){
       cx.save();cx.globalAlpha=0.12;cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.restore();
@@ -1266,6 +1273,7 @@ async function poll(){
     if(ST==='waiting'){
       if(flightActive){stopFlight();pathPts=[];}
       stopJet();
+      trailBuf=[];
       frozenElapsed=null; resetFadeStart=performance.now(); // begin the smooth reset-to-idle fade
       mv.className='mval wait';mv.style.display='none';
       wo.classList.add('on');
