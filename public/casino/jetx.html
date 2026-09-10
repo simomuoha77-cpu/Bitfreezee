@@ -113,10 +113,19 @@ body.fs .game-wrap{
 .wovl{
   position:absolute;inset:0;display:none;
   align-items:center;justify-content:center;flex-direction:column;
-  z-index:4;background:rgba(10,8,18,.94);
+  z-index:4;background:transparent;
+  /* REAL FIX: this used to be a near-opaque near-black background
+     (rgba(10,8,18,.94)) covering the entire game area — it was designed
+     for a plain countdown-number display and was hiding almost the whole
+     canvas scene (sky, clouds, jet, starting line) underneath it during
+     the entire "RECEIVING BETS" period, regardless of what draw() was
+     actually rendering. That's why the scene looked washed out/dim no
+     matter what got fixed in the canvas code — the canvas was never the
+     problem. Made transparent so the scene shows through; the text
+     below gets its own shadow for legibility instead. */
 }
 .wovl.on{display:flex}
-.wtxt{font-size:10px;color:#5a5470;letter-spacing:4px;text-transform:uppercase;font-weight:700;margin-bottom:10px}
+.wtxt{font-size:10px;color:#f0eef8;letter-spacing:4px;text-transform:uppercase;font-weight:700;margin-bottom:10px;text-shadow:0 2px 10px rgba(0,0,0,.9),0 0 4px rgba(0,0,0,.9)}
 .wnum{
   font-family:'Rajdhani',sans-serif;
   font-size:clamp(70px,18vw,96px);font-weight:900;
