@@ -1322,8 +1322,19 @@ async function poll(){
     if(ST==='waiting'){
       if(flightActive){stopFlight();pathPts=[];}
       stopJet();
-      trailBuf=[];
-      frozenElapsed=null; resetFadeStart=performance.now(); // begin the smooth reset-to-idle fade
+      if(prevST!=='waiting'){
+        // Only start the reset fade on the ACTUAL transition into waiting
+        // (e.g. from crashed). This was previously re-running on every
+        // poll tick while already waiting — since the server reports
+        // "waiting" repeatedly for the whole ~5s window, the 650ms fade
+        // timer kept getting restarted and never finished, leaving the
+        // scene stuck blended toward the dark crash palette the entire
+        // time (which is why everything — clouds, text, the ground line —
+        // looked washed out and dim).
+        trailBuf=[];
+        frozenElapsed=null;
+        resetFadeStart=performance.now();
+      }
       mv.className='mval wait';mv.style.display='none';
       wo.classList.add('on');
       startCountdown(d.waitSeconds||5,d.roundId||lastRound||'init');
