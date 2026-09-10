@@ -897,7 +897,10 @@ function draw(){
     // Before the round actually starts (still waiting for next round),
     // this line renders black instead of yellow — yellow is kept only
     // once the jet is actively taxiing/flying.
-    cx.strokeStyle=flying?'#ffcc00':'#000000';cx.lineWidth=3;
+    // Always yellow — my previous change made this black during the
+    // waiting period, which made it invisible against the dark ground.
+    // That was a misread of your last message; reverting it.
+    cx.strokeStyle='#ffcc00';cx.lineWidth=3;
     cx.setLineDash([22,18]);
     cx.beginPath();
     cx.moveTo(0,groundY0+(H-groundY0)*0.5);
