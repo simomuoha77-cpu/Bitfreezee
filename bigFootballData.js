@@ -314,37 +314,49 @@ function normalizeMatch(m) {
   const awayScore = firstDefined(m.away_score, m.awayScore, away.score, m.score && m.score.away, m.score && m.score.away_score);
   const htHome = firstDefined(m.ht_home_score, m.halftime_home_score, m.score && m.score.halftime && m.score.halftime.home);
   const htAway = firstDefined(m.ht_away_score, m.halftime_away_score, m.score && m.score.halftime && m.score.halftime.away);
-  const league = m.league || m.competition || {};
-  const leagueName = league.name || m.league_name || m.competitionName || m.tournament || m.tournament_name || null;
 
-  if (!leagueName) {
-    // Same "log the actual shape once" approach as unwrapList's shape
-    // logging above — this is what's producing the "Other" league label
-    // on the frontend right now. Logs the raw match's own top-level keys
-    // plus whatever the league/competition sub-object actually contains,
-    // so the real field name can be read straight from Render's logs
-    // without needing to hit /internal/bigfootball/test separately.
-    const shapeKey = 'match-league:' + Object.keys(m).sort().join(',');
-    if (!loggedShapes.has(shapeKey)) {
-      loggedShapes.add(shapeKey);
-      console.warn('[bigFootballData] could not find a league/competition name on a match — top-level match keys: ' + Object.keys(m).join(', ') + ' | league/competition sub-object: ' + JSON.stringify(league).slice(0, 300) + '. Add the real field name to normalizeMatch() in bigFootballData.js.');
-    }
-  }
+  // CONFIRMED against a real response (2026-09-11): `league` is a plain
+  // STRING (e.g. "La Liga"), not an object — `league.name` on a string is
+  // always undefined, which is why every match showed up as "Other".
+  // Still handling the object-shaped case too (m.competition), in case a
+  // different endpoint/sport ever sends it that way.
+  const leagueRaw = m.league != null ? m.league : m.competition;
+  const leagueName = typeof leagueRaw === 'string'
+    ? leagueRaw
+    : (leagueRaw && (leagueRaw.name || leagueRaw.league_name)) || m.league_name || m.competitionName || null;
+  const leagueId = (leagueRaw && typeof leagueRaw === 'object') ? idOf(leagueRaw) : null;
+
+  // CONFIRMED: kickoff time field is `kickoff_utc`, not `date`/`utc_date`/
+  // `kickoff`/`start_time` (all of which this app's other data sources use
+  // for the same concept) — that mismatch is why utcDate was null for
+  // every match. Keeping the old guesses as fallbacks costs nothing.
+  const utcDate = firstDefined(m.kickoff_utc, m.date, m.utc_date, m.kickoff, m.start_time, m.scheduled);
+
+  // BigFootball's match payload has no live minute/clock field at all
+  // (confirmed: only status: "live"/"finished", nothing else timing-
+  // related) — so minute is ALWAYS estimated for a live match here, never
+  // read directly. Setting minuteIsEstimated lets db.js's existing
+  // recompute-at-read-time logic (already wired for football, see
+  // getFixtures in db.js) derive a real, continuously-advancing minute
+  // from kickoff_utc automatically — no separate estimation code needed
+  // in this file.
+  const rawMinute = firstDefined(m.minute, m.elapsed, m.clock, m.time);
 
   return {
     id: String(m.id != null ? m.id : m.match_id != null ? m.match_id : m.matchId),
     source: 'bigfootball',
-    utcDate: m.date || m.utc_date || m.kickoff || m.start_time || m.scheduled || null,
+    utcDate: utcDate,
     status: normalizeStatus(m.status),
-    minute: firstDefined(m.minute, m.elapsed, m.clock, m.time) ?? null,
-    homeTeam: { id: idOf(home), name: home.name || m.home_team_name || m.homeTeamName || 'Unknown', crest: home.logo || home.crest || null },
-    awayTeam: { id: idOf(away), name: away.name || m.away_team_name || m.awayTeamName || 'Unknown', crest: away.logo || away.crest || null },
+    minute: rawMinute,
+    minuteIsEstimated: rawMinute == null,
+    homeTeam: { id: idOf(home), name: home.name || m.home_team_name || m.homeTeamName || 'Unknown', crest: home.logo_url || home.logo || home.crest || null },
+    awayTeam: { id: idOf(away), name: away.name || m.away_team_name || m.awayTeamName || 'Unknown', crest: away.logo_url || away.logo || away.crest || null },
     score: {
       winner: null,
       fullTime: (homeScore != null && awayScore != null) ? { home: homeScore, away: awayScore } : null,
       halfTime: (htHome != null && htAway != null) ? { home: htHome, away: htAway } : null
     },
-    competition: { id: idOf(league), name: leagueName },
+    competition: { id: leagueId, name: leagueName },
     venue: m.venue || m.stadium || null,
     sport: m.sport || 'football',
     raw: m // kept for debugging/verification — safe to ignore, not sent by /api/fixtures (see server.js stripRaw)

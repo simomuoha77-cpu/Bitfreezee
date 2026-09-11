@@ -43,6 +43,22 @@ function isLive(match) {
   return match.status === 'IN_PLAY' || match.status === 'PAUSED';
 }
 
+// Strips BigFootball's raw source payload (see bigFootballData.js
+// normalizeMatch's `raw` field) before anything gets written to Mongo or
+// served to the frontend/BetaKE — it's only there to help debug field
+// mapping via /internal/bigfootball/test, which calls bigFootballData.js
+// directly and never goes through this stripping step. Keeps stored
+// documents and API responses the same shape/size as before BigFootball
+// was added, per "keep the existing frontend/API response format".
+function stripRawForStorage(matches) {
+  return matches.map(m => {
+    if (!m || !('raw' in m)) return m;
+    const copy = Object.assign({}, m);
+    delete copy.raw;
+    return copy;
+  });
+}
+
 function hasKnownTeams(match) {
   const home = match.homeTeam && match.homeTeam.name;
   const away = match.awayTeam && match.awayTeam.name;
@@ -119,7 +135,7 @@ async function refreshFixturesForDay(days) {
     // the database itself on every refresh — this used to require manual
     // merging when fixtures lived in a single JSON file that got fully
     // overwritten each time; that's no longer how storage works.
-    await db.saveFixtures(days, matches);
+    await db.saveFixtures(days, stripRawForStorage(matches));
     lastFixtureRefresh[days] = Date.now();
 
     // Now that BigFootball has returned a complete, authoritative list for
