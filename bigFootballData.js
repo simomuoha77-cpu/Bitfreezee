@@ -1,586 +1,501 @@
-// bigFootballData.js — real fixtures, live scores, events, odds and
-// standings from the BigBallsData / "BigFootball" API, fetched server-side.
+// bigFootballData.js — real fixtures, live scores, events and odds from the
+// BigBallsData / BigFootball API.
 //
-// STATUS OF THIS INTEGRATION (read this before wiring it into betting
-// logic): this file is PHASE 1 — a standalone, fully working client for
-// BigFootball with real rate-limit protection, caching and error handling.
-// It is deliberately NOT yet wired into scheduler.js's Mongo-backed
-// fixture pipeline or into /api/fixtures (the endpoint the betting UI and
-// settlement logic actually read from) — see server.js's new
-// /api/bigfootball/* routes instead, plus GET /api/bigfootball/test.
+// This is the NEW primary football data source, replacing football-data.org
+// + odds-api.io (footballData.js) as the source of truth for fixtures, live
+// scores, match events and odds. footballData.js is left in place untouched
+// (h2h/team-form lookups still use it, and it's a safe fallback), but the
+// scheduler now pulls matches/live-state/events/odds from here first.
 //
-// That's on purpose, per the explicit instruction that came with this
-// integration: confirm the API actually returns good data for today's
-// matches, live matches, events and odds BEFORE anything touches
-// betting/settlement. This file's field-normalizers (normalizeMatch,
-// normalizeEvent, normalizeOdds below) were written defensively — trying
-// several plausible field-name variants — because BigFootball's exact
-// JSON shape has never actually been queried yet (no network access was
-// available while writing this, and the account is brand new). Hit
-// GET /api/bigfootball/test once real traffic is flowing; it returns the
-// RAW provider response next to the normalized one so any field-name
-// mismatch is a five-minute fix here, not a guess.
+// Auth: `Authorization: Bearer ${BIGFOOTBALL_API_KEY}` — the key lives ONLY
+// in this server's environment (.env / Render env vars), never sent to the
+// browser. There is no client-side code anywhere in this file.
 //
-// Once that's confirmed good, the natural next step is: point
-// scheduler.js's fixture refresh at getMatchesForDate/getLiveMatches
-// below instead of (or ahead of) footballData.js's football-data.org
-// calls, so /api/fixtures itself serves BigFootball data. Not done yet —
-// see the note above.
+// Plan limits (Free + GitHub connected): 100 requests/minute, 2,000
+// requests/day. Both are enforced client-side below (in addition to
+// whatever the API itself returns on 429) so a bug here can't silently
+// burn through the whole daily quota.
 
-const BIGFOOTBALL_API_KEY = process.env.BIGFOOTBALL_API_KEY || '';
-const BIGFOOTBALL_BASE_URL = process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com';
+const BASE_URL = (process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com').replace(/\/+$/, '');
+const API_KEY = process.env.BIGFOOTBALL_API_KEY || '';
 
-if (!BIGFOOTBALL_API_KEY) {
-  console.warn('[bigFootballData] BIGFOOTBALL_API_KEY is not set — BigFootball requests will fail until it is configured. See .env.example.');
+if (!API_KEY) {
+  console.warn('[bigFootballData] BIGFOOTBALL_API_KEY is not set — BigFootball requests will fail until it is configured in .env.');
 }
 
-// ── Rate limiting ───────────────────────────────────────────────────────
-// Real account limits: 100 requests/minute, 2,000 requests/day. We stay
-// under both with a safety margin, the same philosophy footballData.js
-// already uses for football-data.org (never trust "the limit" as a target
-// to fully use — a burst right at the edge risks a block that can outlast
-// a simple window reset on some providers).
-const PER_MINUTE_LIMIT = 90;   // real cap is 100/min — keep headroom for /health + /test hits
-const PER_DAY_SAFETY_CAP = 1900; // real cap is 2000/day — stop well before actually hitting it
+const REQUEST_TIMEOUT_MS = 10000;
 
-const minuteWindow = []; // timestamps (ms) of requests in the last 60s
-let dayKey = '';
+// ── Rate limiting: 100 req/min, 2000 req/day ───────────────────────────
+// Tracked purely in-memory. This resets on a restart, which under-counts
+// slightly (a redeploy mid-day forgets requests already spent), but that's
+// the safe direction to be wrong in — it never OVER-reports remaining
+// quota to the provider itself, it can only make us more conservative
+// than necessary for the rest of that day. Good enough for a free-tier
+// key; persisting this to Mongo would be the next step if that ever
+// becomes a real problem.
+const MINUTE_LIMIT = 100;
+const DAY_LIMIT = 2000;
+// Keep a safety margin below the hard caps rather than riding the exact
+// line — a few concurrent in-flight requests landing in the same instant
+// shouldn't be able to tip the account over its real limit.
+const MINUTE_SAFETY_LIMIT = 90;
+const DAY_SAFETY_LIMIT = 1900;
+
+let minuteWindowStart = Date.now();
+let minuteCount = 0;
+let dayWindowStart = new Date().toISOString().slice(0, 10); // UTC date string
 let dayCount = 0;
 
-function currentDayKey() {
-  return new Date().toISOString().slice(0, 10); // UTC date, resets at UTC midnight
-}
-
-function pruneMinuteWindow() {
-  const cutoff = Date.now() - 60 * 1000;
-  while (minuteWindow.length && minuteWindow[0] < cutoff) minuteWindow.shift();
-}
-
-function rolloverDayIfNeeded() {
-  const today = currentDayKey();
-  if (today !== dayKey) {
-    dayKey = today;
+function rollWindows() {
+  const now = Date.now();
+  if (now - minuteWindowStart >= 60 * 1000) {
+    minuteWindowStart = now;
+    minuteCount = 0;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== dayWindowStart) {
+    dayWindowStart = today;
     dayCount = 0;
   }
 }
 
-// Waits (if needed) until a request slot is free under the per-minute
-// ceiling, then reserves it. Throws immediately (does not wait) if the
-// daily safety cap is already hit — waiting out a full day makes no sense
-// for a live request, callers should fall back to cache/graceful-empty
-// instead (see cachedFetch below).
-async function reserveRequestSlot() {
-  rolloverDayIfNeeded();
-  if (dayCount >= PER_DAY_SAFETY_CAP) {
-    throw new Error('BigFootball daily request budget (' + PER_DAY_SAFETY_CAP + '/' + PER_DAY_SAFETY_CAP + ' safety cap) is used up for today — serving cached data only until the daily reset.');
+function getRateLimitStatus() {
+  rollWindows();
+  return {
+    minute: { used: minuteCount, limit: MINUTE_LIMIT, safetyLimit: MINUTE_SAFETY_LIMIT, resetsInMs: Math.max(0, 60000 - (Date.now() - minuteWindowStart)) },
+    day: { used: dayCount, limit: DAY_LIMIT, safetyLimit: DAY_SAFETY_LIMIT, date: dayWindowStart }
+  };
+}
+
+// Returns null if a request can go out right now, or the number of ms to
+// wait before it's safe to try again.
+function checkBudget() {
+  rollWindows();
+  if (dayCount >= DAY_SAFETY_LIMIT) {
+    // Daily budget is done for today — no amount of waiting helps until
+    // UTC midnight, so callers should treat this as "no data available
+    // right now" rather than retry in a loop.
+    return { blocked: true, reason: 'daily', retryAfterMs: null };
   }
-  pruneMinuteWindow();
-  if (minuteWindow.length >= PER_MINUTE_LIMIT) {
-    const waitMs = (minuteWindow[0] + 60 * 1000) - Date.now();
-    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
-    pruneMinuteWindow();
+  if (minuteCount >= MINUTE_SAFETY_LIMIT) {
+    return { blocked: true, reason: 'minute', retryAfterMs: Math.max(0, 60000 - (Date.now() - minuteWindowStart)) + 250 };
   }
-  minuteWindow.push(Date.now());
+  return { blocked: false };
+}
+
+function recordRequest() {
+  rollWindows();
+  minuteCount++;
   dayCount++;
 }
 
-function getRateLimitStatus() {
-  rolloverDayIfNeeded();
-  pruneMinuteWindow();
-  return {
-    perMinute: { used: minuteWindow.length, limit: PER_MINUTE_LIMIT, realLimit: 100 },
-    perDay: { used: dayCount, safetyCap: PER_DAY_SAFETY_CAP, realLimit: 2000, day: dayKey || currentDayKey() }
-  };
+// ── Simple in-memory response cache ────────────────────────────────────
+// Every endpoint below is cached with a TTL suited to how fast that data
+// actually changes — this is what keeps a 2,000/day budget realistic once
+// several live matches are being polled every few seconds by the
+// frontend/scheduler. A cache hit costs zero requests and doesn't touch
+// the rate limiter at all.
+const cache = new Map(); // key -> { expiresAt, value }
+
+function cacheGet(key) {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() > hit.expiresAt) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.value;
 }
 
-// ── Low-level HTTP with timeout + graceful error classification ────────
-const REQUEST_TIMEOUT_MS = 12000;
+function cacheSet(key, value, ttlMs) {
+  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  // Opportunistic cleanup so the Map doesn't grow forever across a long
+  // uptime — cheap, and only runs on writes.
+  if (cache.size > 2000) {
+    const now = Date.now();
+    for (const [k, v] of cache) {
+      if (now > v.expiresAt) cache.delete(k);
+    }
+  }
+}
 
-async function bfRequest(endpoint) {
-  if (!BIGFOOTBALL_API_KEY) {
+const TTL = {
+  SPORTS: 12 * 60 * 60 * 1000,      // 12h — essentially static
+  LEAGUES: 12 * 60 * 60 * 1000,     // 12h — essentially static
+  TEAMS: 60 * 60 * 1000,            // 1h
+  PLAYERS: 60 * 60 * 1000,          // 1h
+  STANDINGS: 10 * 60 * 1000,        // 10m — changes only when a match finishes
+  INJURIES: 30 * 60 * 1000,         // 30m
+  PREDICTIONS: 15 * 60 * 1000,      // 15m
+  MATCHES_TODAY: 45 * 1000,         // today's list, non-live — refreshed often but not on every request
+  MATCHES_LIVE: 12 * 1000,          // the live-status list itself — short, this drives "is anything live right now"
+  MATCH_DETAIL_LIVE: 12 * 1000,     // a single live match's detail
+  MATCH_DETAIL_FINAL: 30 * 60 * 1000, // a finished/not-started match's detail barely changes
+  EVENTS_LIVE: 10 * 1000,           // events for a currently-live match — this is what powers goal/card/sub updates
+  EVENTS_FINAL: 30 * 60 * 1000,     // events for a match that's over are final
+  ODDS_LIVE: 15 * 1000,             // in-play odds move fast
+  ODDS_PREMATCH: 5 * 60 * 1000      // pre-match odds move slowly
+};
+
+// ── Core fetch wrapper ──────────────────────────────────────────────────
+// Handles: auth header, timeout, 429/backoff, transient 5xx retry (once),
+// empty-body/parse safety, and the client-side rate budget above. Throws a
+// descriptive Error on real failure — callers decide whether to surface
+// that or degrade gracefully (see the getX wrappers below, which mostly
+// choose to degrade).
+async function bfFetch(pathAndQuery, { retried = false } = {}) {
+  if (!API_KEY) {
     throw new Error('BIGFOOTBALL_API_KEY is not configured');
   }
-  await reserveRequestSlot();
 
+  const budget = checkBudget();
+  if (budget.blocked) {
+    if (budget.reason === 'daily') {
+      throw new Error('BigFootball daily request budget (' + DAY_SAFETY_LIMIT + '/' + DAY_LIMIT + ') is used up for today — resets at UTC midnight');
+    }
+    // Minute budget — worth a short wait rather than failing outright,
+    // since it clears itself within a few seconds at most.
+    await new Promise(r => setTimeout(r, budget.retryAfterMs));
+  }
+
+  const url = BASE_URL + pathAndQuery;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  const url = BIGFOOTBALL_BASE_URL + endpoint;
 
   let resp;
   try {
+    recordRequest();
     resp = await fetch(url, {
-      headers: { 'Authorization': 'Bearer ' + BIGFOOTBALL_API_KEY },
+      headers: { 'Authorization': 'Bearer ' + API_KEY, 'Accept': 'application/json' },
       signal: controller.signal
     });
   } catch (e) {
-    if (e.name === 'AbortError') {
-      throw new Error('BigFootball request timed out after ' + REQUEST_TIMEOUT_MS + 'ms: ' + endpoint);
-    }
-    throw new Error('BigFootball request failed (network error): ' + e.message);
-  } finally {
     clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      throw new Error('BigFootball request timed out after ' + REQUEST_TIMEOUT_MS + 'ms: ' + pathAndQuery);
+    }
+    throw new Error('BigFootball request failed: ' + e.message);
   }
+  clearTimeout(timer);
 
   if (resp.status === 429) {
-    const retryAfter = resp.headers.get('retry-after');
-    throw new Error('BigFootball rate limit hit (HTTP 429)' + (retryAfter ? ' — retry after ' + retryAfter + 's' : '') + ' on ' + endpoint);
+    // Respect Retry-After if the API sends one; otherwise back off 5s and
+    // retry ONCE — a single retry here is about not failing a whole
+    // fixture refresh over one momentary bump, not a substitute for the
+    // client-side budget above, which is what actually prevents this in
+    // normal operation.
+    if (!retried) {
+      const retryAfterHeader = resp.headers.get('retry-after');
+      const waitMs = retryAfterHeader ? Math.min(30000, parseInt(retryAfterHeader, 10) * 1000) : 5000;
+      console.warn('[bigFootballData] 429 rate limited on ' + pathAndQuery + ' — waiting ' + waitMs + 'ms and retrying once');
+      await new Promise(r => setTimeout(r, waitMs));
+      return bfFetch(pathAndQuery, { retried: true });
+    }
+    throw new Error('BigFootball HTTP 429 (rate limited) on ' + pathAndQuery);
   }
-  if (resp.status === 401 || resp.status === 403) {
-    const bodyText = await resp.text().catch(() => '');
-    throw new Error('BigFootball auth error (HTTP ' + resp.status + ') — check BIGFOOTBALL_API_KEY' + (bodyText ? ': ' + bodyText.slice(0, 200) : ''));
+
+  if (resp.status >= 500 && !retried) {
+    // Transient server error — one short retry, same philosophy as 429.
+    await new Promise(r => setTimeout(r, 1500));
+    return bfFetch(pathAndQuery, { retried: true });
   }
+
   if (!resp.ok) {
-    const bodyText = await resp.text().catch(() => '');
-    throw new Error('BigFootball HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 200) : '') + ' on ' + endpoint);
+    let bodyText = '';
+    try { bodyText = await resp.text(); } catch (_) {}
+    throw new Error('BigFootball HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 300) : '') + ' on ' + pathAndQuery);
   }
+
   try {
     return await resp.json();
   } catch (e) {
-    throw new Error('BigFootball returned a non-JSON response on ' + endpoint);
+    throw new Error('BigFootball returned a non-JSON response for ' + pathAndQuery);
   }
 }
 
-// ── Caching layer ───────────────────────────────────────────────────────
-// Every cache entry keeps its last-good value even after expiring, so a
-// live failure (rate limit, timeout, upstream 5xx) can fall back to
-// "stale but real" data instead of an empty/broken response — see
-// cachedFetch. Cache is in-memory only (per process), which is fine here:
-// unlike API keys/fixtures in db.js, this is a short-lived read-through
-// cache, not data that needs to survive a restart.
-const cache = new Map(); // key -> { data, expiresAt, isFinal }
-
-async function cachedFetch(key, ttlMs, fetchFn, opts) {
-  const entry = cache.get(key);
-  const now = Date.now();
-  if (entry && entry.expiresAt > now) {
-    return { data: entry.data, stale: false, fromCache: true };
-  }
-  try {
-    const data = await fetchFn();
-    // If the caller says this result represents a finished/immutable
-    // state (e.g. a FINISHED match's odds/events never change again),
-    // cache it far longer than the normal TTL — no point re-spending
-    // quota on something that can't change.
-    const finalTtl = (opts && opts.isFinal && opts.isFinal(data)) ? 60 * 60 * 1000 : ttlMs;
-    cache.set(key, { data, expiresAt: now + finalTtl, isFinal: !!(opts && opts.isFinal && opts.isFinal(data)) });
-    return { data, stale: false, fromCache: false };
-  } catch (e) {
-    if (entry) {
-      console.error('[bigFootballData] live fetch failed for ' + key + ' (' + e.message + ') — serving stale cached data instead');
-      return { data: entry.data, stale: true, staleReason: e.message, fromCache: true };
-    }
-    throw e; // no cache to fall back to — let the caller decide (empty result + error, per route)
-  }
+// Cached GET — the shared path every getX function below funnels through.
+async function cachedGet(cacheKey, pathAndQuery, ttlMs) {
+  const hit = cacheGet(cacheKey);
+  if (hit !== undefined) return hit;
+  const data = await bfFetch(pathAndQuery);
+  cacheSet(cacheKey, data, ttlMs);
+  return data;
 }
 
 function qs(params) {
-  const parts = Object.entries(params || {})
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v));
+  const parts = [];
+  for (const k in params) {
+    if (params[k] === undefined || params[k] === null || params[k] === '') continue;
+    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+  }
   return parts.length ? '?' + parts.join('&') : '';
 }
 
-// ── Field normalization ─────────────────────────────────────────────────
-// Defensive on purpose — see the file-header note. `pick` walks a list of
-// candidate paths (dot-notation) and returns the first defined value.
-function pick(obj, paths, fallback) {
-  for (const path of paths) {
-    const val = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
-    if (val !== undefined && val !== null) return val;
+// Unwraps whatever envelope shape the API uses for a list response —
+// BigFootball's exact wrapper isn't documented anywhere we have access to,
+// so this tries the common shapes defensively instead of assuming one.
+// Logged once per distinct top-level key set so unexpected shapes are
+// easy to spot in the logs without spamming them every request.
+const loggedShapes = new Set();
+function unwrapList(data, endpointLabel) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+  const candidates = ['data', 'matches', 'results', 'items', 'sports', 'leagues', 'teams', 'players', 'standings', 'injuries', 'predictions', 'events'];
+  for (const key of candidates) {
+    if (Array.isArray(data[key])) return data[key];
   }
-  return fallback;
+  const shapeKey = endpointLabel + ':' + Object.keys(data).sort().join(',');
+  if (!loggedShapes.has(shapeKey)) {
+    loggedShapes.add(shapeKey);
+    console.warn('[bigFootballData] unrecognized list shape for ' + endpointLabel + ' — top-level keys: ' + Object.keys(data).join(', ') + '. Returning [] for this call; check bigFootballData.js unwrapList().');
+  }
+  return [];
 }
 
-// Maps whatever status string/shape BigFootball uses onto the same
-// vocabulary the rest of this codebase already expects from
-// footballData.js: SCHEDULED / IN_PLAY / PAUSED / FINISHED (plus
-// POSTPONED/CANCELLED passed through uppercased). Extend the arrays below
-// the moment /api/bigfootball/test shows the real values in use.
+// ── Status normalization ────────────────────────────────────────────────
+// Maps whatever status strings BigFootball uses onto the SAME vocabulary
+// footballData.js already uses everywhere else in this app (SCHEDULED,
+// IN_PLAY, PAUSED, FINISHED, POSTPONED, CANCELLED, SUSPENDED) — this is
+// what lets server.js's existing isLive()/recomputeLiveMinutes() logic and
+// the frontend keep working unchanged. Covers the common spellings a
+// sports API tends to use; anything unrecognized passes through uppercased
+// (logged once) rather than being silently dropped, so a status this app
+// doesn't yet know about still shows up instead of disappearing.
+const STATUS_MAP = {
+  'scheduled': 'SCHEDULED', 'not_started': 'SCHEDULED', 'upcoming': 'SCHEDULED', 'ns': 'SCHEDULED', 'timed': 'SCHEDULED',
+  'live': 'IN_PLAY', 'in_play': 'IN_PLAY', 'inplay': 'IN_PLAY', '1h': 'IN_PLAY', '2h': 'IN_PLAY', 'playing': 'IN_PLAY',
+  'ht': 'PAUSED', 'halftime': 'PAUSED', 'half_time': 'PAUSED', 'paused': 'PAUSED',
+  'finished': 'FINISHED', 'ft': 'FINISHED', 'full_time': 'FINISHED', 'ended': 'FINISHED', 'complete': 'FINISHED',
+  'postponed': 'POSTPONED', 'cancelled': 'CANCELLED', 'canceled': 'CANCELLED', 'abandoned': 'CANCELLED', 'suspended': 'SUSPENDED'
+};
+const loggedStatuses = new Set();
 function normalizeStatus(raw) {
-  const s = String(raw == null ? '' : raw).toLowerCase().trim();
-  if (!s) return 'SCHEDULED';
-  if (['live', 'in_play', 'inplay', 'in-play', '1h', '2h', 'first_half', 'second_half', 'et'].includes(s)) return 'IN_PLAY';
-  if (['ht', 'halftime', 'half_time', 'paused', 'break'].includes(s)) return 'PAUSED';
-  if (['ns', 'not_started', 'notstarted', 'scheduled', 'upcoming', 'pre', 'tbd'].includes(s)) return 'SCHEDULED';
-  if (['ft', 'finished', 'ended', 'full_time', 'fulltime', 'aet', 'pen'].includes(s)) return 'FINISHED';
-  if (['pst', 'postponed'].includes(s)) return 'POSTPONED';
-  if (['canc', 'cancelled', 'canceled'].includes(s)) return 'CANCELLED';
-  if (['abd', 'abandoned'].includes(s)) return 'ABANDONED';
-  return s.toUpperCase();
-}
-
-function normalizeTeam(raw) {
-  if (raw == null) return null;
-  if (typeof raw === 'string') return { id: null, name: raw, crest: null, shortName: null };
-  return {
-    id: pick(raw, ['id', 'team_id', 'teamId'], null),
-    name: pick(raw, ['name', 'team_name', 'teamName', 'short_name']),
-    crest: pick(raw, ['crest', 'logo', 'badge', 'image', 'logo_url', 'logoUrl'], null),
-    shortName: pick(raw, ['short_name', 'shortName', 'abbreviation'], null)
-  };
-}
-
-// Normalizes onto the SAME score.fullTime.home/.away shape footballData.js
-// already normalizes football-data.org onto (see normalizeFdScore there) —
-// this is what keeps existing frontend code that reads
-// match.score.fullTime.home/.away working unchanged regardless of source.
-function normalizeScore(raw) {
-  const home = pick(raw, [
-    'score.fullTime.home', 'score.full_time.home', 'score.home', 'score.home_score',
-    'goals.home', 'home_score', 'homeScore'
-  ], null);
-  const away = pick(raw, [
-    'score.fullTime.away', 'score.full_time.away', 'score.away', 'score.away_score',
-    'goals.away', 'away_score', 'awayScore'
-  ], null);
-  const htHome = pick(raw, ['score.halfTime.home', 'score.half_time.home'], null);
-  const htAway = pick(raw, ['score.halfTime.away', 'score.half_time.away'], null);
-  return {
-    fullTime: (home != null || away != null) ? { home, away } : null,
-    halfTime: (htHome != null || htAway != null) ? { home: htHome, away: htAway } : null
-  };
-}
-
-// Some fields (competition/league in particular) turned out, from a real
-// response, to not match any of the object-shaped guesses below — pulls
-// whichever candidate exists and handles it whether it's a plain string
-// ("Bundesliga") or an object ({id, name}).
-function pickNameOrObject(raw, paths) {
-  for (const path of paths) {
-    const val = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), raw);
-    if (val == null) continue;
-    if (typeof val === 'string') return { id: null, name: val };
-    if (typeof val === 'object') return { id: val.id != null ? val.id : null, name: val.name || val.title || null };
+  if (!raw) return 'SCHEDULED';
+  const key = String(raw).toLowerCase().trim();
+  if (STATUS_MAP[key]) return STATUS_MAP[key];
+  if (!loggedStatuses.has(key)) {
+    loggedStatuses.add(key);
+    console.warn('[bigFootballData] unrecognized match status "' + raw + '" — passing through as-is. Add a mapping in bigFootballData.js STATUS_MAP if this should map to a known status.');
   }
-  return { id: null, name: null };
+  return String(raw).toUpperCase();
 }
 
-function normalizeMatch(raw) {
-  if (!raw) return null;
-  const statusRaw = pick(raw, ['status', 'state', 'fixture.status', 'match_status']);
-  const status = normalizeStatus(statusRaw);
-  const competition = pickNameOrObject(raw, ['league', 'competition', 'tournament', 'sport']);
-  const utcDate = pick(raw, ['utcDate', 'date', 'kickoff_utc', 'kickoffUtc', 'start_time', 'startTime', 'kickoff', 'scheduled', 'datetime'], null);
-
-  // BigFootball's /v1/matches gives no running live-clock field (confirmed
-  // via real testing — only "status": "live"), so minute is left as
-  // whatever pick() finds (normally null for a live match). server.js's
-  // recomputeLiveMinutes (used by both /api/fixtures and
-  // /internal/fixtures-view) already has a proven path for exactly this
-  // case — "arrived IN_PLAY with minute == null" — which estimates from
-  // utcDate and re-estimates fresh on every single request (not just once
-  // at scheduler refresh time). Duplicating that estimate here would only
-  // give a staler, one-shot version of the same number; better to leave
-  // this null and let that existing mechanism own it.
-  const minute = pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null);
+// Normalizes one raw BigFootball match object onto the SAME shape the rest
+// of this app already expects from footballData.js: id, utcDate, status,
+// homeTeam{id,name,crest}, awayTeam{id,name,crest}, score.fullTime{home,away},
+// score.halfTime{home,away}, competition{id,name}, venue, minute. Reads
+// several plausible field-name variants for each value since the exact raw
+// shape hasn't been confirmed against a live response yet — safe either
+// way (falls back to null rather than throwing), but worth spot-checking
+// against /internal/bigfootball/test the first time real data comes back
+// and tightening this if a field isn't landing correctly.
+function normalizeMatch(m) {
+  if (!m) return null;
+  const home = m.home_team || m.homeTeam || m.home || {};
+  const away = m.away_team || m.awayTeam || m.away || {};
+  const homeScore = firstDefined(m.home_score, m.homeScore, home.score, m.score && m.score.home, m.score && m.score.home_score);
+  const awayScore = firstDefined(m.away_score, m.awayScore, away.score, m.score && m.score.away, m.score && m.score.away_score);
+  const htHome = firstDefined(m.ht_home_score, m.halftime_home_score, m.score && m.score.halftime && m.score.halftime.home);
+  const htAway = firstDefined(m.ht_away_score, m.halftime_away_score, m.score && m.score.halftime && m.score.halftime.away);
+  const league = m.league || m.competition || {};
 
   return {
-    id: pick(raw, ['id', 'match_id', 'matchId', 'fixture_id']),
+    id: String(m.id != null ? m.id : m.match_id != null ? m.match_id : m.matchId),
     source: 'bigfootball',
-    utcDate,
-    status,
-    minute,
-    homeTeam: normalizeTeam(pick(raw, ['homeTeam', 'home_team', 'teams.home', 'home'])),
-    awayTeam: normalizeTeam(pick(raw, ['awayTeam', 'away_team', 'teams.away', 'away'])),
-    score: normalizeScore(raw),
-    competition,
-    venue: pick(raw, ['venue', 'stadium', 'location'], null),
-    round: pick(raw, ['round'], null),
-    broadcast: pick(raw, ['broadcast'], null) || null,
-    hasOdds: pick(raw, ['has_odds', 'hasOdds'], null), // BigFootball flags whether IT has odds for this match — NOT the same as real bookmaker odds being fetchable on this plan, see runConnectionTest's odds step
-    _rawStatus: statusRaw, // kept for debugging via /api/bigfootball/test — remove once statuses are fully confirmed
-    _raw: raw // TEMPORARY: full untouched provider object, so /api/bigfootball/test can show it — strip this once every field mapping above is confirmed correct
+    utcDate: m.date || m.utc_date || m.kickoff || m.start_time || m.scheduled || null,
+    status: normalizeStatus(m.status),
+    minute: firstDefined(m.minute, m.elapsed, m.clock, m.time) ?? null,
+    homeTeam: { id: idOf(home), name: home.name || m.home_team_name || m.homeTeamName || 'Unknown', crest: home.logo || home.crest || null },
+    awayTeam: { id: idOf(away), name: away.name || m.away_team_name || m.awayTeamName || 'Unknown', crest: away.logo || away.crest || null },
+    score: {
+      winner: null,
+      fullTime: (homeScore != null && awayScore != null) ? { home: homeScore, away: awayScore } : null,
+      halfTime: (htHome != null && htAway != null) ? { home: htHome, away: htAway } : null
+    },
+    competition: { id: idOf(league), name: league.name || m.league_name || m.competitionName || null },
+    venue: m.venue || m.stadium || null,
+    sport: m.sport || 'football',
+    raw: m // kept for debugging/verification — safe to ignore, not sent by /api/fixtures (see server.js stripRaw)
   };
 }
 
-// BigFootball's events give a per-period clock string like "25'" (see
-// real sample: {"period":1,"period_display":"1st Half","clock":"25'"}),
-// not a bare numeric minute. This strips the non-digit characters to get
-// a usable number. NOTE (unconfirmed): whether a 2nd-half event's clock
-// is period-relative (e.g. "25'" meaning 25 min into the 2nd half, i.e.
-// minute 70 overall) or match-total has not been verified against a real
-// 2nd-half event yet — this returns the raw parsed number as-is pending
-// that confirmation, so a 2nd-half minute may read low until then.
-function parseClockMinute(clockStr) {
-  if (!clockStr) return null;
-  const match = String(clockStr).match(/\d+/);
-  return match ? parseInt(match[0], 10) : null;
+function idOf(obj) {
+  if (!obj) return null;
+  return obj.id != null ? String(obj.id) : null;
 }
 
-function normalizeEvent(raw) {
-  if (!raw) return null;
-  const typeRaw = String(pick(raw, ['type', 'event_type', 'eventType'], '')).toLowerCase();
-  let type = 'OTHER';
-  if (typeRaw.includes('goal')) type = 'GOAL';
-  else if (typeRaw.includes('card')) type = typeRaw.includes('red') ? 'RED_CARD' : typeRaw.includes('yellow') ? 'YELLOW_CARD' : 'CARD';
-  else if (typeRaw.includes('sub')) type = 'SUBSTITUTION';
-  // A real sample showed the scorer's name landing in `detail`, not any of
-  // the `player.*` guesses — so `detail` is tried as a player-name fallback
-  // too, specifically for goal/card events where "detail" realistically can
-  // only be who it happened to, not a free-text description.
-  const detail = pick(raw, ['detail', 'description'], null);
-  const player = pick(raw, ['player.name', 'player', 'player_name', 'scorer.name', 'scorer'], null)
-    || ((type === 'GOAL' || type === 'RED_CARD' || type === 'YELLOW_CARD' || type === 'CARD') ? detail : null);
+function firstDefined(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null) return v;
+  }
+  return null;
+}
+
+function normalizeEvent(e) {
+  if (!e) return null;
   return {
-    id: pick(raw, ['id', 'event_id', 'sequence_number'], null),
-    minute: pick(raw, ['minute', 'time', 'elapsed', 'time.minute'], null) != null
-      ? pick(raw, ['minute', 'time', 'elapsed', 'time.minute'])
-      : parseClockMinute(pick(raw, ['clock'], null)),
-    period: pick(raw, ['period'], null),
-    periodLabel: pick(raw, ['period_display', 'periodDisplay'], null),
-    type,
-    rawType: typeRaw || null,
-    team: pick(raw, ['team.name', 'team', 'side'], null),
-    player,
-    assist: pick(raw, ['assist.name', 'assist', 'assist_name'], null),
-    playerIn: pick(raw, ['player_in.name', 'playerIn', 'in.name'], null),
-    playerOut: pick(raw, ['player_out.name', 'playerOut', 'out.name'], null),
-    detail,
-    homeScoreAfter: pick(raw, ['home_score'], null),
-    awayScoreAfter: pick(raw, ['away_score'], null),
-    _raw: raw // TEMPORARY: see normalizeMatch's _raw note — same reason
+    id: e.id != null ? String(e.id) : null,
+    type: (e.type || e.event_type || '').toLowerCase() || 'unknown', // expected: goal, card (yellow/red), substitution
+    minute: firstDefined(e.minute, e.time, e.elapsed),
+    team: e.team && (e.team.name || e.team) || e.team_name || null,
+    player: e.player && (e.player.name || e.player) || e.player_name || null,
+    assist: e.assist && (e.assist.name || e.assist) || e.assist_name || null,
+    detail: e.detail || e.description || null,
+    raw: e
   };
 }
 
-// Odds shapes vary the most between providers, so this stays close to a
-// pass-through: it lifts out the obvious top-level fields and leaves
-// `markets`/`bookmakers` as BigFootball actually sends them (whatever that
-// turns out to be) rather than guessing a market taxonomy that might be
-// wrong. Confirm the real shape via /api/bigfootball/test before building
-// UI directly on top of `markets`.
-function normalizeOdds(raw) {
-  if (!raw) return null;
-  return {
-    matchId: pick(raw, ['match_id', 'matchId', 'id'], null),
-    updatedAt: pick(raw, ['updated_at', 'updatedAt', 'timestamp'], null),
-    bookmaker: pick(raw, ['bookmaker', 'provider', 'source'], null),
-    markets: pick(raw, ['markets', 'odds', 'bets'], []),
-    raw
-  };
+function normalizeOdds(o) {
+  if (!o) return null;
+  // Passed through close to raw shape since betting/settlement logic isn't
+  // being touched yet (see the top of this file) — this just gives callers
+  // a consistent envelope + fetchedAt timestamp to reason about freshness.
+  return { matchId: o.match_id != null ? String(o.match_id) : null, markets: o.markets || o.odds || o, fetchedAt: new Date().toISOString(), raw: o };
 }
 
-// ── Public API ───────────────────────────────────────────────────────────
-
-async function getUsage(forceFresh) {
-  if (forceFresh) return bfRequest('/v1/usage');
-  const { data } = await cachedFetch('usage', 30 * 1000, () => bfRequest('/v1/usage'));
-  return data;
-}
+// ── Public getters ───────────────────────────────────────────────────────
 
 async function getSports() {
-  const { data } = await cachedFetch('sports', 24 * 60 * 60 * 1000, () => bfRequest('/v1/sports'));
-  return data;
+  const data = await cachedGet('sports', '/v1/sports', TTL.SPORTS);
+  return unwrapList(data, 'sports');
 }
 
-async function getLeagues() {
-  const { data } = await cachedFetch('leagues', 24 * 60 * 60 * 1000, () => bfRequest('/v1/leagues'));
-  return data;
+async function getLeagues(params) {
+  const query = qs(params || {});
+  const data = await cachedGet('leagues' + query, '/v1/leagues' + query, TTL.LEAGUES);
+  return unwrapList(data, 'leagues');
 }
 
-// Matches for a given date, optionally filtered by sport/league/status.
-// TTL depends on what's being asked for: a live-status query needs to be
-// fresh (short TTL, drives auto-refresh for live matches per the caller's
-// polling interval); a plain date query for today needs to be reasonably
-// fresh; anything else (other days, finished-only) can sit much longer —
-// this is the actual mechanism behind "don't repeatedly request
-// unnecessary historical matches".
-function matchesCacheKey(params) {
-  return 'matches:' + JSON.stringify(params || {});
+// filters: { sport, league, date (YYYY-MM-DD), status }
+async function getMatches(filters) {
+  filters = filters || {};
+  const query = qs(filters);
+  const isLiveQuery = filters.status === 'live' || filters.status === 'in_play';
+  const ttl = isLiveQuery ? TTL.MATCHES_LIVE : TTL.MATCHES_TODAY;
+  const data = await cachedGet('matches' + query, '/v1/matches' + query, ttl);
+  return unwrapList(data, 'matches').map(normalizeMatch).filter(Boolean);
 }
 
-function matchesTtlMs(params) {
-  if (params && params.status && String(params.status).toLowerCase().includes('live')) return 15 * 1000;
-  const today = new Date().toISOString().slice(0, 10);
-  if (!params || !params.date || params.date === today) return 45 * 1000;
-  return 5 * 60 * 1000;
-}
-
-async function getMatches(params) {
-  const key = matchesCacheKey(params);
-  const ttl = matchesTtlMs(params);
-  const result = await cachedFetch(key, ttl, () => bfRequest('/v1/matches' + qs(params)));
-  const list = pick(result.data, ['matches', 'data', 'results'], Array.isArray(result.data) ? result.data : []);
-  return {
-    matches: (list || []).map(normalizeMatch).filter(Boolean),
-    stale: result.stale,
-    staleReason: result.staleReason
-  };
-}
-
-function getDateString(daysAhead) {
-  const d = new Date();
-  d.setDate(d.getDate() + parseInt(daysAhead || 0, 10));
-  return d.toISOString().split('T')[0];
-}
-
+// Today's matches for football, in the SAME shape footballData.js's
+// getMatchesForDate/getMergedMatchesForDate already return — this is the
+// function scheduler.js's refresh loop calls.
 async function getMatchesForDate(dateStr) {
   return getMatches({ sport: 'football', date: dateStr });
 }
 
-// Live matches specifically — separate helper since it's the one query
-// that needs to poll frequently (short TTL above) and is what
-// item 3/10 ("auto refresh for live matches") is actually built on: the
-// caller (a route, or eventually scheduler.js) can poll this on a short
-// interval, and it will only hit BigFootball for real once every 15s no
-// matter how often it's called, serving cache in between.
-async function getLiveMatches() {
-  return getMatches({ sport: 'football', status: 'live' });
+// Live matches right now — uses the API's own status=live filter rather
+// than fetching everything and filtering client-side, per BigFootball's
+// documented "matches" filters (sport, league, date, status).
+async function getLiveMatches(extra) {
+  return getMatches(Object.assign({ sport: 'football', status: 'live' }, extra || {}));
 }
 
 async function getMatchById(id) {
-  const key = 'match:' + id;
-  const result = await cachedFetch(key, 20 * 1000, () => bfRequest('/v1/matches/' + encodeURIComponent(id)), {
-    isFinal: (raw) => normalizeStatus(pick(raw, ['status', 'state'])) === 'FINISHED'
-  });
-  return { match: normalizeMatch(pick(result.data, ['match', 'data'], result.data)), stale: result.stale, staleReason: result.staleReason };
+  // We don't know up front whether a given match is still live (that's
+  // often WHY this is being called), so cache detail lookups on the
+  // shorter live TTL — a finished/not-yet-started match just means a few
+  // extra harmless cache misses, not stale live data.
+  const data = await cachedGet('match:' + id, '/v1/matches/' + encodeURIComponent(id), TTL.MATCH_DETAIL_LIVE);
+  const raw = (data && (data.data || data.match)) || data;
+  return normalizeMatch(raw);
 }
 
 async function getMatchOdds(id) {
-  const key = 'odds:' + id;
-  const result = await cachedFetch(key, 30 * 1000, () => bfRequest('/v1/matches/' + encodeURIComponent(id) + '/odds'));
-  const rawOdds = pick(result.data, ['odds', 'data'], result.data);
-  return {
-    odds: Array.isArray(rawOdds) ? rawOdds.map(normalizeOdds) : normalizeOdds(rawOdds),
-    stale: result.stale,
-    staleReason: result.staleReason
-  };
+  try {
+    const data = await cachedGet('odds:' + id, '/v1/matches/' + encodeURIComponent(id) + '/odds', TTL.ODDS_LIVE);
+    return normalizeOdds((data && (data.data || data.odds)) || data);
+  } catch (e) {
+    console.error('[bigFootballData] odds fetch failed for match ' + id + ': ' + e.message);
+    return null; // no odds available right now — caller should treat as "not priced yet", never fabricate
+  }
 }
 
 async function getMatchEvents(id) {
-  const key = 'events:' + id;
-  const result = await cachedFetch(key, 12 * 1000, () => bfRequest('/v1/matches/' + encodeURIComponent(id) + '/events'));
-  const list = pick(result.data, ['events', 'data'], Array.isArray(result.data) ? result.data : []);
-  return {
-    events: (list || []).map(normalizeEvent).filter(Boolean),
-    stale: result.stale,
-    staleReason: result.staleReason
-  };
-}
-
-async function getStandings(params) {
-  const key = 'standings:' + JSON.stringify(params || {});
-  const result = await cachedFetch(key, 10 * 60 * 1000, () => bfRequest('/v1/standings' + qs(params)));
-  return { standings: pick(result.data, ['standings', 'data'], result.data), stale: result.stale, staleReason: result.staleReason };
-}
-
-async function getInjuries(params) {
-  const key = 'injuries:' + JSON.stringify(params || {});
-  const result = await cachedFetch(key, 30 * 60 * 1000, () => bfRequest('/v1/injuries' + qs(params)));
-  return { injuries: pick(result.data, ['injuries', 'data'], result.data), stale: result.stale, staleReason: result.staleReason };
-}
-
-async function getPredictions(params) {
-  const key = 'predictions:' + JSON.stringify(params || {});
-  const result = await cachedFetch(key, 10 * 60 * 1000, () => bfRequest('/v1/predictions' + qs(params)));
-  return { predictions: pick(result.data, ['predictions', 'data'], result.data), stale: result.stale, staleReason: result.staleReason };
+  try {
+    const data = await cachedGet('events:' + id, '/v1/matches/' + encodeURIComponent(id) + '/events', TTL.EVENTS_LIVE);
+    return unwrapList(data, 'events').map(normalizeEvent).filter(Boolean);
+  } catch (e) {
+    console.error('[bigFootballData] events fetch failed for match ' + id + ': ' + e.message);
+    return []; // empty, not an error the caller needs to handle — a match can genuinely have zero events so far
+  }
 }
 
 async function getTeams(params) {
-  const key = 'teams:' + JSON.stringify(params || {});
-  const result = await cachedFetch(key, 24 * 60 * 60 * 1000, () => bfRequest('/v1/teams' + qs(params)));
-  return pick(result.data, ['teams', 'data'], result.data);
+  const query = qs(params || {});
+  const data = await cachedGet('teams' + query, '/v1/teams' + query, TTL.TEAMS);
+  return unwrapList(data, 'teams');
 }
 
 async function getPlayers(params) {
-  const key = 'players:' + JSON.stringify(params || {});
-  const result = await cachedFetch(key, 24 * 60 * 60 * 1000, () => bfRequest('/v1/players' + qs(params)));
-  return pick(result.data, ['players', 'data'], result.data);
+  const query = qs(params || {});
+  const data = await cachedGet('players' + query, '/v1/players' + query, TTL.PLAYERS);
+  return unwrapList(data, 'players');
 }
 
-// Runs the exact confirmation sequence the integration was asked to prove
-// out before anything touches betting/settlement: today's matches, live
-// matches, events for one live match, odds for one match. Bypasses the
-// normal cache (force=true style) only for the /v1/usage call, since the
-// whole point is a live connectivity check — everything else still goes
-// through the normal cached path so this endpoint doesn't itself burn
-// through the daily budget if hit repeatedly.
-async function runConnectionTest() {
-  const out = { ok: true, checkedAt: new Date().toISOString(), steps: {} };
+async function getStandings(params) {
+  const query = qs(params || {});
+  const data = await cachedGet('standings' + query, '/v1/standings' + query, TTL.STANDINGS);
+  return unwrapList(data, 'standings');
+}
 
+async function getInjuries(params) {
+  const query = qs(params || {});
+  const data = await cachedGet('injuries' + query, '/v1/injuries' + query, TTL.INJURIES);
+  return unwrapList(data, 'injuries');
+}
+
+async function getPredictions(params) {
+  const query = qs(params || {});
+  const data = await cachedGet('predictions' + query, '/v1/predictions' + query, TTL.PREDICTIONS);
+  return unwrapList(data, 'predictions');
+}
+
+// Never cached — this is the whole point of calling it, it needs to be live.
+async function getUsage() {
+  return bfFetch('/v1/usage');
+}
+
+// Lightweight connectivity test for the health endpoint — does NOT count
+// as a "real" data call in spirit, but it does cost one request against
+// the daily budget like any other call (there's no way around that; the
+// point is to verify the key/base URL/auth actually work end to end).
+async function testConnection() {
+  const startedAt = Date.now();
   try {
-    const t0 = Date.now();
-    const usage = await getUsage(true);
-    out.steps.usage = { ok: true, latencyMs: Date.now() - t0, raw: usage };
+    const sports = await getSports();
+    return {
+      ok: true,
+      baseUrl: BASE_URL,
+      responseTimeMs: Date.now() - startedAt,
+      sportsReturned: Array.isArray(sports) ? sports.length : 0,
+      rateLimit: getRateLimitStatus()
+    };
   } catch (e) {
-    out.ok = false;
-    out.steps.usage = { ok: false, error: e.message };
+    return {
+      ok: false,
+      baseUrl: BASE_URL,
+      error: e.message,
+      responseTimeMs: Date.now() - startedAt,
+      rateLimit: getRateLimitStatus()
+    };
   }
+}
 
-  let todayMatches = [];
-  try {
-    const today = getDateString(0);
-    const res = await getMatchesForDate(today);
-    todayMatches = res.matches;
-    out.steps.todayMatches = { ok: true, date: today, count: todayMatches.length, sample: todayMatches.slice(0, 3) };
-  } catch (e) {
-    out.ok = false;
-    out.steps.todayMatches = { ok: false, error: e.message };
-  }
+function getCacheStatus() {
+  return { entries: cache.size };
+}
 
-  let liveMatches = [];
-  try {
-    const res = await getLiveMatches();
-    liveMatches = res.matches;
-    out.steps.liveMatches = { ok: true, count: liveMatches.length, sample: liveMatches.slice(0, 3) };
-  } catch (e) {
-    out.ok = false;
-    out.steps.liveMatches = { ok: false, error: e.message };
-  }
-
-  const sampleLive = liveMatches[0] || todayMatches[0] || null;
-  if (sampleLive && sampleLive.id != null) {
-    try {
-      const res = await getMatchEvents(sampleLive.id);
-      out.steps.events = { ok: true, matchId: sampleLive.id, count: res.events.length, sample: res.events.slice(0, 5) };
-    } catch (e) {
-      out.steps.events = { ok: false, matchId: sampleLive.id, error: e.message };
-    }
-    try {
-      const res = await getMatchOdds(sampleLive.id);
-      out.steps.odds = { ok: true, matchId: sampleLive.id, result: res.odds };
-    } catch (e) {
-      out.steps.odds = { ok: false, matchId: sampleLive.id, error: e.message };
-    }
-    // Free-tier odds returned 403 "requires Edge plan" in testing — checking
-    // predictions too, since it's a separate endpoint that might not be
-    // behind the same plan gate and could stand in for real odds on Free.
-    try {
-      const res = await getPredictions({ match: sampleLive.id });
-      out.steps.predictions = { ok: true, matchId: sampleLive.id, result: res.predictions };
-    } catch (e) {
-      out.steps.predictions = { ok: false, matchId: sampleLive.id, error: e.message };
-    }
-  } else {
-    out.steps.events = { ok: null, note: 'No live or today match id available to test against yet' };
-    out.steps.odds = { ok: null, note: 'No live or today match id available to test against yet' };
-    out.steps.predictions = { ok: null, note: 'No live or today match id available to test against yet' };
-  }
-
-  out.rateLimit = getRateLimitStatus();
-  return out;
+function clearCache() {
+  const n = cache.size;
+  cache.clear();
+  return n;
 }
 
 module.exports = {
-  getUsage,
-  getSports,
-  getLeagues,
-  getMatches,
-  getMatchesForDate,
-  getLiveMatches,
-  getMatchById,
-  getMatchOdds,
-  getMatchEvents,
-  getStandings,
-  getInjuries,
-  getPredictions,
-  getTeams,
-  getPlayers,
-  getDateString,
-  getRateLimitStatus,
-  runConnectionTest,
-  // exported for testing/inspection only
-  normalizeMatch,
-  normalizeEvent,
-  normalizeOdds,
-  normalizeStatus
+  getSports, getLeagues, getMatches, getMatchesForDate, getLiveMatches,
+  getMatchById, getMatchOdds, getMatchEvents,
+  getTeams, getPlayers, getStandings, getInjuries, getPredictions,
+  getUsage, testConnection, getRateLimitStatus, getCacheStatus, clearCache,
+  normalizeMatch, normalizeEvent, normalizeOdds, normalizeStatus, // exported for reuse/testing
+  isConfigured: () => !!API_KEY
 };

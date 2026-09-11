@@ -211,6 +211,12 @@ async function getFixtures(days, sport) {
         aiXG: d.aiXG,
         aiValueBet: d.aiValueBet,
         aiAnalyzedAt: d.aiAnalyzedAt
+      } : {}, d.bigFootballUpdatedAt ? {
+        // BigFootball live events + odds — display-only data, kept fully
+        // separate from aiOdds/settlement above. See upsertBigFootballLiveData.
+        bigFootballEvents: d.bigFootballEvents || [],
+        bigFootballOdds: d.bigFootballOdds || null,
+        bigFootballUpdatedAt: d.bigFootballUpdatedAt
       } : {});
       // Recalculate the estimated live minute at READ time, not just at the
       // last save — this keeps it advancing in near-real-time (checked on
@@ -304,6 +310,44 @@ async function upsertMatchOdds(matchId, days, odds, scoreAtAnalysis) {
     return result.matchedCount > 0;
   } catch (e) {
     console.error('[db] upsertMatchOdds failed: ' + e.message);
+    return false;
+  }
+}
+
+// Attaches BigFootball's live events + odds to a match — kept in fields
+// entirely separate from aiOdds/aiPrediction/etc (which upsertMatchOdds
+// above writes), so this can run on its own fast refresh cycle without
+// ever touching the odds actually used for AI analysis/settlement. Purely
+// additive, display-oriented data: goals/cards/subs feed, plus BigFootball's
+// own raw odds payload for reference.
+async function upsertBigFootballLiveData(matchId, days, sport, events, odds) {
+  sport = sport || 'football';
+  const bucketKey = sport + ':' + String(days);
+  await ensureMongo();
+  const now = new Date().toISOString();
+
+  if (usingFallback) {
+    const bucket = fixturesFallback[bucketKey];
+    if (!bucket) return false;
+    let found = false;
+    bucket.matches = bucket.matches.map(m => {
+      if (String(m.id) === String(matchId)) {
+        found = true;
+        return Object.assign({}, m, { bigFootballEvents: events || [], bigFootballOdds: odds || null, bigFootballUpdatedAt: now });
+      }
+      return m;
+    });
+    return found;
+  }
+
+  try {
+    const result = await fixturesCollection.updateOne(
+      { matchId: String(matchId), days: bucketKey },
+      { $set: { bigFootballEvents: events || [], bigFootballOdds: odds || null, bigFootballUpdatedAt: now } }
+    );
+    return result.matchedCount > 0;
+  } catch (e) {
+    console.error('[db] upsertBigFootballLiveData failed for match ' + matchId + ': ' + e.message);
     return false;
   }
 }

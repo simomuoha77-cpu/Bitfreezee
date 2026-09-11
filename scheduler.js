@@ -1,18 +1,23 @@
 // scheduler.js — the "no clicking needed" background engine.
 //
-// Runs entirely on the server. Two jobs:
-//   1. Refresh fixtures from football-data.org (real matches only).
-//   2. Analyze any fixture that doesn't have AI odds yet, or whose odds
+// Runs entirely on the server. Jobs:
+//   1. Refresh fixtures — BigFootball first (see bigFootballData.js),
+//      falling back per-cycle to football-data.org/odds-api.io only if
+//      BigFootball isn't configured or that call fails.
+//   2. When BigFootball is configured: enrich already-live matches with
+//      real events (goals/cards/subs) and odds on a fast interval (see
+//      enrichLiveMatches below) — separate from AI analysis entirely.
+//   3. Analyze any fixture that doesn't have AI odds yet, or whose odds
 //      are older than ANALYSIS_MAX_AGE_MS (so upcoming matches get
 //      refreshed analysis as kickoff approaches, not just once).
 //
-// Paced conservatively to respect football-data.org's 10 req/min free-tier
-// limit (footballData.js already throttles its own calls) and to avoid
-// hammering the AI providers.
+// Paced conservatively to respect each provider's free-tier rate limits
+// (bigFootballData.js/footballData.js each throttle their own calls) and
+// to avoid hammering the AI providers.
 
 const db = require('./db');
 const footballData = require('./footballData');
-const bigFootballData = require('./bigFootballData'); // BigFootball — now the PRIMARY football fixture source, see refreshFixturesForDay
+const bigFootballData = require('./bigFootballData'); // NEW primary source for fixtures/live scores — see refreshFixturesForDay and enrichLiveMatches below. footballData.js (football-data.org + odds-api.io) is kept as an automatic fallback if BigFootball isn't configured or a given cycle fails.
 const ai = require('./ai');
 const realOdds = require('./realOdds'); // needed directly (not just via footballData) to persist/restore odds-api.io key-pool usage state across restarts — see restoreKeyPoolState/exportKeyPoolState in realOdds.js
 
@@ -50,42 +55,34 @@ function hasKnownTeams(match) {
   return home.toUpperCase() !== 'TBD' && away.toUpperCase() !== 'TBD';
 }
 
-// Picks the best available source for a day's football fixtures.
-// BigFootball is PRIMARY (real matches/live scores/events, no per-key
-// rate-limit juggling needed — see bigFootballData.js's own internal
-// throttling) as of the switch confirmed via /api/bigfootball/test.
-// football-data.org + odds-api.io (footballData.js's merge) is kept as a
-// FALLBACK — not removed — for exactly the situation already seen in
-// production logs: a source going empty/erroring for a cycle shouldn't
-// take fixtures down when a second real source can cover it. Odds/
-// AI-analysis/settlement are completely unaffected by which of these
-// wins; both return the same match shape (see bigFootballData.js's
-// normalizeMatch), which is all ai.analyzeMatch and db.js actually care
-// about.
-const BIGFOOTBALL_ENABLED = !!(process.env.BIGFOOTBALL_API_KEY || '').trim();
-
-async function getFootballMatchesForDay(dateStr, days) {
-  if (BIGFOOTBALL_ENABLED) {
-    try {
-      const result = await bigFootballData.getMatchesForDate(dateStr);
-      if (result.matches.length > 0) {
-        if (result.stale) {
-          console.warn('[scheduler] BigFootball returned STALE cached data for ' + dateStr + ' (' + result.staleReason + ') — using it anyway rather than falling back, since it\'s still real data');
-        }
-        return result.matches;
-      }
-      console.warn('[scheduler] BigFootball returned 0 matches for ' + dateStr + ' — falling back to football-data.org/odds-api.io for this cycle');
-    } catch (e) {
-      console.error('[scheduler] BigFootball fetch failed for ' + dateStr + ': ' + e.message + ' — falling back to football-data.org/odds-api.io for this cycle');
-    }
-  }
-  return footballData.getMergedMatchesForDate(dateStr, days === 0);
-}
-
 async function refreshFixturesForDay(days) {
   const dateStr = footballData.getDateString(days);
   try {
-    const matches = await getFootballMatchesForDay(dateStr, days);
+    // BIGFOOTBALL FIRST: this is now the primary fixtures source (real
+    // matches, live scores, status) — football-data.org/odds-api.io only
+    // run for this cycle if BigFootball isn't configured (no
+    // BIGFOOTBALL_API_KEY set) or this specific call fails/throws. This is
+    // a per-cycle decision, not a one-time startup choice, so BigFootball
+    // recovering after a temporary outage is picked back up automatically
+    // on the very next refresh — no restart needed.
+    //
+    // IMPORTANT: an empty-but-successful BigFootball response (genuinely no
+    // matches today) must NOT fall through to the legacy source — that
+    // would silently mix two providers' fixture lists/IDs together. Only a
+    // thrown error triggers the fallback.
+    let matches = [];
+    let bigFootballSucceeded = false;
+    if (bigFootballData.isConfigured()) {
+      try {
+        matches = await bigFootballData.getMatchesForDate(dateStr);
+        bigFootballSucceeded = true;
+      } catch (e) {
+        console.error('[scheduler] BigFootball fixture fetch failed for days=' + days + ' (' + dateStr + '): ' + e.message + ' — falling back to football-data.org/odds-api.io for this cycle only');
+      }
+    }
+    if (!bigFootballSucceeded) {
+      matches = await footballData.getMergedMatchesForDate(dateStr, days === 0);
+    }
     const existing = await db.getFixtures(days);
 
     // If BOTH sources failed/returned nothing this cycle (e.g. football-data.org
@@ -96,7 +93,7 @@ async function refreshFixturesForDay(days) {
     // data than to wipe the board because of a temporary, simultaneous
     // outage on both providers.
     if (matches.length === 0 && existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
-      console.warn('[scheduler] All fixture sources returned nothing for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
+      console.warn('[scheduler] Both fixture sources returned nothing for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
       return;
     }
 
@@ -122,10 +119,58 @@ async function refreshFixturesForDay(days) {
       await db.clearMatchOdds(String(m.id), days);
     }
 
-    console.log('[scheduler] Refreshed ' + matches.length + ' real fixtures for days=' + days + ' (' + dateStr + ')');
+    console.log('[scheduler] Refreshed ' + matches.length + ' real fixtures for days=' + days + ' (' + dateStr + ') via ' + (bigFootballSucceeded ? 'BigFootball' : 'football-data.org/odds-api.io (fallback)'));
   } catch (e) {
     // Real failure — log it, do NOT substitute fake fixtures.
     console.error('[scheduler] Fixture refresh FAILED for days=' + days + ': ' + e.message);
+  }
+}
+
+// ── BigFootball live enrichment: events + odds for matches in progress ──
+//
+// Runs independently of the fixture refresh above, on a much shorter
+// interval, and ONLY touches matches already sitting in today's bucket as
+// IN_PLAY/PAUSED — never a full re-fetch of the day's fixture list. This is
+// what actually updates goals/cards/subs (via /v1/matches/{id}/events) and
+// in-play prices (via /v1/matches/{id}/odds) while a match is live, per
+// BigFootball's per-match endpoints.
+//
+// Deliberately writes to bigFootballEvents/bigFootballOdds ONLY (see
+// db.upsertBigFootballLiveData) — never aiOdds/aiPrediction/etc, so this
+// can run freely without any risk of touching the AI-priced odds actually
+// used for settlement.
+const BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS = 20 * 1000;
+let liveEnrichInFlight = false;
+
+async function enrichLiveMatches() {
+  if (!bigFootballData.isConfigured() || liveEnrichInFlight) return;
+  liveEnrichInFlight = true;
+  try {
+    const bucket = await db.getFixtures(0, 'football'); // "live" only ever matters for today's bucket
+    if (!bucket || !Array.isArray(bucket.matches)) return;
+    const live = bucket.matches.filter(m => m.status === 'IN_PLAY' || m.status === 'PAUSED');
+    if (!live.length) return;
+
+    // Sequential, not Promise.all — this naturally paces requests against
+    // BigFootball's own rate limiter (bigFootballData.js already enforces
+    // 100/min, 90/min safety margin) instead of bursting one request pair
+    // per live match all at once, which could otherwise spike well past
+    // the per-minute cap on a day with many simultaneous live matches.
+    for (const m of live) {
+      try {
+        const [events, odds] = await Promise.all([
+          bigFootballData.getMatchEvents(m.id),
+          bigFootballData.getMatchOdds(m.id)
+        ]);
+        await db.upsertBigFootballLiveData(m.id, 0, 'football', events, odds);
+      } catch (e) {
+        console.error('[scheduler] BigFootball live enrichment failed for match ' + m.id + ': ' + e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[scheduler] enrichLiveMatches failed: ' + e.message);
+  } finally {
+    liveEnrichInFlight = false;
   }
 }
 
@@ -350,14 +395,13 @@ function describeGoalsOnly(match) {
 // analysis now costs 3 requests instead of 0 — still comfortably under the
 // free tier's 10 req/min when combined with ANALYSIS_PACE_MS.
 async function fetchMatchHistory(match) {
-  // Neither odds-api.io-sourced matches (prefixed "oaio_") NOR
-  // BigFootball-sourced matches (match.source === 'bigfootball', UUID
-  // ids) have a valid football-data.org match/team ID — calling
-  // getHeadToHead or getTeamRecentForm with either would just burn API
-  // quota on a guaranteed failure. These matches simply proceed without
-  // real history; the AI prompt already handles a null history
-  // gracefully (falls back to general knowledge, flags lower confidence).
-  if (String(match.id).startsWith('oaio_') || match.source === 'bigfootball') return null;
+  // odds-api.io-sourced matches (prefixed "oaio_") don't have a valid
+  // football-data.org match/team ID — calling getHeadToHead or
+  // getTeamRecentForm with one would just burn API quota on a guaranteed
+  // failure. These matches simply proceed without real history; the AI
+  // prompt already handles a null history gracefully (falls back to
+  // general knowledge, flags lower confidence).
+  if (String(match.id).startsWith('oaio_')) return null;
 
   try {
     const h2h = await footballData.getHeadToHead(match.id, 10);
@@ -407,9 +451,7 @@ function start() {
   if (running) return;
   running = true;
   console.log('[scheduler] Starting background auto-refresh + auto-analysis (no manual clicks needed)');
-  console.log(BIGFOOTBALL_ENABLED
-    ? '[scheduler] Football fixtures: BigFootball is PRIMARY (real matches/live scores/events); football-data.org+odds-api.io is the automatic fallback if BigFootball returns nothing for a cycle. Odds are still AI-estimated — BigFootball\'s own odds/predictions endpoints require a paid plan (Edge/Solo) this account doesn\'t have.'
-    : '[scheduler] Running in football-data.org-only mode — odds-api.io is disabled (see comment in footballData.js getOddsApiIoMatchesForDate), and BIGFOOTBALL_API_KEY is not set. Real live scores/minutes for ~12 major leagues; all odds are AI-estimated. This is intentional, not an error.');
+  console.log('[scheduler] Running in football-data.org-only mode — odds-api.io is disabled (see comment in footballData.js getOddsApiIoMatchesForDate). Real live scores/minutes for ~12 major leagues; all odds are AI-estimated. This is intentional, not an error.');
 
   // REAL FIX for "all 11 odds-api.io keys hit their daily limit at the same
   // moment, on a day with unusually many restarts": the app's own tracking
@@ -439,6 +481,14 @@ function start() {
   // be due yet on most of these checks.
   fixtureRefreshLoop();
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
+
+  if (bigFootballData.isConfigured()) {
+    console.log('[scheduler] BIGFOOTBALL_API_KEY detected — BigFootball is the primary fixtures/live-score source, with football-data.org/odds-api.io as automatic fallback.');
+    enrichLiveMatches();
+    setInterval(enrichLiveMatches, BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS);
+  } else {
+    console.warn('[scheduler] BIGFOOTBALL_API_KEY is not set — running on football-data.org/odds-api.io only. Set BIGFOOTBALL_API_KEY in .env to switch to BigFootball as the primary source.');
+  }
 
   // Basketball: DISABLED — odds-api.io is rejecting sport=nba with "Invalid
   // sport slug" for this account (confirmed in production logs, not a code

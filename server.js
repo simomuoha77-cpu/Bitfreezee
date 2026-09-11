@@ -24,7 +24,7 @@ const db = require('./db');
 const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
-const bigFootballData = require('./bigFootballData'); // BigFootball (BigBallsData) API — see bigFootballData.js header for integration status
+const bigFootballData = require('./bigFootballData');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -234,120 +234,41 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   });
 });
 
-// GET /api/health — simple uptime check, no key required
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
-});
-
-// ── BigFootball (BigBallsData) API integration ──────────────────────
-// See bigFootballData.js's file header for what's wired in vs. still
-// pending (the fixtures/betting pipeline itself still runs on
-// football-data.org via footballData.js — these routes are the new,
-// parallel BigFootball path, kept separate until it's confirmed good).
-
-// GET /api/bigfootball/health — no key required, same spirit as
-// /api/health: cheap connectivity + quota check, never returns the key
-// itself. Reuses the same per-IP rate bucket as the chat proxy so this
-// can't be hammered into burning through the daily BigFootball quota.
-app.get('/api/bigfootball/health', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  if (!checkChatRateLimit(ip)) {
-    return res.status(429).json({ error: 'Too many requests — please slow down' });
+// GET /api/matches/:id/events?key=jsk_xxx — on-demand goals/cards/subs feed
+// for one match, straight from BigFootball (short-cached — see
+// bigFootballData.js TTL.EVENTS_LIVE). Separate from the background
+// enrichment loop in scheduler.js (which only covers matches already in
+// today's bucket) so a match-detail page can pull a fresh read any time.
+app.get('/api/matches/:id/events', requireApiKey, async (req, res) => {
+  if (!bigFootballData.isConfigured()) {
+    return res.status(503).json({ error: 'BigFootball is not configured on this server', events: [] });
   }
   try {
-    const t0 = Date.now();
-    const usage = await bigFootballData.getUsage(false);
-    res.json({ ok: true, latencyMs: Date.now() - t0, usage, rateLimit: bigFootballData.getRateLimitStatus() });
-  } catch (e) {
-    res.status(502).json({ ok: false, error: e.message, rateLimit: bigFootballData.getRateLimitStatus() });
-  }
-});
-
-// GET /api/bigfootball/test — requireAdmin (unlike /health, this walks
-// the full pipeline: today's matches, live matches, events + odds for a
-// sample match) so it isn't something the public can trigger repeatedly.
-// This is the exact confirmation step requested before anything here
-// touches betting/settlement logic — run it, check steps.*.ok, and check
-// the "sample"/"raw" fields against normalizeMatch/normalizeEvent/
-// normalizeOdds in bigFootballData.js for any field-name mismatch.
-app.get('/api/bigfootball/test', requireAdmin, async (req, res) => {
-  try {
-    const result = await bigFootballData.runConnectionTest();
-    res.status(result.ok ? 200 : 207).json(result);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// GET /api/bigfootball/matches?date=&status=&league=&sport=
-// Normalized onto the SAME match shape footballData.js already produces
-// (homeTeam/awayTeam/score.fullTime.home-away/status/utcDate) — see
-// bigFootballData.js's normalizeMatch — so anything already reading
-// /api/fixtures's shape can point at this instead without changes.
-// Defaults to today's football matches if no params given.
-app.get('/api/bigfootball/matches', requireApiKey, async (req, res) => {
-  try {
-    const params = {
-      sport: req.query.sport || 'football',
-      date: req.query.date || bigFootballData.getDateString(0),
-      status: req.query.status,
-      league: req.query.league
-    };
-    const result = await bigFootballData.getMatches(params);
-    res.json({ matches: result.matches, stale: result.stale, staleReason: result.staleReason || null, params });
-  } catch (e) {
-    res.status(502).json({ error: e.message, matches: [] });
-  }
-});
-
-// GET /api/bigfootball/matches/live — shorthand for status=live, meant to
-// be polled frequently by a live-scores view; bigFootballData.js's own
-// 15s cache TTL on this query is what actually protects the daily quota
-// no matter how often this route itself gets hit.
-app.get('/api/bigfootball/matches/live', requireApiKey, async (req, res) => {
-  try {
-    const result = await bigFootballData.getLiveMatches();
-    res.json({ matches: result.matches, stale: result.stale, staleReason: result.staleReason || null });
-  } catch (e) {
-    res.status(502).json({ error: e.message, matches: [] });
-  }
-});
-
-app.get('/api/bigfootball/matches/:id', requireApiKey, async (req, res) => {
-  try {
-    const result = await bigFootballData.getMatchById(req.params.id);
-    if (!result.match) return res.status(404).json({ error: 'Match not found' });
-    res.json({ match: result.match, stale: result.stale, staleReason: result.staleReason || null });
-  } catch (e) {
-    res.status(502).json({ error: e.message, match: null });
-  }
-});
-
-app.get('/api/bigfootball/matches/:id/odds', requireApiKey, async (req, res) => {
-  try {
-    const result = await bigFootballData.getMatchOdds(req.params.id);
-    res.json({ odds: result.odds, stale: result.stale, staleReason: result.staleReason || null });
-  } catch (e) {
-    res.status(502).json({ error: e.message, odds: null });
-  }
-});
-
-app.get('/api/bigfootball/matches/:id/events', requireApiKey, async (req, res) => {
-  try {
-    const result = await bigFootballData.getMatchEvents(req.params.id);
-    res.json({ events: result.events, stale: result.stale, staleReason: result.staleReason || null });
+    const events = await bigFootballData.getMatchEvents(req.params.id);
+    res.json({ matchId: req.params.id, events });
   } catch (e) {
     res.status(502).json({ error: e.message, events: [] });
   }
 });
 
-app.get('/api/bigfootball/standings', requireApiKey, async (req, res) => {
-  try {
-    const result = await bigFootballData.getStandings({ league: req.query.league, sport: req.query.sport || 'football' });
-    res.json({ standings: result.standings, stale: result.stale, staleReason: result.staleReason || null });
-  } catch (e) {
-    res.status(502).json({ error: e.message, standings: null });
+// GET /api/matches/:id/odds?key=jsk_xxx — BigFootball's own odds payload
+// for one match (display/reference only — NOT what settlement uses; that
+// remains match.aiOdds, produced by ai.js/realOdds.js and untouched here).
+app.get('/api/matches/:id/odds', requireApiKey, async (req, res) => {
+  if (!bigFootballData.isConfigured()) {
+    return res.status(503).json({ error: 'BigFootball is not configured on this server', odds: null });
   }
+  try {
+    const odds = await bigFootballData.getMatchOdds(req.params.id);
+    res.json({ matchId: req.params.id, odds });
+  } catch (e) {
+    res.status(502).json({ error: e.message, odds: null });
+  }
+});
+
+// GET /api/health — simple uptime check, no key required
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
 // ── AI CHAT STREAMING PROXY ─────────────────────────────────────────
@@ -511,11 +432,75 @@ app.get('/api/status', async (req, res) => {
         : 'SHARPAPI_KEY not set — all odds are AI-generated estimates. Set SHARPAPI_KEY for real market odds (see .env.example).'
     },
     footballDataOrgKeyPool: footballData.getKeyPoolStatus(),
-    bigFootballRateLimit: bigFootballData.getRateLimitStatus(),
     oddsApiIoKeyPool: realOdds.getOddsApiIoKeyPoolStatus(),
     aiKeyPool: ai.getAiKeyPoolStatus(),
+    bigFootball: {
+      configured: bigFootballData.isConfigured(),
+      rateLimit: bigFootballData.getRateLimitStatus(),
+      cache: bigFootballData.getCacheStatus(),
+      note: bigFootballData.isConfigured()
+        ? 'Primary fixtures/live-score source. football-data.org/odds-api.io only run as an automatic per-cycle fallback.'
+        : 'BIGFOOTBALL_API_KEY not set — running on football-data.org/odds-api.io only. See .env.example.'
+    },
     serverTime: new Date().toISOString()
   });
+});
+
+// GET /api/bigfootball/health — no key required, safe to hit from an
+// uptime monitor or straight from a browser while wiring this up. Verifies
+// BIGFOOTBALL_API_KEY + base URL actually work end to end (one real call to
+// /v1/sports), NOT just that the env var is present.
+app.get('/api/bigfootball/health', async (req, res) => {
+  if (!bigFootballData.isConfigured()) {
+    return res.status(503).json({ ok: false, configured: false, error: 'BIGFOOTBALL_API_KEY is not set on this server. Add it to .env (see .env.example) and restart.' });
+  }
+  const result = await bigFootballData.testConnection();
+  res.status(result.ok ? 200 : 502).json(Object.assign({ configured: true }, result));
+});
+
+// GET /internal/bigfootball/test?adminSecret=... — admin-only deeper check:
+// pulls today's matches, live matches, and (for the first live match found,
+// if any) a sample of events + odds, all straight from BigFootball with NO
+// MongoDB involved — this is the "confirm the API actually returns today's
+// matches, live matches, events and odds" step called for before any
+// betting/settlement logic gets touched. Each raw match also includes its
+// normalized form side-by-side so field-mapping issues (see
+// bigFootballData.js normalizeMatch) are easy to spot and fix.
+app.get('/internal/bigfootball/test', requireAdmin, async (req, res) => {
+  if (!bigFootballData.isConfigured()) {
+    return res.status(503).json({ error: 'BIGFOOTBALL_API_KEY is not set on this server.' });
+  }
+  const dateStr = req.query.date || footballData.getDateString(0);
+  const out = { dateStr, rateLimit: bigFootballData.getRateLimitStatus() };
+  try {
+    out.todayMatches = await bigFootballData.getMatchesForDate(dateStr);
+    out.todayMatchesCount = out.todayMatches.length;
+  } catch (e) {
+    out.todayMatchesError = e.message;
+  }
+  try {
+    out.liveMatches = await bigFootballData.getLiveMatches();
+    out.liveMatchesCount = out.liveMatches.length;
+  } catch (e) {
+    out.liveMatchesError = e.message;
+  }
+  const sampleLive = out.liveMatches && out.liveMatches[0];
+  if (sampleLive) {
+    try {
+      out.sampleEvents = await bigFootballData.getMatchEvents(sampleLive.id);
+    } catch (e) {
+      out.sampleEventsError = e.message;
+    }
+    try {
+      out.sampleOdds = await bigFootballData.getMatchOdds(sampleLive.id);
+    } catch (e) {
+      out.sampleOddsError = e.message;
+    }
+    out.sampleMatchId = sampleLive.id;
+  } else {
+    out.note = 'No live match found right now to sample events/odds from — todayMatches/liveMatches above still confirm basic connectivity.';
+  }
+  res.json(out);
 });
 
 // ── CASINO API (what BetaKE — or any site with a JuanAi key — calls) ──
