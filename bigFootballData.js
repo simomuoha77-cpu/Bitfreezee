@@ -30,6 +30,14 @@
 const BIGFOOTBALL_API_KEY = process.env.BIGFOOTBALL_API_KEY || '';
 const BIGFOOTBALL_BASE_URL = process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com';
 
+// Reused ONLY for estimateMatchMinute — BigFootball's /v1/matches has no
+// running live-clock field (confirmed via real testing: only a bare
+// "status": "live" string, no minute/elapsed anywhere on the match
+// object). Rather than write a second, possibly-inconsistent version of
+// the same kickoff-time estimate this codebase already relies on for
+// odds-api.io matches, this reuses footballData.js's exact function.
+const footballData = require('./footballData');
+
 if (!BIGFOOTBALL_API_KEY) {
   console.warn('[bigFootballData] BIGFOOTBALL_API_KEY is not set — BigFootball requests will fail until it is configured. See .env.example.');
 }
@@ -211,11 +219,12 @@ function normalizeStatus(raw) {
 
 function normalizeTeam(raw) {
   if (raw == null) return null;
-  if (typeof raw === 'string') return { id: null, name: raw, crest: null };
+  if (typeof raw === 'string') return { id: null, name: raw, crest: null, shortName: null };
   return {
     id: pick(raw, ['id', 'team_id', 'teamId'], null),
     name: pick(raw, ['name', 'team_name', 'teamName', 'short_name']),
-    crest: pick(raw, ['crest', 'logo', 'badge', 'image'], null)
+    crest: pick(raw, ['crest', 'logo', 'badge', 'image', 'logo_url', 'logoUrl'], null),
+    shortName: pick(raw, ['short_name', 'shortName', 'abbreviation'], null)
   };
 }
 
@@ -257,21 +266,52 @@ function pickNameOrObject(raw, paths) {
 function normalizeMatch(raw) {
   if (!raw) return null;
   const statusRaw = pick(raw, ['status', 'state', 'fixture.status', 'match_status']);
+  const status = normalizeStatus(statusRaw);
   const competition = pickNameOrObject(raw, ['league', 'competition', 'tournament', 'sport']);
+  const utcDate = pick(raw, ['utcDate', 'date', 'kickoff_utc', 'kickoffUtc', 'start_time', 'startTime', 'kickoff', 'scheduled', 'datetime'], null);
+
+  // BigFootball's /v1/matches gives no running live-clock field (confirmed
+  // via real testing — only "status": "live"), so a direct minute value is
+  // almost always absent. Fall back to the same kickoff-time estimate used
+  // elsewhere in this codebase for exactly the same reason (see
+  // footballData.js's estimateMatchMinute) rather than showing a blank
+  // clock on every live match.
+  let minute = pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null);
+  if (minute == null && (status === 'IN_PLAY' || status === 'PAUSED') && utcDate) {
+    minute = footballData.estimateMatchMinute(utcDate, null);
+  }
+
   return {
     id: pick(raw, ['id', 'match_id', 'matchId', 'fixture_id']),
     source: 'bigfootball',
-    utcDate: pick(raw, ['utcDate', 'date', 'start_time', 'startTime', 'kickoff', 'scheduled', 'datetime']),
-    status: normalizeStatus(statusRaw),
-    minute: pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null),
+    utcDate,
+    status,
+    minute,
     homeTeam: normalizeTeam(pick(raw, ['homeTeam', 'home_team', 'teams.home', 'home'])),
     awayTeam: normalizeTeam(pick(raw, ['awayTeam', 'away_team', 'teams.away', 'away'])),
     score: normalizeScore(raw),
     competition,
     venue: pick(raw, ['venue', 'stadium', 'location'], null),
+    round: pick(raw, ['round'], null),
+    broadcast: pick(raw, ['broadcast'], null) || null,
+    hasOdds: pick(raw, ['has_odds', 'hasOdds'], null), // BigFootball flags whether IT has odds for this match — NOT the same as real bookmaker odds being fetchable on this plan, see runConnectionTest's odds step
     _rawStatus: statusRaw, // kept for debugging via /api/bigfootball/test — remove once statuses are fully confirmed
     _raw: raw // TEMPORARY: full untouched provider object, so /api/bigfootball/test can show it — strip this once every field mapping above is confirmed correct
   };
+}
+
+// BigFootball's events give a per-period clock string like "25'" (see
+// real sample: {"period":1,"period_display":"1st Half","clock":"25'"}),
+// not a bare numeric minute. This strips the non-digit characters to get
+// a usable number. NOTE (unconfirmed): whether a 2nd-half event's clock
+// is period-relative (e.g. "25'" meaning 25 min into the 2nd half, i.e.
+// minute 70 overall) or match-total has not been verified against a real
+// 2nd-half event yet — this returns the raw parsed number as-is pending
+// that confirmation, so a 2nd-half minute may read low until then.
+function parseClockMinute(clockStr) {
+  if (!clockStr) return null;
+  const match = String(clockStr).match(/\d+/);
+  return match ? parseInt(match[0], 10) : null;
 }
 
 function normalizeEvent(raw) {
@@ -289,8 +329,12 @@ function normalizeEvent(raw) {
   const player = pick(raw, ['player.name', 'player', 'player_name', 'scorer.name', 'scorer'], null)
     || ((type === 'GOAL' || type === 'RED_CARD' || type === 'YELLOW_CARD' || type === 'CARD') ? detail : null);
   return {
-    id: pick(raw, ['id', 'event_id'], null),
-    minute: pick(raw, ['minute', 'time', 'elapsed', 'time.minute'], null),
+    id: pick(raw, ['id', 'event_id', 'sequence_number'], null),
+    minute: pick(raw, ['minute', 'time', 'elapsed', 'time.minute'], null) != null
+      ? pick(raw, ['minute', 'time', 'elapsed', 'time.minute'])
+      : parseClockMinute(pick(raw, ['clock'], null)),
+    period: pick(raw, ['period'], null),
+    periodLabel: pick(raw, ['period_display', 'periodDisplay'], null),
     type,
     rawType: typeRaw || null,
     team: pick(raw, ['team.name', 'team', 'side'], null),
@@ -299,6 +343,8 @@ function normalizeEvent(raw) {
     playerIn: pick(raw, ['player_in.name', 'playerIn', 'in.name'], null),
     playerOut: pick(raw, ['player_out.name', 'playerOut', 'out.name'], null),
     detail,
+    homeScoreAfter: pick(raw, ['home_score'], null),
+    awayScoreAfter: pick(raw, ['away_score'], null),
     _raw: raw // TEMPORARY: see normalizeMatch's _raw note — same reason
   };
 }
