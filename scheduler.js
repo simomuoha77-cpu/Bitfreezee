@@ -83,6 +83,20 @@ async function refreshFixturesForDay(days) {
     if (!bigFootballSucceeded) {
       matches = await footballData.getMergedMatchesForDate(dateStr, days === 0);
     }
+
+    // BigFootball returning an empty-but-successful list is a trustworthy
+    // "no matches today" signal (unlike an empty result from a FAILED
+    // call) — so it's handled separately from the "keep existing data on
+    // failure" safety net below, and clears the bucket instead of
+    // preserving stale matches.
+    if (matches.length === 0 && bigFootballSucceeded) {
+      await db.saveFixtures(days, []);
+      const pruned = await db.pruneMatchesNotIn(days, 'football', []);
+      lastFixtureRefresh[days] = Date.now();
+      console.log('[scheduler] BigFootball returned 0 matches for days=' + days + ' (' + dateStr + ') — treating as authoritative, bucket cleared' + (pruned ? ' (' + pruned + ' stale match(es) removed)' : ''));
+      return;
+    }
+
     const existing = await db.getFixtures(days);
 
     // If BOTH sources failed/returned nothing this cycle (e.g. football-data.org
@@ -107,6 +121,20 @@ async function refreshFixturesForDay(days) {
     // overwritten each time; that's no longer how storage works.
     await db.saveFixtures(days, matches);
     lastFixtureRefresh[days] = Date.now();
+
+    // Now that BigFootball has returned a complete, authoritative list for
+    // this bucket, remove anything left over that ISN'T in that list — this
+    // is what actually clears out old football-data.org/odds-api.io
+    // matches (plain numeric or oaio_-prefixed IDs) that were sitting in
+    // the DB from before BigFootball was switched on, or from any cycle
+    // that fell back to the legacy source. Only runs when BigFootball
+    // itself succeeded this cycle — never prunes based on a fallback
+    // fetch, since that list is deliberately narrower (no BigFootball
+    // matches to compare against).
+    if (bigFootballSucceeded) {
+      const pruned = await db.pruneMatchesNotIn(days, 'football', matches.map(m => m.id));
+      if (pruned > 0) console.log('[scheduler] Pruned ' + pruned + ' stale/legacy match(es) from days=' + days + ' now that BigFootball is authoritative for this cycle');
+    }
 
     // Self-heal: clear any stale odds that were generated for a match
     // BEFORE the TBD-filter existed (needsAnalysis now skips TBD matches
@@ -148,7 +176,7 @@ async function enrichLiveMatches() {
   try {
     const bucket = await db.getFixtures(0, 'football'); // "live" only ever matters for today's bucket
     if (!bucket || !Array.isArray(bucket.matches)) return;
-    const live = bucket.matches.filter(m => m.status === 'IN_PLAY' || m.status === 'PAUSED');
+    const live = bucket.matches.filter(m => (m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.source === 'bigfootball');
     if (!live.length) return;
 
     // Sequential, not Promise.all — this naturally paces requests against

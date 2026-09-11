@@ -351,6 +351,35 @@ async function upsertBigFootballLiveData(matchId, days, sport, events, odds) {
     return false;
   }
 }
+// Deletes any match in a bucket whose id is NOT in keepIds — used only when
+// a fixture source just returned a complete, authoritative list for that
+// bucket (see scheduler.js: called after a SUCCESSFUL BigFootball refresh),
+// so leftover matches from a previously-configured source (e.g. old
+// football-data.org numeric IDs sitting in the DB from before BigFootball
+// was switched on) get cleaned up instead of lingering forever — unlike
+// saveFixtures' upsert, which only ever adds/updates, never removes.
+async function pruneMatchesNotIn(days, sport, keepIds) {
+  sport = sport || 'football';
+  const bucketKey = sport + ':' + String(days);
+  await ensureMongo();
+  const keepSet = new Set((keepIds || []).map(String));
+
+  if (usingFallback) {
+    const bucket = fixturesFallback[bucketKey];
+    if (!bucket) return 0;
+    const before = bucket.matches.length;
+    bucket.matches = bucket.matches.filter(m => keepSet.has(String(m.id)));
+    return before - bucket.matches.length;
+  }
+
+  try {
+    const result = await fixturesCollection.deleteMany({ days: bucketKey, matchId: { $nin: Array.from(keepSet) } });
+    return result.deletedCount || 0;
+  } catch (e) {
+    console.error('[db] pruneMatchesNotIn failed: ' + e.message);
+    return 0;
+  }
+}
 // ── API key storage (uses the SAME MongoDB connection as fixtures above) ──
 
 function generateApiKey() {
@@ -675,6 +704,7 @@ module.exports = {
   getFixtures,
   upsertMatchOdds,
   upsertBigFootballLiveData,
+  pruneMatchesNotIn,
   clearMatchOdds,
   expireOldMatches,
   deduplicateExistingMatches,
