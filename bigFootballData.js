@@ -240,24 +240,37 @@ function normalizeScore(raw) {
   };
 }
 
+// Some fields (competition/league in particular) turned out, from a real
+// response, to not match any of the object-shaped guesses below — pulls
+// whichever candidate exists and handles it whether it's a plain string
+// ("Bundesliga") or an object ({id, name}).
+function pickNameOrObject(raw, paths) {
+  for (const path of paths) {
+    const val = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), raw);
+    if (val == null) continue;
+    if (typeof val === 'string') return { id: null, name: val };
+    if (typeof val === 'object') return { id: val.id != null ? val.id : null, name: val.name || val.title || null };
+  }
+  return { id: null, name: null };
+}
+
 function normalizeMatch(raw) {
   if (!raw) return null;
   const statusRaw = pick(raw, ['status', 'state', 'fixture.status', 'match_status']);
+  const competition = pickNameOrObject(raw, ['league', 'competition', 'tournament', 'sport']);
   return {
     id: pick(raw, ['id', 'match_id', 'matchId', 'fixture_id']),
     source: 'bigfootball',
     utcDate: pick(raw, ['utcDate', 'date', 'start_time', 'startTime', 'kickoff', 'scheduled', 'datetime']),
     status: normalizeStatus(statusRaw),
-    minute: pick(raw, ['minute', 'elapsed', 'time.elapsed', 'clock', 'live_minute'], null),
+    minute: pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null),
     homeTeam: normalizeTeam(pick(raw, ['homeTeam', 'home_team', 'teams.home', 'home'])),
     awayTeam: normalizeTeam(pick(raw, ['awayTeam', 'away_team', 'teams.away', 'away'])),
     score: normalizeScore(raw),
-    competition: {
-      id: pick(raw, ['league.id', 'competition.id', 'sport.id'], null),
-      name: pick(raw, ['league.name', 'competition.name', 'league_name', 'sport.name'], null)
-    },
+    competition,
     venue: pick(raw, ['venue', 'stadium', 'location'], null),
-    _rawStatus: statusRaw // kept for debugging via /api/bigfootball/test — remove once statuses are confirmed
+    _rawStatus: statusRaw, // kept for debugging via /api/bigfootball/test — remove once statuses are fully confirmed
+    _raw: raw // TEMPORARY: full untouched provider object, so /api/bigfootball/test can show it — strip this once every field mapping above is confirmed correct
   };
 }
 
@@ -268,17 +281,25 @@ function normalizeEvent(raw) {
   if (typeRaw.includes('goal')) type = 'GOAL';
   else if (typeRaw.includes('card')) type = typeRaw.includes('red') ? 'RED_CARD' : typeRaw.includes('yellow') ? 'YELLOW_CARD' : 'CARD';
   else if (typeRaw.includes('sub')) type = 'SUBSTITUTION';
+  // A real sample showed the scorer's name landing in `detail`, not any of
+  // the `player.*` guesses — so `detail` is tried as a player-name fallback
+  // too, specifically for goal/card events where "detail" realistically can
+  // only be who it happened to, not a free-text description.
+  const detail = pick(raw, ['detail', 'description'], null);
+  const player = pick(raw, ['player.name', 'player', 'player_name', 'scorer.name', 'scorer'], null)
+    || ((type === 'GOAL' || type === 'RED_CARD' || type === 'YELLOW_CARD' || type === 'CARD') ? detail : null);
   return {
     id: pick(raw, ['id', 'event_id'], null),
-    minute: pick(raw, ['minute', 'time', 'elapsed'], null),
+    minute: pick(raw, ['minute', 'time', 'elapsed', 'time.minute'], null),
     type,
     rawType: typeRaw || null,
     team: pick(raw, ['team.name', 'team', 'side'], null),
-    player: pick(raw, ['player.name', 'player', 'player_name'], null),
+    player,
     assist: pick(raw, ['assist.name', 'assist', 'assist_name'], null),
     playerIn: pick(raw, ['player_in.name', 'playerIn', 'in.name'], null),
     playerOut: pick(raw, ['player_out.name', 'playerOut', 'out.name'], null),
-    detail: pick(raw, ['detail', 'description'], null)
+    detail,
+    _raw: raw // TEMPORARY: see normalizeMatch's _raw note — same reason
   };
 }
 
@@ -481,9 +502,19 @@ async function runConnectionTest() {
     } catch (e) {
       out.steps.odds = { ok: false, matchId: sampleLive.id, error: e.message };
     }
+    // Free-tier odds returned 403 "requires Edge plan" in testing — checking
+    // predictions too, since it's a separate endpoint that might not be
+    // behind the same plan gate and could stand in for real odds on Free.
+    try {
+      const res = await getPredictions({ match: sampleLive.id });
+      out.steps.predictions = { ok: true, matchId: sampleLive.id, result: res.predictions };
+    } catch (e) {
+      out.steps.predictions = { ok: false, matchId: sampleLive.id, error: e.message };
+    }
   } else {
     out.steps.events = { ok: null, note: 'No live or today match id available to test against yet' };
     out.steps.odds = { ok: null, note: 'No live or today match id available to test against yet' };
+    out.steps.predictions = { ok: null, note: 'No live or today match id available to test against yet' };
   }
 
   out.rateLimit = getRateLimitStatus();
