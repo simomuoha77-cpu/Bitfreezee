@@ -240,14 +240,31 @@ const loggedShapes = new Set();
 function unwrapList(data, endpointLabel) {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== 'object') return [];
+
+  // Surface a real API-reported error distinctly from an empty/no-data
+  // response — these look identical structurally ({data:null,...}) but
+  // mean very different things.
+  if (data.error) {
+    console.warn('[bigFootballData] ' + endpointLabel + ' responded with an error field: ' + JSON.stringify(data.error).slice(0, 300));
+    return [];
+  }
+
   const candidates = ['data', 'matches', 'results', 'items', 'sports', 'leagues', 'teams', 'players', 'standings', 'injuries', 'predictions', 'events'];
   for (const key of candidates) {
     if (Array.isArray(data[key])) return data[key];
+    // A present-but-null/undefined `data`/`events`/etc with no `error`
+    // alongside it is a legitimate empty result (e.g. "no events yet for
+    // this match"), not an unrecognized shape — return [] quietly rather
+    // than warning every time a live match simply hasn't had a goal/card
+    // yet.
+    if ((key === 'data' || key === 'events') && key in data && (data[key] === null || data[key] === undefined)) {
+      return [];
+    }
   }
   const shapeKey = endpointLabel + ':' + Object.keys(data).sort().join(',');
   if (!loggedShapes.has(shapeKey)) {
     loggedShapes.add(shapeKey);
-    console.warn('[bigFootballData] unrecognized list shape for ' + endpointLabel + ' — top-level keys: ' + Object.keys(data).join(', ') + '. Returning [] for this call; check bigFootballData.js unwrapList().');
+    console.warn('[bigFootballData] unrecognized list shape for ' + endpointLabel + ' — full response (truncated): ' + JSON.stringify(data).slice(0, 500) + '. Returning [] for this call; check bigFootballData.js unwrapList().');
   }
   return [];
 }
