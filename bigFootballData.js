@@ -298,6 +298,21 @@ function normalizeMatch(m) {
   const htHome = firstDefined(m.ht_home_score, m.halftime_home_score, m.score && m.score.halftime && m.score.halftime.home);
   const htAway = firstDefined(m.ht_away_score, m.halftime_away_score, m.score && m.score.halftime && m.score.halftime.away);
   const league = m.league || m.competition || {};
+  const leagueName = league.name || m.league_name || m.competitionName || m.tournament || m.tournament_name || null;
+
+  if (!leagueName) {
+    // Same "log the actual shape once" approach as unwrapList's shape
+    // logging above — this is what's producing the "Other" league label
+    // on the frontend right now. Logs the raw match's own top-level keys
+    // plus whatever the league/competition sub-object actually contains,
+    // so the real field name can be read straight from Render's logs
+    // without needing to hit /internal/bigfootball/test separately.
+    const shapeKey = 'match-league:' + Object.keys(m).sort().join(',');
+    if (!loggedShapes.has(shapeKey)) {
+      loggedShapes.add(shapeKey);
+      console.warn('[bigFootballData] could not find a league/competition name on a match — top-level match keys: ' + Object.keys(m).join(', ') + ' | league/competition sub-object: ' + JSON.stringify(league).slice(0, 300) + '. Add the real field name to normalizeMatch() in bigFootballData.js.');
+    }
+  }
 
   return {
     id: String(m.id != null ? m.id : m.match_id != null ? m.match_id : m.matchId),
@@ -312,7 +327,7 @@ function normalizeMatch(m) {
       fullTime: (homeScore != null && awayScore != null) ? { home: homeScore, away: awayScore } : null,
       halfTime: (htHome != null && htAway != null) ? { home: htHome, away: htAway } : null
     },
-    competition: { id: idOf(league), name: league.name || m.league_name || m.competitionName || null },
+    competition: { id: idOf(league), name: leagueName },
     venue: m.venue || m.stadium || null,
     sport: m.sport || 'football',
     raw: m // kept for debugging/verification — safe to ignore, not sent by /api/fixtures (see server.js stripRaw)
