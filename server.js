@@ -20,6 +20,7 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression'); // REAL FIX for hitting Render's free-tier 5GB/month bandwidth cap far faster than expected: every API response (fixtures JSON — often 1000+ matches, each with full AI-written analysis text) was being sent completely uncompressed. gzip typically shrinks repetitive JSON like this by 70-90%, so this alone should make the same 5GB allowance cover several times more real traffic than before.
 const path = require('path');
+const fs = require('fs'); // used by the casino game-image upload endpoint below
 const db = require('./db');
 const ai = require('./ai');
 const realOdds = require('./realOdds');
@@ -35,7 +36,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '8mb' })); // raised from 5mb so a base64-encoded game thumbnail upload (see /internal/casino/games/:gameId/image below) fits — base64 inflates the raw file size by about a third
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -910,6 +911,55 @@ app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
   const byGame = {};
   casino.GAME_IDS.forEach(gameId => { byGame[gameId] = casino.getRoundExposure(gameId); });
   res.json(byGame);
+});
+
+// POST /internal/casino/games/:gameId/image   body: { imageBase64: 'data:image/png;base64,...' }
+// Uploads/replaces the thumbnail image for a casino game (Aviator, JetX,
+// or any future game added to GAMES in casinoIntegration.js — this route
+// is generic, not per-game). Each game's `thumbnail` field already points
+// to a fixed path (e.g. /casino/assets/jetx-thumb.png); this endpoint is
+// what actually puts a real file at that path — until now nothing did,
+// which is why thumbnails 404'd. Saves as PNG only: the dashboard
+// converts whatever image format the admin picks (jpg/webp/gif) to PNG
+// client-side via canvas before uploading, so the server never needs an
+// image-processing library. Requires X-Admin-Secret — same protection as
+// every other /internal/* route.
+app.post('/internal/casino/games/:gameId/image', requireAdmin, (req, res) => {
+  const game = casinoIntegration.getGame(req.params.gameId);
+  if (!game) return res.status(404).json({ error: 'unknown game id' });
+
+  const m = /^data:image\/png;base64,([a-zA-Z0-9+/=]+)$/.exec((req.body && req.body.imageBase64) || '');
+  if (!m) return res.status(400).json({ error: 'imageBase64 must be a data:image/png;base64,... string (convert to PNG before uploading)' });
+
+  const buf = Buffer.from(m[1], 'base64');
+  if (buf.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'image too large (max 6MB)' });
+  // PNG magic-byte sanity check — the regex above already restricts the
+  // declared MIME type, this catches a mislabeled/corrupt upload too.
+  if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) return res.status(400).json({ error: 'not a valid PNG file' });
+
+  const assetsDir = path.join(__dirname, 'public', 'casino', 'assets');
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+
+  // Derive the on-disk filename from the game's existing `thumbnail` path
+  // (e.g. '/casino/assets/jetx-thumb.png' -> 'jetx-thumb.png') so this
+  // lines up exactly with what GAMES already declares, instead of
+  // inventing a second naming scheme.
+  const filename = path.basename(game.thumbnail || `${game.id}-thumb.png`);
+  fs.writeFileSync(path.join(assetsDir, filename), buf);
+
+  res.json({ ok: true, url: `${game.thumbnail}?t=${Date.now()}` });
+});
+
+// GET /internal/casino/games/images — which games currently have a real
+// thumbnail file on disk vs still 404ing, so the dashboard can show
+// upload status without guessing.
+app.get('/internal/casino/games/images', requireAdmin, (req, res) => {
+  const out = {};
+  casinoIntegration.listGames().forEach(g => {
+    const filePath = path.join(__dirname, 'public', g.thumbnail || '');
+    out[g.id] = { thumbnail: g.thumbnail, uploaded: g.thumbnail ? fs.existsSync(filePath) : false };
+  });
+  res.json(out);
 });
 
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,

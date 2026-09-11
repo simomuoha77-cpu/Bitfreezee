@@ -713,19 +713,29 @@ app.get('/games/today', async (req, res) => {<br>
 
         <!-- AVIATOR — real server-authoritative crash game, own page -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <img id="thumb-aviator" class="cgame-thumb" alt="" style="display:none;width:72px;height:72px;object-fit:cover;border-radius:10px;flex:0 0 auto">
           <div style="flex:1;min-width:220px">
             <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Aviator</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
           </div>
+          <label class="crash-btn" style="flex:0 0 auto;padding:10px 16px;font-size:12px;cursor:pointer">
+            <i class="fa-solid fa-image"></i> Upload image
+            <input type="file" accept="image/*" style="display:none" onchange="uploadGameImage('aviator',this)">
+          </label>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchAviator()">Play ⏯️</button>
         </div>
 
         <!-- JETX — same engine as Aviator, own independent round -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <img id="thumb-jetx" class="cgame-thumb" alt="" style="display:none;width:72px;height:72px;object-fit:cover;border-radius:10px;flex:0 0 auto">
           <div style="flex:1;min-width:220px">
             <h3 style="margin-bottom:6px"><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> JetX</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Same server-authoritative crash engine as Aviator, its own independent round and crash points — never synced with Aviator's round.</div>
           </div>
+          <label class="crash-btn" style="flex:0 0 auto;padding:10px 16px;font-size:12px;cursor:pointer">
+            <i class="fa-solid fa-image"></i> Upload image
+            <input type="file" accept="image/*" style="display:none" onchange="uploadGameImage('jetx',this)">
+          </label>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchJetX()">Play ⏯️</button>
         </div>
 
@@ -2457,6 +2467,7 @@ var casinoInit=false;
 function initCasino(){
   if(casinoInit)return;
   casinoInit=true;
+  initGameThumbs();
 }
 
 // ── Aviator — real server-authoritative crash game, own page ──
@@ -2543,6 +2554,87 @@ async function launchJetX(){
     toast('Could not launch JetX: '+e.message, 'error');
     if(tab) tab.close();
   }
+}
+
+// ── CASINO GAME THUMBNAILS ──────────────────────────────────────────────
+// Generic by design — works for Aviator, JetX, or any future game added
+// to GAMES in casinoIntegration.js, since it's keyed by gameId, not
+// hardcoded per game. Two pieces:
+//   1. initGameThumbs() — on panel load, check which games already have
+//      an uploaded image and show it (falls back to the icon if none).
+//   2. uploadGameImage(gameId, inputEl) — handles a file picked from the
+//      "Upload image" control: normalizes it to PNG client-side (via
+//      canvas, so any input format works and the server never needs an
+//      image-processing library), then POSTs it to the admin endpoint.
+function fileToPngDataUrl(file){
+  return new Promise(function(resolve, reject){
+    var img = new Image();
+    var reader = new FileReader();
+    reader.onerror = function(){ reject(new Error('Could not read the file')); };
+    reader.onload = function(){
+      img.onerror = function(){ reject(new Error('Not a readable image')); };
+      img.onload = function(){
+        var canvas = document.createElement('canvas');
+        // Cap the stored size — this is a small card thumbnail, not a
+        // full-resolution asset, so there's no reason to upload/store a
+        // multi-megapixel source image.
+        var maxDim = 400;
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function uploadGameImage(gameId, inputEl){
+  var file = inputEl.files && inputEl.files[0];
+  inputEl.value = ''; // reset so picking the same file again still fires onchange
+  if(!file) return;
+  try{
+    var pngDataUrl = await fileToPngDataUrl(file);
+    var resp = await fetchInternal('/internal/casino/games/'+encodeURIComponent(gameId)+'/image', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ imageBase64: pngDataUrl })
+    });
+    if(!resp.ok){
+      var err = await resp.json().catch(function(){ return {}; });
+      throw new Error(err.error || ('Upload failed ('+resp.status+')'));
+    }
+    var data = await resp.json();
+    var thumb = document.getElementById('thumb-'+gameId);
+    if(thumb){ thumb.src = JUANAI_BACKEND_URL + data.url; thumb.style.display = 'block'; }
+    toast('Image updated for '+gameId, 'success');
+  }catch(e){
+    toast('Could not upload image: '+e.message, 'error');
+  }
+}
+// initGameThumbs() sets each card's thumbnail directly from its known
+// public path (/casino/assets/<id>-thumb.png — same path GAMES already
+// declares) with an onerror fallback that hides the <img> and leaves the
+// icon showing if nothing's been uploaded yet. Deliberately NOT gated
+// behind the admin secret — these files are already public static
+// assets (anyone can load that URL directly), so requiring an admin
+// prompt just to VIEW the casino tab would be a UX regression from how
+// it worked before. Only uploadGameImage() (changing the image) needs
+// admin auth, which it already has via fetchInternal().
+//
+// The two ids below match the two hand-authored cards above — adding a
+// third game later means adding its own card (img + upload button, same
+// pattern) and its id here; the upload endpoint and uploadGameImage()
+// itself are already fully generic and need no changes for a new game.
+function initGameThumbs(){
+  ['aviator','jetx'].forEach(function(gameId){
+    var thumb = document.getElementById('thumb-'+gameId);
+    if(!thumb) return;
+    thumb.onload = function(){ thumb.style.display = 'block'; };
+    thumb.onerror = function(){ thumb.style.display = 'none'; };
+    thumb.src = JUANAI_BACKEND_URL + '/casino/assets/' + gameId + '-thumb.png?t=' + Date.now();
+  });
 }
 
 
