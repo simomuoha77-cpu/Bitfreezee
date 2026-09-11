@@ -20,11 +20,11 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression'); // REAL FIX for hitting Render's free-tier 5GB/month bandwidth cap far faster than expected: every API response (fixtures JSON — often 1000+ matches, each with full AI-written analysis text) was being sent completely uncompressed. gzip typically shrinks repetitive JSON like this by 70-90%, so this alone should make the same 5GB allowance cover several times more real traffic than before.
 const path = require('path');
-const fs = require('fs'); // used by the casino game-image upload endpoint below
 const db = require('./db');
 const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
+const bigFootballData = require('./bigFootballData'); // BigFootball (BigBallsData) API — see bigFootballData.js header for integration status
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -36,7 +36,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({ limit: '8mb' })); // raised from 5mb so a base64-encoded game thumbnail upload (see /internal/casino/games/:gameId/image below) fits — base64 inflates the raw file size by about a third
+app.use(express.json({ limit: '5mb' }));
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -239,6 +239,117 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// ── BigFootball (BigBallsData) API integration ──────────────────────
+// See bigFootballData.js's file header for what's wired in vs. still
+// pending (the fixtures/betting pipeline itself still runs on
+// football-data.org via footballData.js — these routes are the new,
+// parallel BigFootball path, kept separate until it's confirmed good).
+
+// GET /api/bigfootball/health — no key required, same spirit as
+// /api/health: cheap connectivity + quota check, never returns the key
+// itself. Reuses the same per-IP rate bucket as the chat proxy so this
+// can't be hammered into burning through the daily BigFootball quota.
+app.get('/api/bigfootball/health', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkChatRateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many requests — please slow down' });
+  }
+  try {
+    const t0 = Date.now();
+    const usage = await bigFootballData.getUsage(false);
+    res.json({ ok: true, latencyMs: Date.now() - t0, usage, rateLimit: bigFootballData.getRateLimitStatus() });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message, rateLimit: bigFootballData.getRateLimitStatus() });
+  }
+});
+
+// GET /api/bigfootball/test — requireAdmin (unlike /health, this walks
+// the full pipeline: today's matches, live matches, events + odds for a
+// sample match) so it isn't something the public can trigger repeatedly.
+// This is the exact confirmation step requested before anything here
+// touches betting/settlement logic — run it, check steps.*.ok, and check
+// the "sample"/"raw" fields against normalizeMatch/normalizeEvent/
+// normalizeOdds in bigFootballData.js for any field-name mismatch.
+app.get('/api/bigfootball/test', requireAdmin, async (req, res) => {
+  try {
+    const result = await bigFootballData.runConnectionTest();
+    res.status(result.ok ? 200 : 207).json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/bigfootball/matches?date=&status=&league=&sport=
+// Normalized onto the SAME match shape footballData.js already produces
+// (homeTeam/awayTeam/score.fullTime.home-away/status/utcDate) — see
+// bigFootballData.js's normalizeMatch — so anything already reading
+// /api/fixtures's shape can point at this instead without changes.
+// Defaults to today's football matches if no params given.
+app.get('/api/bigfootball/matches', requireApiKey, async (req, res) => {
+  try {
+    const params = {
+      sport: req.query.sport || 'football',
+      date: req.query.date || bigFootballData.getDateString(0),
+      status: req.query.status,
+      league: req.query.league
+    };
+    const result = await bigFootballData.getMatches(params);
+    res.json({ matches: result.matches, stale: result.stale, staleReason: result.staleReason || null, params });
+  } catch (e) {
+    res.status(502).json({ error: e.message, matches: [] });
+  }
+});
+
+// GET /api/bigfootball/matches/live — shorthand for status=live, meant to
+// be polled frequently by a live-scores view; bigFootballData.js's own
+// 15s cache TTL on this query is what actually protects the daily quota
+// no matter how often this route itself gets hit.
+app.get('/api/bigfootball/matches/live', requireApiKey, async (req, res) => {
+  try {
+    const result = await bigFootballData.getLiveMatches();
+    res.json({ matches: result.matches, stale: result.stale, staleReason: result.staleReason || null });
+  } catch (e) {
+    res.status(502).json({ error: e.message, matches: [] });
+  }
+});
+
+app.get('/api/bigfootball/matches/:id', requireApiKey, async (req, res) => {
+  try {
+    const result = await bigFootballData.getMatchById(req.params.id);
+    if (!result.match) return res.status(404).json({ error: 'Match not found' });
+    res.json({ match: result.match, stale: result.stale, staleReason: result.staleReason || null });
+  } catch (e) {
+    res.status(502).json({ error: e.message, match: null });
+  }
+});
+
+app.get('/api/bigfootball/matches/:id/odds', requireApiKey, async (req, res) => {
+  try {
+    const result = await bigFootballData.getMatchOdds(req.params.id);
+    res.json({ odds: result.odds, stale: result.stale, staleReason: result.staleReason || null });
+  } catch (e) {
+    res.status(502).json({ error: e.message, odds: null });
+  }
+});
+
+app.get('/api/bigfootball/matches/:id/events', requireApiKey, async (req, res) => {
+  try {
+    const result = await bigFootballData.getMatchEvents(req.params.id);
+    res.json({ events: result.events, stale: result.stale, staleReason: result.staleReason || null });
+  } catch (e) {
+    res.status(502).json({ error: e.message, events: [] });
+  }
+});
+
+app.get('/api/bigfootball/standings', requireApiKey, async (req, res) => {
+  try {
+    const result = await bigFootballData.getStandings({ league: req.query.league, sport: req.query.sport || 'football' });
+    res.json({ standings: result.standings, stale: result.stale, staleReason: result.staleReason || null });
+  } catch (e) {
+    res.status(502).json({ error: e.message, standings: null });
+  }
+});
+
 // ── AI CHAT STREAMING PROXY ─────────────────────────────────────────
 // Used by the chat feature built into public/index.html. This exists so
 // the Gemini/Groq API keys live ONLY in this server's environment
@@ -400,6 +511,7 @@ app.get('/api/status', async (req, res) => {
         : 'SHARPAPI_KEY not set — all odds are AI-generated estimates. Set SHARPAPI_KEY for real market odds (see .env.example).'
     },
     footballDataOrgKeyPool: footballData.getKeyPoolStatus(),
+    bigFootballRateLimit: bigFootballData.getRateLimitStatus(),
     oddsApiIoKeyPool: realOdds.getOddsApiIoKeyPoolStatus(),
     aiKeyPool: ai.getAiKeyPoolStatus(),
     serverTime: new Date().toISOString()
@@ -911,55 +1023,6 @@ app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
   const byGame = {};
   casino.GAME_IDS.forEach(gameId => { byGame[gameId] = casino.getRoundExposure(gameId); });
   res.json(byGame);
-});
-
-// POST /internal/casino/games/:gameId/image   body: { imageBase64: 'data:image/png;base64,...' }
-// Uploads/replaces the thumbnail image for a casino game (Aviator, JetX,
-// or any future game added to GAMES in casinoIntegration.js — this route
-// is generic, not per-game). Each game's `thumbnail` field already points
-// to a fixed path (e.g. /casino/assets/jetx-thumb.png); this endpoint is
-// what actually puts a real file at that path — until now nothing did,
-// which is why thumbnails 404'd. Saves as PNG only: the dashboard
-// converts whatever image format the admin picks (jpg/webp/gif) to PNG
-// client-side via canvas before uploading, so the server never needs an
-// image-processing library. Requires X-Admin-Secret — same protection as
-// every other /internal/* route.
-app.post('/internal/casino/games/:gameId/image', requireAdmin, (req, res) => {
-  const game = casinoIntegration.getGame(req.params.gameId);
-  if (!game) return res.status(404).json({ error: 'unknown game id' });
-
-  const m = /^data:image\/png;base64,([a-zA-Z0-9+/=]+)$/.exec((req.body && req.body.imageBase64) || '');
-  if (!m) return res.status(400).json({ error: 'imageBase64 must be a data:image/png;base64,... string (convert to PNG before uploading)' });
-
-  const buf = Buffer.from(m[1], 'base64');
-  if (buf.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'image too large (max 6MB)' });
-  // PNG magic-byte sanity check — the regex above already restricts the
-  // declared MIME type, this catches a mislabeled/corrupt upload too.
-  if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) return res.status(400).json({ error: 'not a valid PNG file' });
-
-  const assetsDir = path.join(__dirname, 'public', 'casino', 'assets');
-  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-
-  // Derive the on-disk filename from the game's existing `thumbnail` path
-  // (e.g. '/casino/assets/jetx-thumb.png' -> 'jetx-thumb.png') so this
-  // lines up exactly with what GAMES already declares, instead of
-  // inventing a second naming scheme.
-  const filename = path.basename(game.thumbnail || `${game.id}-thumb.png`);
-  fs.writeFileSync(path.join(assetsDir, filename), buf);
-
-  res.json({ ok: true, url: `${game.thumbnail}?t=${Date.now()}` });
-});
-
-// GET /internal/casino/games/images — which games currently have a real
-// thumbnail file on disk vs still 404ing, so the dashboard can show
-// upload status without guessing.
-app.get('/internal/casino/games/images', requireAdmin, (req, res) => {
-  const out = {};
-  casinoIntegration.listGames().forEach(g => {
-    const filePath = path.join(__dirname, 'public', g.thumbnail || '');
-    out[g.id] = { thumbnail: g.thumbnail, uploaded: g.thumbnail ? fs.existsSync(filePath) : false };
-  });
-  res.json(out);
 });
 
 // POST /internal/analyze-now { matchId, days } — on-demand re-analysis of one match,
