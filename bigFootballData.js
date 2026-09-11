@@ -30,14 +30,6 @@
 const BIGFOOTBALL_API_KEY = process.env.BIGFOOTBALL_API_KEY || '';
 const BIGFOOTBALL_BASE_URL = process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com';
 
-// Reused ONLY for estimateMatchMinute — BigFootball's /v1/matches has no
-// running live-clock field (confirmed via real testing: only a bare
-// "status": "live" string, no minute/elapsed anywhere on the match
-// object). Rather than write a second, possibly-inconsistent version of
-// the same kickoff-time estimate this codebase already relies on for
-// odds-api.io matches, this reuses footballData.js's exact function.
-const footballData = require('./footballData');
-
 if (!BIGFOOTBALL_API_KEY) {
   console.warn('[bigFootballData] BIGFOOTBALL_API_KEY is not set — BigFootball requests will fail until it is configured. See .env.example.');
 }
@@ -271,15 +263,16 @@ function normalizeMatch(raw) {
   const utcDate = pick(raw, ['utcDate', 'date', 'kickoff_utc', 'kickoffUtc', 'start_time', 'startTime', 'kickoff', 'scheduled', 'datetime'], null);
 
   // BigFootball's /v1/matches gives no running live-clock field (confirmed
-  // via real testing — only "status": "live"), so a direct minute value is
-  // almost always absent. Fall back to the same kickoff-time estimate used
-  // elsewhere in this codebase for exactly the same reason (see
-  // footballData.js's estimateMatchMinute) rather than showing a blank
-  // clock on every live match.
-  let minute = pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null);
-  if (minute == null && (status === 'IN_PLAY' || status === 'PAUSED') && utcDate) {
-    minute = footballData.estimateMatchMinute(utcDate, null);
-  }
+  // via real testing — only "status": "live"), so minute is left as
+  // whatever pick() finds (normally null for a live match). server.js's
+  // recomputeLiveMinutes (used by both /api/fixtures and
+  // /internal/fixtures-view) already has a proven path for exactly this
+  // case — "arrived IN_PLAY with minute == null" — which estimates from
+  // utcDate and re-estimates fresh on every single request (not just once
+  // at scheduler refresh time). Duplicating that estimate here would only
+  // give a staler, one-shot version of the same number; better to leave
+  // this null and let that existing mechanism own it.
+  const minute = pick(raw, ['minute', 'elapsed', 'time.elapsed', 'time.minute', 'clock', 'live_minute', 'liveMinute', 'game_time', 'gameTime'], null);
 
   return {
     id: pick(raw, ['id', 'match_id', 'matchId', 'fixture_id']),
