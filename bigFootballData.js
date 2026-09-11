@@ -400,11 +400,36 @@ async function getMatchById(id) {
   return normalizeMatch(raw);
 }
 
+// ── Odds entitlement tracking ───────────────────────────────────────────
+// BigBallsData's Free tier returns HTTP 403 on /odds ("Access to bookmaker
+// odds requires the Edge plan or higher") — confirmed in production logs.
+// This is an ACCOUNT-LEVEL plan limitation, not a per-match or transient
+// failure, so retrying it match-by-match on every live-enrichment cycle
+// just burns quota and floods the logs with the same 403 forever. Once
+// we've seen this once, remember it for a while and skip the network call
+// entirely — getMatchOdds still returns null (never fabricates odds), it
+// just does so instantly and quietly instead of hitting the API and
+// logging the same "needs Edge plan" error every 20 seconds per live match.
+const ODDS_FORBIDDEN_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h — long enough to stop the spam, short enough to notice automatically if the account is ever upgraded
+let oddsForbiddenUntil = 0;
+let oddsForbiddenLogged = false;
+
 async function getMatchOdds(id) {
+  if (Date.now() < oddsForbiddenUntil) {
+    return null; // known account-level 403 — see note above, don't waste a request or log noise
+  }
   try {
     const data = await cachedGet('odds:' + id, '/v1/matches/' + encodeURIComponent(id) + '/odds', TTL.ODDS_LIVE);
     return normalizeOdds((data && (data.data || data.odds)) || data);
   } catch (e) {
+    if (/HTTP 403/.test(e.message)) {
+      oddsForbiddenUntil = Date.now() + ODDS_FORBIDDEN_COOLDOWN_MS;
+      if (!oddsForbiddenLogged) {
+        oddsForbiddenLogged = true;
+        console.warn('[bigFootballData] /odds returned HTTP 403 (plan limitation, not a bug) — this BigBallsData account\'s tier does not include bookmaker odds. Pausing odds requests for ' + (ODDS_FORBIDDEN_COOLDOWN_MS / 3600000) + 'h to stop wasting quota/log spam. Matches/live scores/events are unaffected — only match.bigFootballOdds will stay null until the plan is upgraded or this cooldown expires and rechecks automatically.');
+      }
+      return null;
+    }
     console.error('[bigFootballData] odds fetch failed for match ' + id + ': ' + e.message);
     return null; // no odds available right now — caller should treat as "not priced yet", never fabricate
   }

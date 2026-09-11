@@ -674,6 +674,7 @@ module.exports = {
   saveFixtures,
   getFixtures,
   upsertMatchOdds,
+  upsertBigFootballLiveData,
   clearMatchOdds,
   expireOldMatches,
   deduplicateExistingMatches,
