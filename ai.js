@@ -350,6 +350,22 @@ Return ONLY this JSON (no other text, no markdown):
 
 const DEFAULT_MARGIN = parseFloat(process.env.ODDS_MARGIN || '0.06'); // 6% overround by default — adjust via env var
 
+// REAL BUG FIX: this was 1200. The Groq fallback models (GPT-OSS 120b/20b,
+// see GROQ_MODELS above) are reasoning models — Groq's own docs note they
+// emit reasoning content that counts against the SAME max_tokens budget as
+// the visible output, before the actual answer is ever written (kept in a
+// separate `reasoning` field, but still billed against this same limit).
+// At 1200 total, a longer reasoning pass could leave too little budget for
+// the full ~350-char JSON object, truncating it mid-object — which then
+// fails to parse (see extractJsonObject's balanced-brace scan: a
+// truncated object never returns to depth 0, so it correctly reports
+// "couldn't extract" rather than silently returning garbage). Confirmed as
+// a plausible real cause from production logs showing "Could not parse AI
+// response as valid odds JSON" recurring on Groq-routed matches — this is
+// a generous bump, not a tune-it-later guess, since there's no real
+// downside to spare budget on a free-tier text response this short.
+const ANALYSIS_MAX_TOKENS = 3000;
+
 // Converts one group of "fair" odds (e.g. [homeWin, draw, awayWin]) into
 // margin-adjusted odds. Each fair odd is first converted to an implied
 // probability (1/odd), the probabilities are scaled up so they sum to
@@ -411,14 +427,47 @@ function deriveDoubleChanceFromMargined(homeWin, draw, awayWin) {
   };
 }
 
+// Finds the actual JSON object in the AI's raw text response — robust
+// against trailing prose that itself contains a stray '}' (e.g. "...as
+// shown above}." or a second example object after the real one), and
+// against ```json code fences. The PREVIOUS implementation used a naive
+// indexOf('{') / lastIndexOf('}') pair, which silently grabbed the WRONG
+// substring whenever the model added ANY text after the JSON containing
+// another closing brace — producing "Could not parse AI response as valid
+// odds JSON" even when the model's actual JSON was perfectly valid. This
+// scans forward from the first '{', tracking nesting depth (and skipping
+// braces inside quoted strings), and returns exactly the substring for the
+// object that first returns to depth 0 — i.e. the real, complete JSON
+// object, regardless of what the model wrote before or after it.
+function extractJsonObject(text) {
+  if (!text) return null;
+  const clean = text.replace(/```json/gi, '```').replace(/```/g, '').trim();
+  const firstBrace = clean.indexOf('{');
+  if (firstBrace === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  for (let i = firstBrace; i < clean.length; i++) {
+    const ch = clean[i];
+    if (escapeNext) { escapeNext = false; continue; }
+    if (ch === '\\') { escapeNext = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return clean.substring(firstBrace, i + 1);
+    }
+  }
+  return null; // brace never balanced — genuinely incomplete/truncated JSON (e.g. cut off by a token limit), not a mis-extraction
+}
+
 function parseAiOdds(text) {
   if (!text) return null;
-  const clean = text.replace(/```json|```/g, '').trim();
-  const start = clean.indexOf('{');
-  const end = clean.lastIndexOf('}');
-  if (start === -1 || end === -1) return null;
+  const jsonStr = extractJsonObject(text);
+  if (!jsonStr) return null;
   try {
-    const obj = JSON.parse(clean.substring(start, end + 1));
+    const obj = JSON.parse(jsonStr);
     if (!obj.homeWin || !obj.draw || !obj.awayWin) return null;
     ['homeWin', 'draw', 'awayWin', 'over25', 'under25', 'btts', 'bttsNo', 'dc_home_draw', 'dc_home_away', 'dc_draw_away']
       .forEach(k => {
@@ -522,9 +571,28 @@ async function analyzeMatch(match, history, liveState) {
       ? 'You are an expert football betting analyst. You have been given REAL market odds — your job is to analyze them for value, not invent new numbers. Return ONLY valid JSON with the exact structure requested. No other text.'
       : 'You are an expert football analyst and odds compiler. Analyze the match using the real historical data provided and return ONLY valid JSON with the exact structure requested. No other text.';
 
-  const raw = await aiOnce(systemPrompt, prompt, 1200);
-  const rawOdds = parseAiOdds(raw);
-  if (!rawOdds) throw new Error('Could not parse AI response as valid odds JSON');
+  // Retry on a PARSE failure (not just on aiOnce's own engine-level
+  // failures, which already rotate models/keys internally) — a single
+  // malformed response used to be treated as final even though asking
+  // again very often succeeds (LLM sampling means the same prompt rarely
+  // produces the identical malformed output twice). Bounded to 3 total
+  // attempts so a genuinely broken prompt/schema still fails fast rather
+  // than looping. Each failed attempt logs a snippet of the actual raw
+  // response — the old code threw a bare "could not parse" message with
+  // no way to see WHY, making this exact class of failure unfixable from
+  // the logs alone.
+  const MAX_ANALYSIS_ATTEMPTS = 3;
+  let rawOdds = null;
+  let lastRawText = '';
+  for (let attempt = 1; attempt <= MAX_ANALYSIS_ATTEMPTS; attempt++) {
+    lastRawText = await aiOnce(systemPrompt, prompt, ANALYSIS_MAX_TOKENS);
+    rawOdds = parseAiOdds(lastRawText);
+    if (rawOdds) break;
+    const home = match.homeTeam && match.homeTeam.name;
+    const away = match.awayTeam && match.awayTeam.name;
+    console.warn('[ai] Attempt ' + attempt + '/' + MAX_ANALYSIS_ATTEMPTS + ' returned unparseable odds JSON for ' + home + ' vs ' + away + ' — raw response: ' + String(lastRawText || '').slice(0, 300).replace(/\s+/g, ' '));
+  }
+  if (!rawOdds) throw new Error('Could not parse AI response as valid odds JSON after ' + MAX_ANALYSIS_ATTEMPTS + ' attempts — last raw response: ' + String(lastRawText || '').slice(0, 200).replace(/\s+/g, ' '));
 
   let odds;
   if (realOddsData) {
