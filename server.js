@@ -979,6 +979,14 @@ app.get('/internal/fixtures-view', async (req, res) => {
     // disagree in a NEW way instead of fixing the original mismatch.
     recomputeLiveMinutes(bucket.matches);
   }
+  const matches = (bucket && bucket.matches) || [];
+  // Temporary diagnostic line (per request, not just per background
+  // refresh) tracing exactly what THIS endpoint — the one the Football
+  // page actually calls — is sending out, right now, for this specific
+  // days value. Safe to remove once the pipeline is confirmed healthy.
+  const liveCount = matches.filter(m => m.status === 'IN_PLAY' || m.status === 'PAUSED').length;
+  const sources = new Set(matches.map(m => m.source || 'unknown'));
+  console.log('[fixtures-view] days=' + days + ' | sent to frontend: ' + matches.length + ' | live matches: ' + liveCount + ' | data source(s): ' + (sources.size ? Array.from(sources).join(',') : 'none') + ' | sample ids: ' + matches.slice(0, 3).map(m => m.id).join(','));
   res.json(bucket || { matches: [], fetchedAt: null });
 });
 
