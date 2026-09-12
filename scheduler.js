@@ -19,7 +19,8 @@
 
 const db = require('./db');
 const footballData = require('./footballData');
-const bigFootballData = require('./bigFootballData'); // NEW primary source for fixtures/live scores — see refreshFixturesForDay and enrichLiveMatches below. footballData.js (football-data.org + odds-api.io) is kept as an automatic fallback if BigFootball isn't configured or a given cycle fails.
+const bigFootballData = require('./bigFootballData'); // still used directly for live events/odds enrichment (per-match endpoints), and by the h2h/team-form helpers — fixture fetching itself now goes through footballProviders.js
+const footballProviders = require('./footballProviders'); // orchestrates all 7 providers (priority cascade + dedup) — see footballProviders.js for the full priority order and cascade rule
 const ai = require('./ai');
 const realOdds = require('./realOdds'); // needed directly (not just via footballData) to persist/restore odds-api.io key-pool usage state across restarts — see restoreKeyPoolState/exportKeyPoolState in realOdds.js
 
@@ -85,49 +86,39 @@ function hasKnownTeams(match) {
 async function refreshFixturesForDay(days) {
   const dateStr = footballData.getDateString(days);
   try {
-    // BIGFOOTBALL ONLY — football-data.org/odds-api.io are no longer used
-    // as a fixtures fallback at all, by explicit request. If BigFootball
-    // isn't configured or a call fails, this cycle does nothing and keeps
-    // whatever's already stored (see the "keep existing" branch below) —
-    // it never reaches for the legacy source.
-    if (!bigFootballData.isConfigured()) {
-      console.error('[scheduler] BIGFOOTBALL_API_KEY is not set — skipping fixture refresh for days=' + days + '. Fixtures will not update until it is configured (football-data.org fallback has been disabled).');
-      return;
-    }
-    let matches = [];
-    let bigFootballSucceeded = false;
-    try {
-      // fullCatalogue only for today (days===0): supplementary per-league
-      // backfill is what actually catches leagues the plain call might
-      // miss (see bigFootballData.js), but it costs extra requests, so
-      // it's deliberately not run for tomorrow/day-after where it matters
-      // far less than staying well under the daily budget.
-      matches = await bigFootballData.getMatchesForDate(dateStr, { fullCatalogue: days === 0 });
-      bigFootballSucceeded = true;
-    } catch (e) {
-      console.error('[scheduler] BigFootball fixture fetch failed for days=' + days + ' (' + dateStr + '): ' + e.message + ' — keeping existing data for this cycle (no legacy fallback)');
+    // Fixtures now come from footballProviders.js — the 7-provider
+    // priority cascade (BigBallsData → API-Football → football-data.org →
+    // Sportmonks → TheSportsDB → Highlightly → API-Sports). It internally
+    // decides which provider(s) actually get called; this function no
+    // longer needs to know that detail, just the result.
+    const result = await footballProviders.getMatchesForDate(dateStr, { fullCatalogue: days === 0 });
+    const matches = result.matches;
+    const anyProviderSucceeded = result.anyProviderSucceeded;
+    if (result.primaryProviderUsed) {
+      console.log('[scheduler] days=' + days + ' (' + dateStr + '): using ' + result.primaryProviderUsed + ' — ' + result.providerLog.map(l => l.provider + ': ' + l.result).join(' | '));
     }
 
-    // BigFootball returning an empty-but-successful list is a trustworthy
-    // "no matches today" signal (unlike an empty result from a FAILED
-    // call) — so it's handled separately from the "keep existing data on
-    // failure" safety net below, and clears the bucket instead of
+    // A provider genuinely succeeding with zero matches for the date is a
+    // trustworthy "no matches today" signal (unlike every provider
+    // failing/being unconfigured) — handled separately from the "keep
+    // existing data" safety net below, and clears the bucket instead of
     // preserving stale matches.
-    if (matches.length === 0 && bigFootballSucceeded) {
+    if (matches.length === 0 && anyProviderSucceeded) {
       await db.saveFixtures(days, []);
       const pruned = await db.pruneMatchesNotIn(days, 'football', []);
       lastFixtureRefresh[days] = Date.now();
-      console.log('[scheduler] BigFootball returned 0 matches for days=' + days + ' (' + dateStr + ') — treating as authoritative, bucket cleared' + (pruned ? ' (' + pruned + ' stale match(es) removed)' : ''));
+      console.log('[scheduler] All providers returned 0 matches for days=' + days + ' (' + dateStr + ') — treating as authoritative, bucket cleared' + (pruned ? ' (' + pruned + ' stale match(es) removed)' : ''));
       return;
     }
 
     const existing = await db.getFixtures(days);
 
-    // If BigFootball failed this cycle, don't overwrite whatever fixtures
-    // we already have with an empty list — keep showing slightly-stale-
-    // but-real data rather than wiping the board over a transient outage.
+    // If every provider failed/was unconfigured this cycle, don't
+    // overwrite whatever fixtures we already have with an empty list —
+    // keep showing slightly-stale-but-real data rather than wiping the
+    // board over a transient outage.
     if (matches.length === 0 && existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
-      console.warn('[scheduler] BigFootball fetch failed/empty for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
+      console.warn('[scheduler] All providers failed/unconfigured for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
       return;
     }
 
@@ -142,18 +133,17 @@ async function refreshFixturesForDay(days) {
     await db.saveFixtures(days, stripRawForStorage(matches));
     lastFixtureRefresh[days] = Date.now();
 
-    // Now that BigFootball has returned a complete, authoritative list for
-    // this bucket, remove anything left over that ISN'T in that list — this
-    // is what actually clears out old football-data.org/odds-api.io
-    // matches (plain numeric or oaio_-prefixed IDs) that were sitting in
-    // the DB from before BigFootball was switched on, or from any cycle
-    // that fell back to the legacy source. Only runs when BigFootball
-    // itself succeeded this cycle — never prunes based on a fallback
-    // fetch, since that list is deliberately narrower (no BigFootball
-    // matches to compare against).
-    if (bigFootballSucceeded) {
+    // Now that a provider has returned a complete, authoritative list for
+    // this bucket, remove anything left over that ISN'T in that list —
+    // this is what clears out stale matches from a previous cycle that
+    // used a different (lower-priority) provider, or leftovers from
+    // before this whole multi-provider system existed. Only runs when a
+    // provider actually succeeded this cycle — never prunes based on a
+    // fully-failed cycle, since matches is empty in that case for the
+    // wrong reason (see the "keep existing" branch above).
+    if (anyProviderSucceeded) {
       const pruned = await db.pruneMatchesNotIn(days, 'football', matches.map(m => m.id));
-      if (pruned > 0) console.log('[scheduler] Pruned ' + pruned + ' stale/legacy match(es) from days=' + days + ' now that BigFootball is authoritative for this cycle');
+      if (pruned > 0) console.log('[scheduler] Pruned ' + pruned + ' stale match(es) from days=' + days + ' now that ' + (result.primaryProviderUsed || 'a provider') + ' is authoritative for this cycle');
     }
 
     // Self-heal: clear any stale odds that were generated for a match
@@ -167,16 +157,16 @@ async function refreshFixturesForDay(days) {
       await db.clearMatchOdds(String(m.id), days);
     }
 
-    console.log('[scheduler] Refreshed ' + matches.length + ' real fixtures for days=' + days + ' (' + dateStr + ') via ' + (bigFootballSucceeded ? 'BigFootball' : 'football-data.org/odds-api.io (fallback)'));
+    console.log('[scheduler] Refreshed ' + matches.length + ' real fixtures for days=' + days + ' (' + dateStr + ') via ' + (result.primaryProviderUsed || 'no provider (all failed/unconfigured)'));
 
     // Temporary diagnostic line, requested explicitly to trace the
     // fetch->storage pipeline for today's bucket without needing to hit
-    // /internal/bigfootball/test separately. Safe to remove once the
-    // pipeline is confirmed healthy end to end.
+    // an admin endpoint separately. Safe to remove once the pipeline is
+    // confirmed healthy end to end.
     if (days === 0) {
       const liveCount = matches.filter(isLive).length;
       const analyzedCount = matches.filter(m => !!m.aiOdds).length;
-      console.log('[scheduler] DATA SOURCE: ' + (bigFootballSucceeded ? 'BigBallsData' : 'BigBallsData FAILED this cycle (no fallback — kept existing data)') + ' | matches received: ' + matches.length + ' | live matches: ' + liveCount + ' | analyzed matches: ' + analyzedCount + ' | last API update: ' + new Date().toISOString());
+      console.log('[scheduler] DATA SOURCE: ' + (result.primaryProviderUsed || 'NONE (all providers failed this cycle — kept existing data)') + ' | matches received: ' + matches.length + ' | live matches: ' + liveCount + ' | analyzed matches: ' + analyzedCount + ' | last API update: ' + new Date().toISOString());
     }
   } catch (e) {
     // Real failure — log it, do NOT substitute fake fixtures.
@@ -206,7 +196,11 @@ async function enrichLiveMatches() {
   try {
     const bucket = await db.getFixtures(0, 'football'); // "live" only ever matters for today's bucket
     if (!bucket || !Array.isArray(bucket.matches)) return;
-    const live = bucket.matches.filter(m => (m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.source === 'bigfootball');
+    // primarySource, not the old m.source==='bigfootball' check — matches
+    // now carry a canonical id (see footballProviders.js/lib/canonicalMatch.js),
+    // and only BigBallsData-sourced matches have a providerMatchId that
+    // BigFootball's own per-match endpoints will recognize.
+    const live = bucket.matches.filter(m => (m.status === 'IN_PLAY' || m.status === 'PAUSED') && m.primarySource === 'bigballsdata' && m.providerMatchId);
     if (!live.length) return;
 
     // Sequential, not Promise.all — this naturally paces requests against
@@ -217,12 +211,15 @@ async function enrichLiveMatches() {
     for (const m of live) {
       try {
         const [events, odds] = await Promise.all([
-          bigFootballData.getMatchEvents(m.id),
-          bigFootballData.getMatchOdds(m.id)
+          bigFootballData.getMatchEvents(m.providerMatchId),
+          bigFootballData.getMatchOdds(m.providerMatchId)
         ]);
+        // Stored keyed by the CANONICAL id (m.id) — that's what db.js's
+        // matchId field uses everywhere else now, so lookups by canonical
+        // id (e.g. server.js's on-demand routes) find this data correctly.
         await db.upsertBigFootballLiveData(m.id, 0, 'football', events, odds);
       } catch (e) {
-        console.error('[scheduler] BigFootball live enrichment failed for match ' + m.id + ': ' + e.message);
+        console.error('[scheduler] BigFootball live enrichment failed for match ' + m.id + ' (provider id ' + m.providerMatchId + '): ' + e.message);
       }
     }
   } catch (e) {
@@ -540,12 +537,17 @@ function start() {
   fixtureRefreshLoop();
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
 
+  const providerNames = footballProviders.PROVIDER_NAMES.join(', ');
+  console.log('[scheduler] Football providers in priority order: ' + providerNames + '. Fixtures pull from the first CONFIGURED provider that has data for a given date — see footballProviders.js.');
+
   if (bigFootballData.isConfigured()) {
-    console.log('[scheduler] BIGFOOTBALL_API_KEY detected — BigFootball is the ONLY fixtures/live-score source (football-data.org/odds-api.io fixture fallback has been disabled by request).');
+    // Live-match event/odds enrichment is BigBallsData-specific (its own
+    // per-match endpoints) — still gated on it directly here, since the
+    // other 6 providers don't have an equivalent wired up yet.
     enrichLiveMatches();
     setInterval(enrichLiveMatches, BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS);
   } else {
-    console.warn('[scheduler] BIGFOOTBALL_API_KEY is not set — fixtures will NOT refresh (football-data.org/odds-api.io fixture fallback has been disabled by request). Set BIGFOOTBALL_API_KEY in .env to resume.');
+    console.warn('[scheduler] BIGBALLSDATA_KEYS is not set — live match events/odds enrichment disabled (fixtures themselves may still come from another configured provider in the cascade).');
   }
 
   // Basketball: DISABLED — odds-api.io is rejecting sport=nba with "Invalid

@@ -25,6 +25,7 @@ const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const bigFootballData = require('./bigFootballData');
+const footballProviders = require('./footballProviders');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -234,17 +235,41 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   });
 });
 
+// Looks up a match by its CANONICAL id (what SafariBet/the frontend
+// actually has — see lib/canonicalMatch.js) and returns its
+// providerMatchId — the ORIGINAL BigFootball-native id needed to call
+// BigFootball's own per-match endpoints. Only checks today's + tomorrow's
+// buckets (days 0-1) since these on-demand routes only ever make sense
+// for a match that's live or about to be — no reason to scan the whole
+// week for this lookup.
+async function resolveProviderMatchId(canonicalId) {
+  for (const days of [0, 1]) {
+    const bucket = await db.getFixtures(days);
+    if (!bucket || !Array.isArray(bucket.matches)) continue;
+    const match = bucket.matches.find(m => String(m.id) === String(canonicalId));
+    if (match) return match;
+  }
+  return null;
+}
+
 // GET /api/matches/:id/events?key=jsk_xxx — on-demand goals/cards/subs feed
 // for one match, straight from BigFootball (short-cached — see
 // bigFootballData.js TTL.EVENTS_LIVE). Separate from the background
 // enrichment loop in scheduler.js (which only covers matches already in
 // today's bucket) so a match-detail page can pull a fresh read any time.
+// :id here is the CANONICAL match id (same id the frontend already has
+// from /api/fixtures) — resolved to BigFootball's own native id below,
+// since that's what BigFootball's endpoint actually needs.
 app.get('/api/matches/:id/events', requireApiKey, async (req, res) => {
   if (!bigFootballData.isConfigured()) {
     return res.status(503).json({ error: 'BigFootball is not configured on this server', events: [] });
   }
+  const match = await resolveProviderMatchId(req.params.id);
+  if (!match || match.primarySource !== 'bigballsdata' || !match.providerMatchId) {
+    return res.status(404).json({ error: 'Match not found in today/tomorrow, or was not sourced from BigBallsData (events are only available for BigBallsData-sourced matches currently)', events: [] });
+  }
   try {
-    const events = await bigFootballData.getMatchEvents(req.params.id);
+    const events = await bigFootballData.getMatchEvents(match.providerMatchId);
     res.json({ matchId: req.params.id, events });
   } catch (e) {
     res.status(502).json({ error: e.message, events: [] });
@@ -254,12 +279,17 @@ app.get('/api/matches/:id/events', requireApiKey, async (req, res) => {
 // GET /api/matches/:id/odds?key=jsk_xxx — BigFootball's own odds payload
 // for one match (display/reference only — NOT what settlement uses; that
 // remains match.aiOdds, produced by ai.js/realOdds.js and untouched here).
+// Same canonical-id resolution as /events above.
 app.get('/api/matches/:id/odds', requireApiKey, async (req, res) => {
   if (!bigFootballData.isConfigured()) {
     return res.status(503).json({ error: 'BigFootball is not configured on this server', odds: null });
   }
+  const match = await resolveProviderMatchId(req.params.id);
+  if (!match || match.primarySource !== 'bigballsdata' || !match.providerMatchId) {
+    return res.status(404).json({ error: 'Match not found in today/tomorrow, or was not sourced from BigBallsData (odds are only available for BigBallsData-sourced matches currently)', odds: null });
+  }
   try {
-    const odds = await bigFootballData.getMatchOdds(req.params.id);
+    const odds = await bigFootballData.getMatchOdds(match.providerMatchId);
     res.json({ matchId: req.params.id, odds });
   } catch (e) {
     res.status(502).json({ error: e.message, odds: null });
@@ -439,8 +469,12 @@ app.get('/api/status', async (req, res) => {
       rateLimit: bigFootballData.getRateLimitStatus(),
       cache: bigFootballData.getCacheStatus(),
       note: bigFootballData.isConfigured()
-        ? 'ONLY fixtures/live-score source — football-data.org/odds-api.io fixture fallback is disabled.'
-        : 'BIGFOOTBALL_API_KEY not set — fixtures will not refresh (fallback disabled). See .env.example.'
+        ? 'Top of the 7-provider fixtures cascade — see footballProviders below for the full priority order.'
+        : 'BIGBALLSDATA_KEYS not set. See .env.example.'
+    },
+    footballProviders: {
+      priorityOrder: footballProviders.PROVIDER_NAMES,
+      note: 'Fixtures come from the first CONFIGURED provider (in this order) that has data for a given date. See /internal/providers/status (admin) for per-key detail, /internal/providers/test to run the cascade live for a date.'
     },
     serverTime: new Date().toISOString()
   });
@@ -456,6 +490,31 @@ app.get('/api/bigfootball/health', async (req, res) => {
   }
   const result = await bigFootballData.testConnection();
   res.status(result.ok ? 200 : 502).json(Object.assign({ configured: true }, result));
+});
+
+// GET /internal/providers/status?adminSecret=... — per-provider, per-key
+// status across all 7 configured football data sources: which keys are
+// active/inactive, request/success/failure counts, cooldowns, last
+// request/success times. Keys are always masked (see lib/keyPool.js
+// maskKey) — never returns a raw key value, even here.
+app.get('/internal/providers/status', requireAdmin, (req, res) => {
+  res.json({ providers: footballProviders.getAllProviderStatus(), providerOrder: footballProviders.PROVIDER_NAMES });
+});
+
+// GET /internal/providers/test?adminSecret=...&date=YYYY-MM-DD — runs the
+// actual 7-provider cascade for one date and returns which provider was
+// used, the full attempt log (why each earlier provider was skipped/
+// failed/empty), and the resulting matches — this is the multi-provider
+// equivalent of /internal/bigfootball/test, for verifying the cascade
+// itself rather than just one provider.
+app.get('/internal/providers/test', requireAdmin, async (req, res) => {
+  const dateStr = req.query.date || footballData.getDateString(0);
+  try {
+    const result = await footballProviders.getMatchesForDate(dateStr, { fullCatalogue: true });
+    res.json({ dateStr, primaryProviderUsed: result.primaryProviderUsed, anyProviderSucceeded: result.anyProviderSucceeded, providerLog: result.providerLog, matchesCount: result.matches.length, matches: result.matches });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // GET /internal/bigfootball/test?adminSecret=... — admin-only deeper check:

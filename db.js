@@ -66,6 +66,12 @@ async function connectMongo() {
     apiKeysCollection = db.collection(KEYS_COLLECTION);
     walletsCollection = db.collection(WALLETS_COLLECTION);
     settingsCollection = db.collection(SETTINGS_COLLECTION);
+    // This index is what actually enforces "no duplicate canonical
+    // matches" at the database level: matchId now stores the CANONICAL id
+    // (see lib/canonicalMatch.js + footballProviders.js's toAppShape),
+    // never a provider's own native id, so this unique constraint applies
+    // to the canonical identity across all 7 providers — a genuine
+    // Mongo-level guarantee, not just app-side upsert discipline.
     await fixturesCollection.createIndex({ matchId: 1, days: 1 }, { unique: true });
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });

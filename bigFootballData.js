@@ -16,11 +16,17 @@
 // whatever the API itself returns on 429) so a bug here can't silently
 // burn through the whole daily quota.
 
-const BASE_URL = (process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com').replace(/\/+$/, '');
-const API_KEY = process.env.BIGFOOTBALL_API_KEY || '';
+const { createKeyPool } = require('./lib/keyPool');
+const { fetchWithKeyPool } = require('./lib/providerFetch');
 
-if (!API_KEY) {
-  console.warn('[bigFootballData] BIGFOOTBALL_API_KEY is not set — BigFootball requests will fail until it is configured in .env.');
+const BASE_URL = (process.env.BIGFOOTBALL_BASE_URL || 'https://api.bigballsdata.com').replace(/\/+$/, '');
+// BIGBALLSDATA_KEYS is the current name (comma-separated, supports
+// rotating across multiple accounts); BIGFOOTBALL_API_KEY is kept as a
+// fallback for anyone who deployed before multi-key support existed.
+const pool = createKeyPool('bigballsdata', process.env.BIGBALLSDATA_KEYS || process.env.BIGFOOTBALL_API_KEY || '');
+
+if (!pool.isConfigured()) {
+  console.warn('[bigFootballData] BIGBALLSDATA_KEYS (or legacy BIGFOOTBALL_API_KEY) is not set — BigFootball requests will fail until it is configured in .env.');
 }
 
 const REQUEST_TIMEOUT_MS = 10000;
@@ -33,13 +39,19 @@ const REQUEST_TIMEOUT_MS = 10000;
 // than necessary for the rest of that day. Good enough for a free-tier
 // key; persisting this to Mongo would be the next step if that ever
 // becomes a real problem.
-const MINUTE_LIMIT = 100;
-const DAY_LIMIT = 2000;
+// Per-key plan limits (Free + GitHub connected): 100 req/min, 2,000
+// req/day EACH. With multiple keys rotating, the realistic aggregate
+// budget scales with key count — one key still gets its own 100/min from
+// BigBallsData's side regardless of how many other keys exist, so the
+// TOTAL safe budget across the pool is roughly (keys × per-key limit).
+const KEY_COUNT = Math.max(1, pool.keyCount());
+const MINUTE_LIMIT = 100 * KEY_COUNT;
+const DAY_LIMIT = 2000 * KEY_COUNT;
 // Keep a safety margin below the hard caps rather than riding the exact
 // line — a few concurrent in-flight requests landing in the same instant
 // shouldn't be able to tip the account over its real limit.
-const MINUTE_SAFETY_LIMIT = 90;
-const DAY_SAFETY_LIMIT = 1900;
+const MINUTE_SAFETY_LIMIT = Math.round(MINUTE_LIMIT * 0.9);
+const DAY_SAFETY_LIMIT = Math.round(DAY_LIMIT * 0.95);
 
 let minuteWindowStart = Date.now();
 let minuteCount = 0;
@@ -139,79 +151,28 @@ const TTL = {
 };
 
 // ── Core fetch wrapper ──────────────────────────────────────────────────
-// Handles: auth header, timeout, 429/backoff, transient 5xx retry (once),
-// empty-body/parse safety, and the client-side rate budget above. Throws a
-// descriptive Error on real failure — callers decide whether to surface
-// that or degrade gracefully (see the getX wrappers below, which mostly
-// choose to degrade).
-async function bfFetch(pathAndQuery, { retried = false } = {}) {
-  if (!API_KEY) {
-    throw new Error('BIGFOOTBALL_API_KEY is not configured');
-  }
-
+// Handles: the aggregate soft rate budget above, THEN rotates through
+// every configured key (via lib/providerFetch — 429/401/403 on one key
+// automatically moves to the next), timeout, and empty-body/parse safety.
+// Throws a descriptive Error on real failure (every key exhausted) —
+// callers decide whether to surface that or degrade gracefully (see the
+// getX wrappers below, which mostly choose to degrade).
+async function bfFetch(pathAndQuery) {
   const budget = checkBudget();
   if (budget.blocked) {
     if (budget.reason === 'daily') {
-      throw new Error('BigFootball daily request budget (' + DAY_SAFETY_LIMIT + '/' + DAY_LIMIT + ') is used up for today — resets at UTC midnight');
+      throw new Error('BigFootball daily request budget (' + DAY_SAFETY_LIMIT + '/' + DAY_LIMIT + ' across ' + KEY_COUNT + ' key(s)) is used up for today — resets at UTC midnight');
     }
     // Minute budget — worth a short wait rather than failing outright,
     // since it clears itself within a few seconds at most.
     await new Promise(r => setTimeout(r, budget.retryAfterMs));
   }
 
-  const url = BASE_URL + pathAndQuery;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  let resp;
-  try {
-    recordRequest();
-    resp = await fetch(url, {
-      headers: { 'Authorization': 'Bearer ' + API_KEY, 'Accept': 'application/json' },
-      signal: controller.signal
-    });
-  } catch (e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') {
-      throw new Error('BigFootball request timed out after ' + REQUEST_TIMEOUT_MS + 'ms: ' + pathAndQuery);
-    }
-    throw new Error('BigFootball request failed: ' + e.message);
-  }
-  clearTimeout(timer);
-
-  if (resp.status === 429) {
-    // Respect Retry-After if the API sends one; otherwise back off 5s and
-    // retry ONCE — a single retry here is about not failing a whole
-    // fixture refresh over one momentary bump, not a substitute for the
-    // client-side budget above, which is what actually prevents this in
-    // normal operation.
-    if (!retried) {
-      const retryAfterHeader = resp.headers.get('retry-after');
-      const waitMs = retryAfterHeader ? Math.min(30000, parseInt(retryAfterHeader, 10) * 1000) : 5000;
-      console.warn('[bigFootballData] 429 rate limited on ' + pathAndQuery + ' — waiting ' + waitMs + 'ms and retrying once');
-      await new Promise(r => setTimeout(r, waitMs));
-      return bfFetch(pathAndQuery, { retried: true });
-    }
-    throw new Error('BigFootball HTTP 429 (rate limited) on ' + pathAndQuery);
-  }
-
-  if (resp.status >= 500 && !retried) {
-    // Transient server error — one short retry, same philosophy as 429.
-    await new Promise(r => setTimeout(r, 1500));
-    return bfFetch(pathAndQuery, { retried: true });
-  }
-
-  if (!resp.ok) {
-    let bodyText = '';
-    try { bodyText = await resp.text(); } catch (_) {}
-    throw new Error('BigFootball HTTP ' + resp.status + (bodyText ? ': ' + bodyText.slice(0, 300) : '') + ' on ' + pathAndQuery);
-  }
-
-  try {
-    return await resp.json();
-  } catch (e) {
-    throw new Error('BigFootball returned a non-JSON response for ' + pathAndQuery);
-  }
+  recordRequest();
+  return fetchWithKeyPool(pool, (key) => ({
+    url: BASE_URL + pathAndQuery,
+    headers: { 'Authorization': 'Bearer ' + key, 'Accept': 'application/json' }
+  }), { timeoutMs: REQUEST_TIMEOUT_MS });
 }
 
 // Cached GET — the shared path every getX function below funnels through.
@@ -690,5 +651,6 @@ module.exports = {
   getTeams, getPlayers, getStandings, getInjuries, getPredictions,
   getUsage, testConnection, getRateLimitStatus, getCacheStatus, clearCache,
   normalizeMatch, normalizeEvent, normalizeOdds, normalizeStatus, // exported for reuse/testing
-  isConfigured: () => !!API_KEY
+  isConfigured: () => pool.isConfigured(),
+  getKeyPoolStatus: () => pool.getStatus()
 };
