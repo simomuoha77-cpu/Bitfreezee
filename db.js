@@ -109,12 +109,11 @@ async function saveFixtures(days, matches, sport) {
       return prev && prev.aiOdds ? Object.assign({}, m, { aiOdds: prev.aiOdds, aiPrediction: prev.aiPrediction, aiConfidence: prev.aiConfidence, aiAnalysis: prev.aiAnalysis, aiXG: prev.aiXG, aiValueBet: prev.aiValueBet, aiAnalyzedAt: prev.aiAnalyzedAt }) : m;
     });
     fixturesFallback[bucketKey] = { matches: merged, fetchedAt: Date.now(), updatedAt: now };
-    // Same cross-bucket cleanup in fallback mode — see the real-Mongo path
-    // below for why this matters. Scoped to buckets of the SAME sport only
-    // (bucketKey prefix match) — a football match id and a basketball
-    // match id are namespaced differently anyway, but this keeps the
-    // cleanup's intent explicit rather than relying on that as an
-    // implementation detail.
+    // Cross-bucket cleanup disabled for football — see the real-Mongo path
+    // below for why (it was actively wiping days 3-5 whenever a later day
+    // in the 0-6 refresh sequence returned an overlapping match id).
+    // Still applied for basketball.
+    if (sport === 'football') return;
     Object.keys(fixturesFallback).forEach(otherBucketKey => {
       if (otherBucketKey === bucketKey) return;
       if (!otherBucketKey.startsWith(sport + ':')) return;
@@ -168,18 +167,22 @@ async function saveFixtures(days, matches, sport) {
     });
     if (ops.length) await fixturesCollection.bulkWrite(ops);
 
-    // CROSS-BUCKET CLEANUP: a match's kickoff timing can cause it to
-    // legitimately satisfy TWO different day-buckets' inclusion criteria at
-    // once (e.g. a match near a midnight boundary, or odds-api.io's
-    // "still-live from previous day" window overlapping two buckets'
-    // checks independently) — this was the actual cause of a match showing
-    // FINISHED in one bucket and stuck LIVE in another, since each bucket
-    // tracked its own independent copy that never reconciled. Deleting the
-    // match from every OTHER bucket OF THE SAME SPORT whenever we save it
-    // into this one guarantees exactly one authoritative copy exists at any
-    // time — the most recently refreshed one. Scoped by sport (regex
-    // prefix) so a basketball fixture refresh can never delete a football
-    // bucket's data even if match IDs ever happened to coincide.
+    // CROSS-BUCKET CLEANUP — football-data.org/odds-api.io era only.
+    // Historically needed because merging two separate providers could
+    // produce a match that looked "live" in one bucket and "finished" in
+    // another. BigFootball is now the sole football source, each
+    // day-bucket is populated from its OWN explicit date-filtered call,
+    // and pruneMatchesNotIn (scheduler.js) already keeps each bucket
+    // authoritative on its own. This step has become actively HARMFUL for
+    // football: if BigFootball ever returns the same match id for two
+    // different `date` queries (plausible for far-future days, or a match
+    // near a midnight boundary), whichever day-bucket gets refreshed LAST
+    // in the 0→6 sequence "wins" and silently wipes that match from every
+    // earlier bucket that legitimately had it — this is exactly what was
+    // emptying out days 3-5 while later days in the loop still had data.
+    // Left in place for basketball (basketballData.js may still have the
+    // same original multi-source-merge shape this was written for).
+    if (sport === 'football') return;
     const matchIds = matches.map(m => String(m.id));
     if (matchIds.length) {
       await fixturesCollection.deleteMany({
