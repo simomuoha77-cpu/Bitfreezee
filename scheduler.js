@@ -164,6 +164,16 @@ async function refreshFixturesForDay(days) {
     }
 
     console.log('[scheduler] Refreshed ' + matches.length + ' real fixtures for days=' + days + ' (' + dateStr + ') via ' + (bigFootballSucceeded ? 'BigFootball' : 'football-data.org/odds-api.io (fallback)'));
+
+    // Temporary diagnostic line, requested explicitly to trace the
+    // fetch->storage pipeline for today's bucket without needing to hit
+    // /internal/bigfootball/test separately. Safe to remove once the
+    // pipeline is confirmed healthy end to end.
+    if (days === 0) {
+      const liveCount = matches.filter(isLive).length;
+      const analyzedCount = matches.filter(m => !!m.aiOdds).length;
+      console.log('[scheduler] DATA SOURCE: ' + (bigFootballSucceeded ? 'BigBallsData' : 'football-data.org (fallback)') + ' | matches received: ' + matches.length + ' | live matches: ' + liveCount + ' | analyzed matches: ' + analyzedCount + ' | last API update: ' + new Date().toISOString());
+    }
   } catch (e) {
     // Real failure — log it, do NOT substitute fake fixtures.
     console.error('[scheduler] Fixture refresh FAILED for days=' + days + ': ' + e.message);

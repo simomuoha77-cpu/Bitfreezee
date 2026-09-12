@@ -325,6 +325,19 @@ function normalizeMatch(m) {
     ? leagueRaw
     : (leagueRaw && (leagueRaw.name || leagueRaw.league_name)) || m.league_name || m.competitionName || null;
   const leagueId = (leagueRaw && typeof leagueRaw === 'object') ? idOf(leagueRaw) : null;
+  // Frontend's "Leagues" stat and league-filter dropdown key off
+  // competition.code (a short code like football-data.org's "PL"/"SA") —
+  // BigFootball only gives us a plain name string, no code, so that stat
+  // silently broke for BigFootball matches even after the name itself
+  // started showing correctly. Deriving a stable synthetic code from the
+  // name (e.g. "La Liga" -> "LA_LIGA") fixes the COUNT and in-app grouping
+  // consistently. It won't match football-data.org's own codes (e.g. the
+  // league filter dropdown's option list, which still comes from
+  // /internal/competitions — a football-data.org-only endpoint) — that's
+  // a separate follow-up (pointing that dropdown at BigFootball's own
+  // /v1/leagues instead) if the league filter itself needs to work too,
+  // not just the count.
+  const leagueCode = leagueName ? leagueName.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
 
   // CONFIRMED: kickoff time field is `kickoff_utc`, not `date`/`utc_date`/
   // `kickoff`/`start_time` (all of which this app's other data sources use
@@ -356,7 +369,7 @@ function normalizeMatch(m) {
       fullTime: (homeScore != null && awayScore != null) ? { home: homeScore, away: awayScore } : null,
       halfTime: (htHome != null && htAway != null) ? { home: htHome, away: htAway } : null
     },
-    competition: { id: leagueId, name: leagueName },
+    competition: { id: leagueId, name: leagueName, code: leagueCode },
     venue: m.venue || m.stadium || null,
     sport: m.sport || 'football',
     raw: m // kept for debugging/verification — safe to ignore, not sent by /api/fixtures (see server.js stripRaw)
