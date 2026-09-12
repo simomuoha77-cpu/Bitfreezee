@@ -36,7 +36,16 @@ const LIVE_SAFETY_REFRESH_MS = 4 * 60 * 1000;        // SLOW path: even with NO 
 // alone, never by actual AI capacity — so adding more keys couldn't help,
 // since nothing was ever using more than one key at a time to begin with.
 const EXPIRY_CHECK_INTERVAL_MS = 2 * 60 * 1000;      // how often to delete FINISHED matches immediately + anything stuck past the 3h cutoff — shortened from 5min so finished matches disappear from the app/API promptly
-const DAY_BUCKETS = [0, 1, 2]; // today, tomorrow, day after — reduced from 8 days. With real AI capacity tested at ~4 matches/min sustainable (11 keys across Gemini+Groq, each recovering every 1-2 min), 8 days of even a league-narrowed fixture list produced 1,376+ pending matches — a backlog that would take 5+ hours to clear even in ideal conditions, meaning almost everything sat AI-pending indefinitely. 3 days keeps total volume small enough to realistically stay fully analyzed rather than perpetually behind. If you want more lookahead later, the AI capacity needs to grow first (more genuinely separate accounts, or a paid tier) — otherwise more days just means a bigger permanent backlog, not more useful coverage.
+const FOOTBALL_DAY_BUCKETS = [0, 1, 2, 3, 4, 5, 6]; // today through 6 days ahead — one full week.
+// Previously capped at [0,1,2] because football-data.org's much larger
+// catalogue produced 1,376+ pending matches over 8 days — a backlog the AI
+// analysis pipeline (≈4 matches/min sustainable) couldn't realistically
+// clear. That constraint no longer applies: BigFootball only covers 8
+// leagues (~30 matches/day, confirmed via /v1/leagues), so a full week is
+// roughly ~200 matches total — comfortably clearable in under an hour of
+// AI capacity, not a permanent backlog. If BigFootball's league coverage
+// ever grows substantially, revisit this the same way.
+const BASKETBALL_DAY_BUCKETS = [0, 1, 2]; // unrelated to the football week-lookahead change above — basketballData.js has its own separate API/budget, deliberately left untouched
 
 let running = false;
 let lastFixtureRefresh = {}; // days -> timestamp
@@ -333,7 +342,7 @@ async function analysisPassInner() {
   // ordered by soonest kickoff first — a match kicking off in an hour
   // should never sit behind one 6 days out just because of iteration order.
   const queue = [];
-  for (const days of DAY_BUCKETS) {
+  for (const days of FOOTBALL_DAY_BUCKETS) {
     const bucket = await db.getFixtures(days);
     if (!bucket || !Array.isArray(bucket.matches)) continue;
     bucket.matches.filter(needsAnalysis).forEach(match => queue.push({ match, days }));
@@ -471,7 +480,7 @@ async function fixtureRefreshLoop() {
   if (fixtureRefreshLoopInFlight) return; // previous cycle (now potentially ~12 calls per day bucket) still running — never overlap
   fixtureRefreshLoopInFlight = true;
   try {
-    for (const days of DAY_BUCKETS) {
+    for (const days of FOOTBALL_DAY_BUCKETS) {
       const last = lastFixtureRefresh[days] || 0;
       const interval = days === 0 ? TODAY_REFRESH_INTERVAL_MS : FIXTURE_REFRESH_INTERVAL_MS;
       if (Date.now() - last >= interval) {
@@ -487,7 +496,7 @@ async function fixtureRefreshLoop() {
 // lastBasketballRefresh instead so the two sports' refresh timers never
 // interfere with each other.
 async function basketballFixtureRefreshLoop() {
-  for (const days of DAY_BUCKETS) {
+  for (const days of BASKETBALL_DAY_BUCKETS) {
     const last = lastBasketballRefresh[days] || 0;
     const interval = days === 0 ? TODAY_REFRESH_INTERVAL_MS : FIXTURE_REFRESH_INTERVAL_MS;
     if (Date.now() - last >= interval) {
