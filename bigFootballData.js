@@ -129,9 +129,10 @@ const TTL = {
   PREDICTIONS: 15 * 60 * 1000,      // 15m
   MATCHES_TODAY: 45 * 1000,         // today's list, non-live — refreshed often but not on every request
   MATCHES_LIVE: 12 * 1000,          // the live-status list itself — short, this drives "is anything live right now"
+  SUPPLEMENTARY_LEAGUE: 20 * 60 * 1000, // per-league backfill pass (see getSupplementaryLeagueMatches) — long TTL is what keeps this cheap: repeated scheduler cycles within 20min reuse the cached result instead of re-hitting the API
   MATCH_DETAIL_LIVE: 12 * 1000,     // a single live match's detail
   MATCH_DETAIL_FINAL: 30 * 60 * 1000, // a finished/not-started match's detail barely changes
-  EVENTS_LIVE: 10 * 1000,           // events for a currently-live match — this is what powers goal/card/sub updates
+  EVENTS_LIVE: 25 * 1000,           // events for a currently-live match — this is what powers goal/card/sub updates. Bumped from 10s: at 1 call/cycle per live match this is the single biggest recurring cost once several matches are live simultaneously, and 25s is still fast enough that a goal shows up well within a minute.
   EVENTS_FINAL: 30 * 60 * 1000,     // events for a match that's over are final
   ODDS_LIVE: 15 * 1000,             // in-play odds move fast
   ODDS_PREMATCH: 5 * 60 * 1000      // pre-match odds move slowly
@@ -433,11 +434,121 @@ async function getMatches(filters) {
   return unwrapList(data, 'matches').map(normalizeMatch).filter(Boolean);
 }
 
+// Pagination-aware list fetch — BigFootball's actual pagination shape
+// isn't confirmed (no docs access, and no page-2 response seen yet), so
+// this handles the common conventions defensively: {meta:{page,limit,
+// total}}, {meta:{has_more}}, {meta:{next_page}}, {meta:{total_pages}},
+// OR no meta at all (in which case it heuristically keeps paging as long
+// as a full page came back, and stops the moment a short page arrives).
+// HARD SAFETY CAP at 20 pages regardless of what meta claims — this is
+// what stops a single call site from ever being able to exhaust the
+// entire 2,000/day budget by itself if the API's pagination ever behaves
+// unexpectedly (e.g. always reports has_more:true).
+const MAX_PAGES_PER_QUERY = 20;
+async function fetchAllPages(path, baseFilters, ttl, cacheLabel) {
+  const pageSize = baseFilters.limit || 100;
+  let page = 1;
+  let all = [];
+  while (page <= MAX_PAGES_PER_QUERY) {
+    const filters = Object.assign({}, baseFilters, { limit: pageSize, page });
+    const query = qs(filters);
+    const data = await cachedGet(cacheLabel + query, path + query, ttl);
+    const list = unwrapList(data, cacheLabel);
+    all = all.concat(list);
+
+    let hasMore = false;
+    const meta = data && typeof data === 'object' ? data.meta : null;
+    if (meta) {
+      if (typeof meta.has_more === 'boolean') hasMore = meta.has_more;
+      else if (meta.next_page != null) hasMore = true;
+      else if (meta.total_pages != null) hasMore = page < meta.total_pages;
+      else if (meta.total != null && meta.page != null && meta.limit != null) hasMore = (meta.page * meta.limit) < meta.total;
+      else hasMore = list.length >= pageSize; // meta present but none of the known shapes — fall back to the heuristic below
+    } else {
+      hasMore = list.length >= pageSize; // no meta: a full page suggests there might be more; a short page means we've reached the end
+    }
+
+    if (!hasMore || list.length === 0) break;
+    page++;
+  }
+  return all;
+}
+
+// ── Supplementary league coverage for "today" ───────────────────────────
+// The plain sport+date call above SHOULD return every league's matches for
+// that date (BigFootball's own docs describe /v1/matches as filterable by
+// sport/league/date/status, with league OPTIONAL) — but since that's
+// unconfirmed against a case where it demonstrably under-returns, this
+// cross-checks it: pull the full league catalogue via /v1/leagues, and for
+// any league NOT already represented in the primary pull, fetch that
+// league's matches for the date directly and merge them in.
+//
+// Deliberately bounded to protect the 2,000/day budget: only runs for
+// TODAY (days=0) — not tomorrow/day-after, where it matters far less than
+// having accurate live data — checks at most
+// MAX_SUPPLEMENTARY_LEAGUES_PER_CYCLE leagues per call, and caches each
+// league's result for SUPPLEMENTARY_TTL so repeated scheduler cycles
+// within that window cost zero extra requests (see cachedGet). Worst
+// case: 5 calls every 20 min ≈ 360/day — noticeable but nowhere near
+// exhausting the daily cap even stacked with the regular fixture refresh.
+const MAX_SUPPLEMENTARY_LEAGUES_PER_CYCLE = 5;
+async function getSupplementaryLeagueMatches(dateStr, alreadyCoveredLeagueNames) {
+  let leagues;
+  try {
+    leagues = await getLeagues({ sport: 'football' });
+  } catch (e) {
+    console.error('[bigFootballData] could not fetch league catalogue for supplementary coverage: ' + e.message);
+    return [];
+  }
+  if (!Array.isArray(leagues) || !leagues.length) return [];
+
+  const covered = new Set(Array.from(alreadyCoveredLeagueNames || []).map(n => n.toLowerCase()));
+  const missing = leagues.filter(l => {
+    const name = (l.name || l.league_name || '').toLowerCase();
+    return name && !covered.has(name);
+  }).slice(0, MAX_SUPPLEMENTARY_LEAGUES_PER_CYCLE);
+
+  if (!missing.length) return [];
+
+  const results = [];
+  for (const league of missing) {
+    const leagueId = league.id != null ? league.id : league.code;
+    if (leagueId == null) continue;
+    try {
+      const raw = await fetchAllPages('/v1/matches', { sport: 'football', date: dateStr, league: leagueId }, TTL.SUPPLEMENTARY_LEAGUE, 'matches:league:' + leagueId + ':');
+      raw.map(normalizeMatch).filter(Boolean).forEach(m => results.push(m));
+    } catch (e) {
+      console.error('[bigFootballData] supplementary fetch failed for league ' + (league.name || leagueId) + ': ' + e.message);
+    }
+  }
+  return results;
+}
+
 // Today's matches for football, in the SAME shape footballData.js's
 // getMatchesForDate/getMergedMatchesForDate already return — this is the
-// function scheduler.js's refresh loop calls.
-async function getMatchesForDate(dateStr) {
-  return getMatches({ sport: 'football', date: dateStr });
+// function scheduler.js's refresh loop calls. Full-catalogue: paginated
+// primary pull, PLUS (for today only) a supplementary league-by-league
+// pass for any league not already covered — deduped by id and sorted by
+// kickoff time.
+async function getMatchesForDate(dateStr, options) {
+  options = options || {};
+  const primaryRaw = await fetchAllPages('/v1/matches', { sport: 'football', date: dateStr }, TTL.MATCHES_TODAY, 'matches:');
+  const primary = primaryRaw.map(normalizeMatch).filter(Boolean);
+
+  const byId = new Map();
+  primary.forEach(m => byId.set(m.id, m));
+
+  if (options.fullCatalogue) {
+    const coveredLeagues = new Set(primary.map(m => m.competition && m.competition.name).filter(Boolean));
+    const supplementary = await getSupplementaryLeagueMatches(dateStr, coveredLeagues);
+    supplementary.forEach(m => { if (!byId.has(m.id)) byId.set(m.id, m); });
+  }
+
+  return Array.from(byId.values()).sort((a, b) => {
+    if (!a.utcDate) return 1;
+    if (!b.utcDate) return -1;
+    return new Date(a.utcDate) - new Date(b.utcDate);
+  });
 }
 
 // Live matches right now — uses the API's own status=live filter rather

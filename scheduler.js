@@ -88,7 +88,12 @@ async function refreshFixturesForDay(days) {
     let matches = [];
     let bigFootballSucceeded = false;
     try {
-      matches = await bigFootballData.getMatchesForDate(dateStr);
+      // fullCatalogue only for today (days===0): supplementary per-league
+      // backfill is what actually catches leagues the plain call might
+      // miss (see bigFootballData.js), but it costs extra requests, so
+      // it's deliberately not run for tomorrow/day-after where it matters
+      // far less than staying well under the daily budget.
+      matches = await bigFootballData.getMatchesForDate(dateStr, { fullCatalogue: days === 0 });
       bigFootballSucceeded = true;
     } catch (e) {
       console.error('[scheduler] BigFootball fixture fetch failed for days=' + days + ' (' + dateStr + '): ' + e.message + ' — keeping existing data for this cycle (no legacy fallback)');
@@ -183,7 +188,7 @@ async function refreshFixturesForDay(days) {
 // db.upsertBigFootballLiveData) — never aiOdds/aiPrediction/etc, so this
 // can run freely without any risk of touching the AI-priced odds actually
 // used for settlement.
-const BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS = 20 * 1000;
+const BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS = 25 * 1000; // matched to bigFootballData.js's EVENTS_LIVE cache TTL — no point polling faster than the cache itself refreshes
 let liveEnrichInFlight = false;
 
 async function enrichLiveMatches() {
