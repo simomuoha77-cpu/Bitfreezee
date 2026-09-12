@@ -381,8 +381,18 @@ function applyMarginToGroup(oddsArr, margin) {
   // Scale so the group's implied probabilities sum to (1 + margin) instead of 1.
   const scale = (1 + margin) / fairSum;
   return probs.map(p => {
-    const marginedProb = p * scale;
-    return marginedProb > 0 ? Math.round((1 / marginedProb) * 100) / 100 : null;
+    // CONFIRMED BUG, now fixed: when one outcome's raw probability is
+    // already near-certain (e.g. a near-lock live scenario), multiplying
+    // by scale can push the margined probability ABOVE 1.0, which inverts
+    // to a decimal odd BELOW 1.00 — mathematically impossible (implies
+    // guaranteed profit with zero risk). Reproduced directly: raw odds
+    // [1.02, 40, 60] at 6% margin produced a 0.98 odd. Clamping the
+    // margined probability at 0.99 before inverting keeps the worst case
+    // at 1.01, matching the same floor already enforced on raw AI odds in
+    // parseAiOdds() above — this is the SECOND place that floor needed to
+    // exist, not a duplicate of the first.
+    const marginedProb = Math.min(0.99, p * scale);
+    return marginedProb > 0 ? Math.min(80, Math.max(1.01, Math.round((1 / marginedProb) * 100) / 100)) : null;
   });
 }
 
