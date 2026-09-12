@@ -439,8 +439,8 @@ app.get('/api/status', async (req, res) => {
       rateLimit: bigFootballData.getRateLimitStatus(),
       cache: bigFootballData.getCacheStatus(),
       note: bigFootballData.isConfigured()
-        ? 'Primary fixtures/live-score source. football-data.org/odds-api.io only run as an automatic per-cycle fallback.'
-        : 'BIGFOOTBALL_API_KEY not set — running on football-data.org/odds-api.io only. See .env.example.'
+        ? 'ONLY fixtures/live-score source — football-data.org/odds-api.io fixture fallback is disabled.'
+        : 'BIGFOOTBALL_API_KEY not set — fixtures will not refresh (fallback disabled). See .env.example.'
     },
     serverTime: new Date().toISOString()
   });

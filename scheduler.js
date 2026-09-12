@@ -1,9 +1,11 @@
 // scheduler.js — the "no clicking needed" background engine.
 //
 // Runs entirely on the server. Jobs:
-//   1. Refresh fixtures — BigFootball first (see bigFootballData.js),
-//      falling back per-cycle to football-data.org/odds-api.io only if
-//      BigFootball isn't configured or that call fails.
+//   1. Refresh fixtures from BigFootball ONLY (see bigFootballData.js).
+//      football-data.org/odds-api.io are NOT used as a fixtures fallback —
+//      disabled by explicit request. If BigFootball fails or isn't
+//      configured, a cycle simply keeps whatever's already stored rather
+//      than reaching for the legacy source.
 //   2. When BigFootball is configured: enrich already-live matches with
 //      real events (goals/cards/subs) and odds on a fast interval (see
 //      enrichLiveMatches below) — separate from AI analysis entirely.
@@ -11,9 +13,9 @@
 //      are older than ANALYSIS_MAX_AGE_MS (so upcoming matches get
 //      refreshed analysis as kickoff approaches, not just once).
 //
-// Paced conservatively to respect each provider's free-tier rate limits
-// (bigFootballData.js/footballData.js each throttle their own calls) and
-// to avoid hammering the AI providers.
+// Paced conservatively to respect BigFootball's free-tier rate limits
+// (bigFootballData.js throttles its own calls) and to avoid hammering the
+// AI providers.
 
 const db = require('./db');
 const footballData = require('./footballData');
@@ -74,30 +76,22 @@ function hasKnownTeams(match) {
 async function refreshFixturesForDay(days) {
   const dateStr = footballData.getDateString(days);
   try {
-    // BIGFOOTBALL FIRST: this is now the primary fixtures source (real
-    // matches, live scores, status) — football-data.org/odds-api.io only
-    // run for this cycle if BigFootball isn't configured (no
-    // BIGFOOTBALL_API_KEY set) or this specific call fails/throws. This is
-    // a per-cycle decision, not a one-time startup choice, so BigFootball
-    // recovering after a temporary outage is picked back up automatically
-    // on the very next refresh — no restart needed.
-    //
-    // IMPORTANT: an empty-but-successful BigFootball response (genuinely no
-    // matches today) must NOT fall through to the legacy source — that
-    // would silently mix two providers' fixture lists/IDs together. Only a
-    // thrown error triggers the fallback.
+    // BIGFOOTBALL ONLY — football-data.org/odds-api.io are no longer used
+    // as a fixtures fallback at all, by explicit request. If BigFootball
+    // isn't configured or a call fails, this cycle does nothing and keeps
+    // whatever's already stored (see the "keep existing" branch below) —
+    // it never reaches for the legacy source.
+    if (!bigFootballData.isConfigured()) {
+      console.error('[scheduler] BIGFOOTBALL_API_KEY is not set — skipping fixture refresh for days=' + days + '. Fixtures will not update until it is configured (football-data.org fallback has been disabled).');
+      return;
+    }
     let matches = [];
     let bigFootballSucceeded = false;
-    if (bigFootballData.isConfigured()) {
-      try {
-        matches = await bigFootballData.getMatchesForDate(dateStr);
-        bigFootballSucceeded = true;
-      } catch (e) {
-        console.error('[scheduler] BigFootball fixture fetch failed for days=' + days + ' (' + dateStr + '): ' + e.message + ' — falling back to football-data.org/odds-api.io for this cycle only');
-      }
-    }
-    if (!bigFootballSucceeded) {
-      matches = await footballData.getMergedMatchesForDate(dateStr, days === 0);
+    try {
+      matches = await bigFootballData.getMatchesForDate(dateStr);
+      bigFootballSucceeded = true;
+    } catch (e) {
+      console.error('[scheduler] BigFootball fixture fetch failed for days=' + days + ' (' + dateStr + '): ' + e.message + ' — keeping existing data for this cycle (no legacy fallback)');
     }
 
     // BigFootball returning an empty-but-successful list is a trustworthy
@@ -115,15 +109,11 @@ async function refreshFixturesForDay(days) {
 
     const existing = await db.getFixtures(days);
 
-    // If BOTH sources failed/returned nothing this cycle (e.g. football-data.org
-    // hit its 429 at the same moment odds-api.io was cooling down from its
-    // own rate limit — a real scenario we hit in testing), don't overwrite
-    // whatever fixtures we already have with an empty list. The scheduler
-    // runs every 15 minutes; better to keep showing slightly-stale-but-real
-    // data than to wipe the board because of a temporary, simultaneous
-    // outage on both providers.
+    // If BigFootball failed this cycle, don't overwrite whatever fixtures
+    // we already have with an empty list — keep showing slightly-stale-
+    // but-real data rather than wiping the board over a transient outage.
     if (matches.length === 0 && existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
-      console.warn('[scheduler] Both fixture sources returned nothing for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
+      console.warn('[scheduler] BigFootball fetch failed/empty for days=' + days + ' (' + dateStr + ') — keeping ' + existing.matches.length + ' existing fixtures rather than wiping them');
       return;
     }
 
@@ -172,7 +162,7 @@ async function refreshFixturesForDay(days) {
     if (days === 0) {
       const liveCount = matches.filter(isLive).length;
       const analyzedCount = matches.filter(m => !!m.aiOdds).length;
-      console.log('[scheduler] DATA SOURCE: ' + (bigFootballSucceeded ? 'BigBallsData' : 'football-data.org (fallback)') + ' | matches received: ' + matches.length + ' | live matches: ' + liveCount + ' | analyzed matches: ' + analyzedCount + ' | last API update: ' + new Date().toISOString());
+      console.log('[scheduler] DATA SOURCE: ' + (bigFootballSucceeded ? 'BigBallsData' : 'BigBallsData FAILED this cycle (no fallback — kept existing data)') + ' | matches received: ' + matches.length + ' | live matches: ' + liveCount + ' | analyzed matches: ' + analyzedCount + ' | last API update: ' + new Date().toISOString());
     }
   } catch (e) {
     // Real failure — log it, do NOT substitute fake fixtures.
@@ -537,11 +527,11 @@ function start() {
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
 
   if (bigFootballData.isConfigured()) {
-    console.log('[scheduler] BIGFOOTBALL_API_KEY detected — BigFootball is the primary fixtures/live-score source, with football-data.org/odds-api.io as automatic fallback.');
+    console.log('[scheduler] BIGFOOTBALL_API_KEY detected — BigFootball is the ONLY fixtures/live-score source (football-data.org/odds-api.io fixture fallback has been disabled by request).');
     enrichLiveMatches();
     setInterval(enrichLiveMatches, BIGFOOTBALL_LIVE_ENRICH_INTERVAL_MS);
   } else {
-    console.warn('[scheduler] BIGFOOTBALL_API_KEY is not set — running on football-data.org/odds-api.io only. Set BIGFOOTBALL_API_KEY in .env to switch to BigFootball as the primary source.');
+    console.warn('[scheduler] BIGFOOTBALL_API_KEY is not set — fixtures will NOT refresh (football-data.org/odds-api.io fixture fallback has been disabled by request). Set BIGFOOTBALL_API_KEY in .env to resume.');
   }
 
   // Basketball: DISABLED — odds-api.io is rejecting sport=nba with "Invalid
