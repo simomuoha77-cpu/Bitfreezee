@@ -39,6 +39,22 @@ function normalizeMatch(m) {
 }
 
 async function getMatchesForDate(dateStr) {
+  // CONFIRMED BUG, now fixed: footballData.getMatchesForDate() never
+  // throws — even when EVERY one of its keys is currently rate-limited,
+  // it just logs each per-competition failure internally and returns [].
+  // Without this check, that "successful but empty" result was
+  // indistinguishable from a genuine "no matches today", which made
+  // footballProviders.js's cascade treat total key exhaustion as
+  // authoritative — wiping out previously-cached real fixtures in Mongo
+  // every time football-data.org's keys ran out, instead of preserving
+  // them and/or falling through to the next provider. Checking
+  // availableKeys BEFORE calling it catches this: 0 available keys (while
+  // configured) means "currently exhausted", not "no games today" — throw
+  // so the orchestrator correctly treats this as a failed attempt.
+  const poolStatus = footballData.getKeyPoolStatus();
+  if (poolStatus.totalKeys > 0 && poolStatus.availableKeys === 0) {
+    throw new Error('[football-data.org] all ' + poolStatus.totalKeys + ' key(s) are currently rate-limited/cooling down — treating as unavailable, not "no matches today"');
+  }
   const matches = await footballData.getMatchesForDate(dateStr);
   return (matches || []).map(normalizeMatch).filter(Boolean);
 }
