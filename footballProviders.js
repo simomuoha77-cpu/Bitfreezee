@@ -7,26 +7,19 @@
 //   BigBallsData → API-Football → football-data.org → Sportmonks →
 //   TheSportsDB → Highlightly → API-Sports
 //
-// CASCADE RULE: do NOT call every provider for every date. Call the
-// highest-priority CONFIGURED provider first; only fall through to the
-// next one if that call fails outright OR returns zero matches for the
-// date. The very first provider to return a non-empty list wins — the
-// cascade stops there.
-//
-// IMPORTANT HONEST LIMITATION: the request describes gap-filling at
-// per-COMPETITION/per-match granularity ("if BigBallsData doesn't have
-// THIS match, ask API-Football for it"). Implementing that precisely
-// would require a maintained reference table of which specific
-// competitions each of the 7 providers covers — nothing here can safely
-// invent that without real coverage data from each provider. What's
-// implemented instead is date-level cascade: if the top provider returns
-// SOMETHING for a date, that's used (matching "don't call the others
-// unnecessarily"); if it returns NOTHING (misconfigured, down, or
-// genuinely has no data for that date), the next provider is tried. The
-// dedup/canonical-ID/sourceProviders machinery below is fully wired and
-// ready for tighter per-competition gap-filling later — it just isn't
-// being asked to do that yet, since only one provider's list normally
-// reaches the merge step under this cascade rule.
+// CASCADE RULE (UPDATED): query EVERY CONFIGURED provider for the date,
+// not just the first one that has data. Originally this stopped at the
+// first provider with any matches at all — but since BigBallsData almost
+// always has SOMETHING for a given date, that meant the other 6
+// providers, even with real keys added, were never actually called. This
+// defeats the actual goal (more total games reaching SafariBet). Every
+// UNCONFIGURED provider (no key) is still skipped entirely — that part of
+// "don't call providers unnecessarily" stays. All configured providers'
+// results are merged and deduplicated below (see lib/canonicalMatch.js);
+// priority order still matters for which provider's data "wins" when two
+// providers report the SAME real match (earlier in the list = primary
+// source for that match's fields), and for the /internal/providers/test
+// log ordering.
 const { mergeProviderMatches } = require('./lib/canonicalMatch');
 
 const bigballsdata = require('./providers/bigballsdataProvider');
@@ -74,6 +67,7 @@ async function getMatchesForDate(dateStr, options) {
   options = options || {};
   const attempted = [];
   let anyProviderSucceeded = false; // true the moment ANY provider call completes without throwing, even with 0 matches — lets callers distinguish "genuinely no matches today" from "every provider is unconfigured/down"
+  const perProviderResults = []; // [{ provider, matches }] IN PRIORITY ORDER — order matters for merge below
 
   for (const provider of PROVIDERS_IN_PRIORITY_ORDER) {
     if (!provider.isConfigured()) {
@@ -93,19 +87,16 @@ async function getMatchesForDate(dateStr, options) {
     } catch (e) {
       attempted.push({ provider: provider.providerName, result: 'error: ' + e.message });
       console.error('[footballProviders] ' + provider.providerName + ' failed for ' + dateStr + ': ' + e.message);
-      continue; // fall through to next provider in priority order
+      continue; // this provider's data just doesn't get included this cycle — the others still run
     }
 
-    if (matches.length > 0) {
-      attempted.push({ provider: provider.providerName, result: matches.length + ' match(es) — cascade stops here' });
-      const merged = mergeProviderMatches([{ provider: provider.providerName, matches }]).map(toAppShape);
-      return { matches: merged, providerLog: attempted, primaryProviderUsed: provider.providerName, anyProviderSucceeded };
-    }
-
-    attempted.push({ provider: provider.providerName, result: '0 matches — trying next provider' });
+    attempted.push({ provider: provider.providerName, result: matches.length + ' match(es)' });
+    if (matches.length > 0) perProviderResults.push({ provider: provider.providerName, matches });
   }
 
-  return { matches: [], providerLog: attempted, primaryProviderUsed: null, anyProviderSucceeded };
+  const merged = mergeProviderMatches(perProviderResults).map(toAppShape);
+  const providersWithData = perProviderResults.map(r => r.provider);
+  return { matches: merged, providerLog: attempted, primaryProviderUsed: providersWithData[0] || null, providersUsed: providersWithData, anyProviderSucceeded };
 }
 
 function getAllProviderStatus() {
