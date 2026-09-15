@@ -22,12 +22,12 @@
 // (different email each time) and set FDORG_KEY as a comma-separated list,
 // e.g. FDORG_KEY=key1,key2,key3
 
-const FDORG_KEYS = (process.env.FOOTBALL_DATA_KEYS || process.env.FDORG_KEY || '')
+const FDORG_KEYS = (process.env.FDORG_KEY || '')
   .split(',')
   .map(k => k.trim())
   .filter(Boolean);
 if (FDORG_KEYS.length === 0) {
-  console.warn('[footballData] FOOTBALL_DATA_KEYS (or legacy FDORG_KEY) is not set — fixture fetching from football-data.org will fail until it is configured. See .env.example.');
+  console.warn('[footballData] FDORG_KEY is not set — fixture fetching from football-data.org will fail until it is configured. See .env.example.');
 }
 const FDORG_BASE = 'https://api.football-data.org/v4';
 
@@ -339,6 +339,7 @@ async function getMatchesForDate(dateStr) {
 // and there's no guarantee their numbering schemes don't overlap.
 
 const realOdds = require('./realOdds');
+const sofaBetsData = require('./sofaBetsData');
 
 // LEAGUE ALLOWLIST for odds-api.io fixtures — without this, the merge pulls
 // in every league worldwide odds-api.io tracks (confirmed via real testing
@@ -758,20 +759,41 @@ async function getOddsApiIoMatchesForDate(dateStr, isTodayBucket) {
   }
 }
 
-// Merges football-data.org and odds-api.io fixtures for a given date.
-// football-data.org matches come first (cleaner, more curated data);
-// odds-api.io matches are appended after, giving broader league depth.
+// Same team-name + kickoff-proximity check used to dedup odds-api.io
+// against football-data.org below, pulled out so the SofaBets pass can
+// reuse it against BOTH earlier sources instead of duplicating the logic.
+function sameFixture(a, b) {
+  const sameTeams = realOdds.teamsMatch(a.homeTeam && a.homeTeam.name, b.homeTeam && b.homeTeam.name) &&
+    realOdds.teamsMatch(a.awayTeam && a.awayTeam.name, b.awayTeam && b.awayTeam.name);
+  if (!sameTeams) return false;
+  if (!a.utcDate || !b.utcDate) return sameTeams; // no date to compare — fall back to team-name-only match
+  const hoursDiff = Math.abs(new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime()) / (60 * 60 * 1000);
+  return hoursDiff <= 3;
+}
+
+// Merges football-data.org, odds-api.io, and SofaBets fixtures for a given
+// date. football-data.org matches come first (cleanest, most curated data);
+// odds-api.io next; SofaBets appended last, giving broader league depth and
+// (unlike the other two) real market 1X2 odds rather than AI estimates.
 // De-duplicates by team-name match (teamsMatch from realOdds.js) + same
-// date, in case both sources happen to cover the same fixture — prefers the
-// football-data.org version when that happens, since it has richer data
-// (proper competition/area info) that odds-api.io's shape doesn't provide.
+// date, in case sources overlap on the same fixture — the FIRST source to
+// carry a given fixture wins as the kept record (richer/more curated data),
+// but if a later, duplicate SofaBets fixture carries real providerOdds that
+// the kept record doesn't have, those odds are merged onto the kept record
+// rather than thrown away — the spec's "must not create two separate games"
+// requirement is about game identity, not about discarding usable real odds
+// just because the team-vs-team matchup was already known from elsewhere.
 async function getMergedMatchesForDate(dateStr, isTodayBucket) {
-  const [fdMatches, oaioMatches] = await Promise.all([
+  const [fdMatches, oaioMatches, sofaMatches] = await Promise.all([
     getMatchesForDate(dateStr).catch(e => {
       console.error('[footballData] football-data.org fetch failed for ' + dateStr + ': ' + e.message);
-      return []; // real failure — log it, let odds-api.io matches still show if available
+      return []; // real failure — log it, let the other sources' matches still show if available
     }),
-    getOddsApiIoMatchesForDate(dateStr, isTodayBucket)
+    getOddsApiIoMatchesForDate(dateStr, isTodayBucket),
+    sofaBetsData.getSofaBetsMatchesForDate(dateStr, isTodayBucket).catch(e => {
+      console.error('[footballData] SofaBets fetch failed for ' + dateStr + ': ' + e.message);
+      return [];
+    })
   ]);
 
   // Dedup by team names AND kickoff time proximity (within 3 hours) — team
@@ -784,18 +806,20 @@ async function getMergedMatchesForDate(dateStr, isTodayBucket) {
   // hours of each other, so adding a time check makes this safe without
   // needing to compare competition names directly (which vary too much
   // between sources to match reliably).
-  const dedupedOaio = oaioMatches.filter(oaio =>
-    !fdMatches.some(fd => {
-      const sameTeams = realOdds.teamsMatch(fd.homeTeam && fd.homeTeam.name, oaio.homeTeam.name) &&
-        realOdds.teamsMatch(fd.awayTeam && fd.awayTeam.name, oaio.awayTeam.name);
-      if (!sameTeams) return false;
-      if (!fd.utcDate || !oaio.utcDate) return sameTeams; // no date to compare — fall back to team-name-only match
-      const hoursDiff = Math.abs(new Date(fd.utcDate).getTime() - new Date(oaio.utcDate).getTime()) / (60 * 60 * 1000);
-      return hoursDiff <= 3;
-    })
-  );
+  const dedupedOaio = oaioMatches.filter(oaio => !fdMatches.some(fd => sameFixture(fd, oaio)));
 
-  return fdMatches.concat(dedupedOaio);
+  const priorMatches = fdMatches.concat(dedupedOaio);
+  const dedupedSofa = sofaMatches.filter(sofa => {
+    const dupe = priorMatches.find(m => sameFixture(m, sofa));
+    if (!dupe) return true;
+    // Same fixture already present from an earlier source — don't add a
+    // second game, but carry SofaBets' real providerOdds onto the kept
+    // record if the kept record doesn't already have real odds of its own.
+    if (sofa.providerOdds && !dupe.providerOdds) dupe.providerOdds = sofa.providerOdds;
+    return false;
+  });
+
+  return priorMatches.concat(dedupedSofa);
 }
 
 // Returns real head-to-head history + recent form for a match, straight from
