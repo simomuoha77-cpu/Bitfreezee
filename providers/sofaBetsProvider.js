@@ -117,7 +117,7 @@ function asArray(value) { return Array.isArray(value) ? value : []; }
 function looksLikeFixture(x) {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
   const hasId = ['id','fixtureId','fixture_id','eventId','event_id','matchId','match_id'].some(k => x[k] != null);
-  const hasTeams = x.homeTeam != null || x.awayTeam != null || x.home_team != null || x.away_team != null || x.home != null || x.away != null || x.teams != null;
+  const hasTeams = x.homeTeam != null || x.awayTeam != null || x.home_team != null || x.away_team != null || x.home != null || x.away != null || x.teams != null || x.fixture_name != null || x.fixtureName != null;
   return hasId && hasTeams;
 }
 
@@ -175,17 +175,28 @@ async function fetchPages(base, path) {
   while (page <= MAX_PAGES_PER_FETCH) {
     // Do NOT require marketType=match result. That filter can hide fixtures
     // before JuanAi has even discovered them.
+    // Match the public SofaBets frontend contract exactly. The frontend uses
+    // sportId + page + limit (+ marketType), and some backend deployments
+    // return an empty/sport-null response when extra sport parameters are sent.
     const query = {
       sportId: String(FOOTBALL_SPORT_ID),
-      sport_id: String(FOOTBALL_SPORT_ID),
-      sport: 'football',
       page: String(page),
-      pageSize: '100',
-      page_size: '100',
-      limit: '100'
+      limit: '100',
+      marketType: 'match result'
     };
 
-    const payload = await sofaFetch(base, path, query);
+    let payload;
+    try {
+      payload = await sofaFetch(base, path, query);
+    } catch (e) {
+      // Some installations expose fixtures without the marketType filter.
+      const fallbackQuery = {
+        sportId: String(FOOTBALL_SPORT_ID),
+        page: String(page),
+        limit: '100'
+      };
+      payload = await sofaFetch(base, path, fallbackQuery);
+    }
     const items = extractItems(payload);
     if (!items.length) break;
     all.push(...items);
@@ -274,18 +285,29 @@ function normalizeMatch(raw) {
     || pick(nestedFixture, ['id', 'fixtureId', 'fixture_id']);
   if (externalId == null) return null;
 
-  const home = teamName(pick(source, ['homeTeam', 'home_team', 'home']))
+  let home = teamName(pick(source, ['homeTeam', 'home_team', 'home']))
     || teamName(nestedTeams.home) || teamName(nestedTeams.Home);
-  const away = teamName(pick(source, ['awayTeam', 'away_team', 'away']))
+  let away = teamName(pick(source, ['awayTeam', 'away_team', 'away']))
     || teamName(nestedTeams.away) || teamName(nestedTeams.Away);
+
+  // SofaBets' public fixture payload commonly uses fixture_name:
+  // "Home Team v Away Team" rather than separate home/away fields.
+  const fixtureName = pick(source, ['fixture_name', 'fixtureName', 'match_name', 'matchName']);
+  if ((!home || !away) && fixtureName) {
+    const parts = String(fixtureName).split(/\s+v\s+|\s+vs\.?\s+/i);
+    if (parts.length >= 2) {
+      home = home || parts[0].trim();
+      away = away || parts.slice(1).join(' v ').trim();
+    }
+  }
   if (!home || !away) return null;
 
-  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'tournament', 'championship']))
+  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'tournament', 'championship', 'league_name', 'leagueName']))
     || teamName(nestedLeague);
 
   const kickoff = pick(source, [
     'startTime', 'start_time', 'date', 'kickoff', 'kickoffTime', 'kickoff_time',
-    'scheduled', 'scheduledAt', 'startDate', 'start_date', 'eventDate', 'event_date'
+    'scheduled', 'scheduledAt', 'startDate', 'start_date', 'eventDate', 'event_date', 'start_time_utc', 'startTimeUtc'
   ]);
 
   let utcDate = null;
