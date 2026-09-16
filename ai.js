@@ -555,6 +555,67 @@ function flagInternalInconsistency(odds) {
 async function analyzeMatch(match, history, liveState) {
   const isLiveRepricing = !!liveState;
 
+  // ============================================================
+  // SOFABETS DIRECT ODDS — HIGHEST PRIORITY
+  // If SofaBets already supplied real bookmaker odds, NEVER send
+  // this match to Gemini/Groq for odds generation or re-pricing.
+  // The SofaBets prices are the source of truth and should be
+  // returned directly so the latest provider refresh reaches the UI.
+  // ============================================================
+  const sofaOdds =
+    match.providerOdds ||
+    match._sofaProviderOdds ||
+    (match.provider === 'sofabets' ? match.odds : null);
+
+  const hasDirectSofaOdds =
+    sofaOdds &&
+    Number(sofaOdds.homeWin) > 1 &&
+    Number(sofaOdds.draw) > 1 &&
+    Number(sofaOdds.awayWin) > 1;
+
+  if (hasDirectSofaOdds) {
+    const directOdds = {
+      ...sofaOdds,
+      homeWin: Number(sofaOdds.homeWin),
+      draw: Number(sofaOdds.draw),
+      awayWin: Number(sofaOdds.awayWin),
+
+      // Explicitly identify the real provider source.
+      isRealMarketOdds: true,
+      aiGenerated: false,
+      oddsSource: 'sofabets',
+      realOddsSource: 'SofaBets',
+      realOddsProvider: 'sofabets',
+      providerOdds: true,
+
+      // Prevent downstream code from treating this as an AI result.
+      _skipAiOddsGeneration: true,
+      _directProviderOdds: true,
+
+      // This is intentionally false because SofaBets supplied the
+      // current price. AI must not re-price it, including live games.
+      isLiveRepriced: false,
+
+      providerOddsFetchedAt:
+        match.providerOddsFetchedAt ||
+        match._sofaOddsFetchedAt ||
+        Date.now()
+    };
+
+    console.log(
+      '[ai] DIRECT SOFABETS ODDS — skipping AI for ' +
+      ((match.homeTeam && match.homeTeam.name) || 'Home') +
+      ' vs ' +
+      ((match.awayTeam && match.awayTeam.name) || 'Away') +
+      ' | ' +
+      directOdds.homeWin + ' / ' +
+      directOdds.draw + ' / ' +
+      directOdds.awayWin
+    );
+
+    return directOdds;
+  }
+
   // Real market odds are only meaningful for pre-match analysis — SharpAPI's
   // free tier has a ~60s data delay, which is too slow to track a live
   // score the way the dedicated live-repricing prompt does. So live
