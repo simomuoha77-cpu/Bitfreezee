@@ -25,6 +25,7 @@ const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const sofaBetsData = require('./sofaBetsData');
+const sofaBetsProvider = require('./providers/sofaBetsProvider');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -894,15 +895,102 @@ function recomputeLiveMinutes(matches) {
 // broken the regular Football tab for every visitor.
 app.get('/internal/fixtures-view', async (req, res) => {
   const days = req.query.days || '0';
-  const bucket = await db.getFixtures(days);
-  if (bucket && Array.isArray(bucket.matches)) {
-    // Same live recomputation as /api/fixtures — without this, JuanAi's
-    // own dashboard would show a DIFFERENT (staler, refresh-cycle-baked)
-    // minute than /api/fixtures now does, which would make the two sides
-    // disagree in a NEW way instead of fixing the original mismatch.
-    recomputeLiveMinutes(bucket.matches);
+
+  // CRITICAL: JuanAi's Football UI must read SofaBets bookmaker odds
+  // directly instead of waiting for the background AI/scheduler pipeline.
+  // SofaBets is authoritative whenever it supplies 1X2 market odds.
+  try {
+    const dateStr = footballData.getDateString(days);
+    const rawMatches = await sofaBetsProvider.getMatchesForDate(dateStr);
+
+    const matches = rawMatches.map(m => {
+      const odds = m._sofaProviderOdds || m.providerOdds || m.odds || null;
+      const hasRealOdds =
+        odds &&
+        Number(odds.homeWin) > 1 &&
+        Number(odds.draw) > 1 &&
+        Number(odds.awayWin) > 1;
+
+      const leagueCode = m.competition
+        ? String(m.competition).toUpperCase()
+            .replace(/[^A-Z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+        : null;
+
+      return {
+        id: m.id || ('sofabets:' + String(m.providerMatchId)),
+        providerMatchId: m.providerMatchId,
+        source: 'sofabets',
+        sourceProviders: ['sofabets'],
+        primarySource: 'sofabets',
+        utcDate: m.utcDate,
+        status: m.status,
+        minute: m.minute != null ? m.minute : null,
+        minuteIsEstimated: m.minuteIsEstimated !== undefined ? m.minuteIsEstimated : true,
+
+        homeTeam: {
+          id: null,
+          name: m.homeTeam,
+          crest: null
+        },
+        awayTeam: {
+          id: null,
+          name: m.awayTeam,
+          crest: null
+        },
+
+        score: {
+          winner: null,
+          fullTime: (m.score && m.score.fullTime) || null,
+          halfTime: (m.score && m.score.halfTime) || null
+        },
+
+        competition: {
+          id: null,
+          name: m.competition || null,
+          code: leagueCode
+        },
+
+        season: m.season || null,
+        venue: m.venue || null,
+        sport: 'football',
+
+        // REAL SofaBets bookmaker odds — no AI calculation.
+        odds: hasRealOdds ? odds : null,
+        providerOdds: hasRealOdds ? odds : null,
+        _sofaProviderOdds: hasRealOdds ? odds : null,
+        oddsSource: hasRealOdds ? 'sofabets' : null,
+        realOddsSource: hasRealOdds ? 'SofaBets' : null,
+        isRealMarketOdds: hasRealOdds,
+        aiGenerated: false,
+        _skipAiOddsGeneration: hasRealOdds,
+        _directProviderOdds: hasRealOdds
+      };
+    });
+
+    recomputeLiveMinutes(matches);
+
+    return res.json({
+      matches,
+      fetchedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      source: 'sofabets'
+    });
+  } catch (e) {
+    console.error('[fixtures-view] direct SofaBets fetch failed:', e.message);
+
+    // Keep the old database path as a safety fallback.
+    const bucket = await db.getFixtures(days);
+    if (bucket && Array.isArray(bucket.matches)) {
+      recomputeLiveMinutes(bucket.matches);
+    }
+
+    return res.json(bucket || {
+      matches: [],
+      fetchedAt: null,
+      source: 'database-fallback'
+    });
   }
-  res.json(bucket || { matches: [], fetchedAt: null });
 });
 
 // GET /internal/competitions — powers the frontend's league filter
