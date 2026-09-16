@@ -1,18 +1,5 @@
-// footballProviders.js — orchestrates all football data providers:
-// priority cascade, canonical cross-provider dedup, and per-provider
-// key-pool status. This is the ONLY module scheduler.js talks to for
-// fixtures now — it decides which provider(s) actually get called.
-//
-// PRIORITY ORDER:
-//   SofaBets → BigBallsData → API-Football → football-data.org →
-//   Sportmonks → TheSportsDB → Highlightly → API-Sports
-//
-// CASCADE RULE: query EVERY CONFIGURED provider for the date, not just the
-// first one that has data. All configured providers' results are merged
-// and deduplicated below (see lib/canonicalMatch.js); priority order
-// still matters for which provider's data "wins" when two providers
-// report the SAME real match (earlier in the list = primary source for
-// that match's fields), and for the /internal/providers/test log ordering.
+// footballProviders.js — merges all configured football providers.
+// SofaBets is first so its fixture/odds data is retained when available.
 const { mergeProviderMatches } = require('./lib/canonicalMatch');
 
 const sofabets = require('./providers/sofaBetsProvider');
@@ -44,8 +31,19 @@ function toAppShape(m) {
     competition: { id: null, name: m.competition || null, code: leagueCode },
     season: m.season || null,
     venue: m.venue || null,
-    sport: 'football'
+    sport: 'football',
+    // Preserve provider-native odds. Previously these were silently dropped.
+    odds: m.providerOdds || m._sofaProviderOdds || null,
+    providerOdds: m.providerOdds || m._sofaProviderOdds || null
   };
+}
+
+function matchKey(m) {
+  return [
+    String(m.homeTeam || '').trim().toLowerCase(),
+    String(m.awayTeam || '').trim().toLowerCase(),
+    m.utcDate ? new Date(m.utcDate).getTime() : ''
+  ].join('|');
 }
 
 async function getMatchesForDate(dateStr, options) {
@@ -60,35 +58,59 @@ async function getMatchesForDate(dateStr, options) {
       continue;
     }
 
-    let matches = [];
     try {
-      matches = provider === bigballsdata
+      const matches = provider === bigballsdata
         ? await provider.getMatchesForDate(dateStr, options)
         : await provider.getMatchesForDate(dateStr);
       anyProviderSucceeded = true;
+      attempted.push({ provider: provider.providerName, result: matches.length + ' match(es)' });
+      if (matches.length) perProviderResults.push({ provider: provider.providerName, matches });
     } catch (e) {
       attempted.push({ provider: provider.providerName, result: 'error: ' + e.message });
       console.error('[footballProviders] ' + provider.providerName + ' failed for ' + dateStr + ': ' + e.message);
-      continue;
     }
-
-    attempted.push({ provider: provider.providerName, result: matches.length + ' match(es)' });
-    if (matches.length > 0) perProviderResults.push({ provider: provider.providerName, matches });
   }
 
-  const merged = mergeProviderMatches(perProviderResults).map(toAppShape);
+  const mergedCanonical = mergeProviderMatches(perProviderResults);
+
+  // Recover SofaBets native odds after canonicalMatch.js deduplication. The
+  // previous version attached _sofaProviderOdds to a raw fixture and then
+  // lost it during merge/toAppShape, so JuanAi could never use those odds.
+  const oddsByKey = new Map();
+  for (const bucket of perProviderResults) {
+    for (const m of bucket.matches) {
+      const odds = m._sofaProviderOdds || m.providerOdds || null;
+      if (odds) oddsByKey.set(matchKey(m), odds);
+    }
+  }
+
+  for (const m of mergedCanonical) {
+    if (!m.providerOdds) {
+      const odds = oddsByKey.get(matchKey(m));
+      if (odds) m.providerOdds = odds;
+    }
+  }
+
+  const merged = mergedCanonical.map(toAppShape);
   const providersWithData = perProviderResults.map(r => r.provider);
-  return { matches: merged, providerLog: attempted, primaryProviderUsed: providersWithData[0] || null, providersUsed: providersWithData, anyProviderSucceeded };
+  return {
+    matches: merged,
+    providerLog: attempted,
+    primaryProviderUsed: providersWithData[0] || null,
+    providersUsed: providersWithData,
+    anyProviderSucceeded
+  };
 }
 
 function getAllProviderStatus() {
   return PROVIDERS_IN_PRIORITY_ORDER.map(p => {
-    try {
-      return p.getStatus();
-    } catch (e) {
-      return { provider: p.providerName, error: e.message };
-    }
+    try { return p.getStatus(); }
+    catch (e) { return { provider: p.providerName, error: e.message }; }
   });
 }
 
-module.exports = { getMatchesForDate, getAllProviderStatus, PROVIDER_NAMES: PROVIDERS_IN_PRIORITY_ORDER.map(p => p.providerName) };
+module.exports = {
+  getMatchesForDate,
+  getAllProviderStatus,
+  PROVIDER_NAMES: PROVIDERS_IN_PRIORITY_ORDER.map(p => p.providerName)
+};
