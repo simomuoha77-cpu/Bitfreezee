@@ -290,7 +290,16 @@ function normalizeMatch(raw) {
 
   let utcDate = null;
   if (kickoff != null) {
-    const d = new Date(kickoff);
+    // SofaBets feeds may expose kickoff as ISO text OR Unix epoch seconds.
+    // Date(number) interprets numbers as milliseconds, which can turn a valid
+    // 2026 kickoff into a 1970 date and makes getMatchesForDate() return 0.
+    let d;
+    if (typeof kickoff === 'number' || (typeof kickoff === 'string' && /^\d{9,13}$/.test(kickoff.trim()))) {
+      const n = Number(kickoff);
+      d = new Date(n < 100000000000 ? n * 1000 : n);
+    } else {
+      d = new Date(kickoff);
+    }
     if (Number.isFinite(d.getTime())) utcDate = d.toISOString();
   }
 
@@ -343,9 +352,12 @@ function dateInTimeZone(iso, timeZone) {
 
 function sameRequestedDate(iso, dateStr) {
   if (!iso || !dateStr) return false;
-  // JuanAi is used in Kenya; accept both UTC and Africa/Nairobi dates so a
+  const value = String(iso);
+  // Preserve date-only values if a provider supplied them.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value === dateStr;
+  // JuanAi is used in Kenya; accept both Nairobi and UTC calendar dates so a
   // late-night/early-morning kickoff is never silently lost.
-  return dateInTimeZone(iso, 'Africa/Nairobi') === dateStr || iso.slice(0, 10) === dateStr;
+  return dateInTimeZone(value, 'Africa/Nairobi') === dateStr || value.slice(0, 10) === dateStr;
 }
 
 const allFixturesCache = { fetchedAt: 0, matches: [], base: null, path: null };
