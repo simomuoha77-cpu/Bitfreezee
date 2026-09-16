@@ -2792,6 +2792,27 @@ function renderFixtures(matches){
       // Use them directly for display instead of showing "AI analyzing".
       var savedOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds || null;
 
+      // UI fallback: find existing bookmaker odds anywhere inside this fixture.
+      if (!savedOdds) {
+        var findOdds = function(obj, depth) {
+          if (!obj || depth > 5 || typeof obj !== 'object') return null;
+          if (
+            obj.homeWin != null &&
+            obj.draw != null &&
+            obj.awayWin != null
+          ) return obj;
+
+          var keys = Object.keys(obj);
+          for (var i = 0; i < keys.length; i++) {
+            var found = findOdds(obj[keys[i]], depth + 1);
+            if (found) return found;
+          }
+          return null;
+        };
+
+        savedOdds = findOdds(m, 0);
+      }
+
       if (savedOdds && m.aiOdds !== savedOdds) {
         savedOdds = Object.assign({}, savedOdds, {
           isRealMarketOdds: true,
