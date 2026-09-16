@@ -407,6 +407,25 @@ app.get('/api/status', async (req, res) => {
   });
 });
 
+// GET /api/sofabets-debug — runs the SofaBets connection/fixtures/odds/live
+// checks against the REAL feed and returns the exact summary format from
+// the integration spec (section 23), so this can be tested directly against
+// production without separate ad-hoc scripts. No key required, read-only —
+// safe to hit from a browser. Slower than /api/status since it performs
+// live requests rather than reading cached state; not meant to be polled.
+app.get('/api/sofabets-debug', async (req, res) => {
+  try {
+    const result = await sofaBetsData.getDebugSummary();
+    if (req.query.format === 'json') {
+      res.json(result.raw);
+    } else {
+      res.type('text/plain').send(result.summary);
+    }
+  } catch (e) {
+    res.status(500).type('text/plain').send('SofaBets debug check failed: ' + e.message);
+  }
+});
+
 // ── CASINO API (what BetaKE — or any site with a JuanAi key — calls) ──
 // Server-authoritative crash game. See casino.js's header comment for the
 // full explanation of why the round state, RNG, and cashout timing all
