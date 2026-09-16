@@ -85,9 +85,19 @@ async function getMatchesForDate(dateStr, options) {
   }
 
   for (const m of mergedCanonical) {
-    if (!m.providerOdds) {
-      const odds = oddsByKey.get(matchKey(m));
-      if (odds) m.providerOdds = odds;
+    const sofaOdds = oddsByKey.get(matchKey(m));
+
+    if (sofaOdds) {
+      // SofaBets is the real bookmaker source.
+      // Never let AI/generated odds overwrite these values.
+      m.providerOdds = sofaOdds;
+      m.odds = sofaOdds;
+      m.oddsSource = 'sofabets';
+      m.realOddsSource = 'SofaBets';
+      m.isRealMarketOdds = true;
+      m.aiGenerated = false;
+      m._skipAiOddsGeneration = true;
+      m._directProviderOdds = true;
     }
   }
 

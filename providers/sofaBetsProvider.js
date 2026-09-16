@@ -357,11 +357,20 @@ function normalizeMatch(raw) {
     // Expose them directly as well as under the provider-specific field so
     // the canonical merge layer can carry them through without AI odds
     // generation overwriting them.
+    // REAL SOFABETS BOOKMAKER ODDS
+    // These are the authoritative market prices.
+    // AI must never replace or reprice them.
     odds: odds,
+    providerOdds: odds,
     _sofaProviderOdds: odds,
     _oddsSource: odds ? 'sofabets' : null,
+    oddsSource: odds ? 'sofabets' : null,
+    realOddsSource: odds ? 'SofaBets' : null,
+    isRealMarketOdds: !!odds,
+    aiGenerated: false,
     _hasProviderOdds: !!odds,
     _skipAiOddsGeneration: !!odds,
+    _directProviderOdds: !!odds,
     _sofaMarkets: Array.isArray(source.markets) ? source.markets : null,
     _sofaRawId: String(externalId)
   };
@@ -509,6 +518,7 @@ async function getMatchesForDate(dateStr) {
       const fresh = liveById.get(String(result[i].providerMatchId));
       if (fresh) result[i] = Object.assign({}, result[i], fresh, {
         odds: fresh.odds || result[i].odds,
+        providerOdds: fresh.odds || result[i].providerOdds || result[i]._sofaProviderOdds,
         _sofaProviderOdds: fresh.odds || result[i]._sofaProviderOdds,
         _oddsSource: (fresh.odds || result[i]._sofaProviderOdds) ? 'sofabets' : null,
         _hasProviderOdds: !!(fresh.odds || result[i]._sofaProviderOdds),
