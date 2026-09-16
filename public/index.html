@@ -2783,7 +2783,17 @@ function renderFixtures(matches){
       // earlier testing could otherwise silently override real server data with
       // old/fake-looking odds, which is exactly the kind of mismatch that made
       // matches look wrong. The server is the single source of truth.
-      var savedOdds = m.aiOdds || null;
+      // SofaBets/provider bookmaker odds are authoritative.
+      // Use them directly for display instead of showing "AI analyzing".
+      var savedOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || null;
+
+      if (savedOdds && m.aiOdds !== savedOdds) {
+        savedOdds = Object.assign({}, savedOdds, {
+          isRealMarketOdds: true,
+          aiGenerated: false,
+          oddsSource: 'sofabets'
+        });
+      }
 
       var statusLabel = getMatchStatus(m);
       var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : m.status==='AWAITING_RESULT' ? '#e8a33d' : 'var(--acc)';
