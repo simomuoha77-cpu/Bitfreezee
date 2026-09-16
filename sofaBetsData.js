@@ -205,7 +205,11 @@ function normalizeFixture(raw) {
   return {
     id: 'sofa_' + externalId,
     externalFixtureId: String(externalId),
-    utcDate: kickoff ? new Date(kickoff).toISOString() : null,
+    utcDate: (() => {
+      if (!kickoff) return null;
+      const d = new Date(kickoff);
+      return isNaN(d.getTime()) ? null : d.toISOString(); // an unparseable kickoff value must never throw here — better a match with no date than one that takes the whole batch down
+    })(),
     status,
     minute: raw.minute != null ? raw.minute : (raw.liveMinute != null ? raw.liveMinute : null),
     minuteIsEstimated: false, // SofaBets' own reported minute, when present, is authoritative — not a JuanAi estimate
@@ -221,6 +225,20 @@ function normalizeFixture(raw) {
   };
 }
 
+// Wraps normalizeFixture so ONE malformed fixture (bad date, unexpected
+// type, whatever) can't abort the entire batch — Array.prototype.map()
+// throwing on item #500 out of 1,300+ would otherwise silently drop ALL of
+// them, not just the bad one, every time it ran through the normal
+// fetch → normalize → merge → save pipeline.
+function safeNormalizeFixture(raw) {
+  try {
+    return normalizeFixture(raw);
+  } catch (e) {
+    console.error('[sofaBetsData] failed to normalize one fixture, skipping it: ' + e.message + ' — raw: ' + JSON.stringify(raw).slice(0, 300));
+    return null;
+  }
+}
+
 // ── the ONE broad fetch everything else derives from ───────────────────
 const allFixturesCache = { fetchedAt: 0, matches: [] };
 
@@ -232,7 +250,7 @@ async function fetchAllFootballFixtures() {
     const { items, lastResponseTimeMs } = await fetchAllPages(page =>
       '/api/fixtures-by-sport?sportId=' + FOOTBALL_SPORT_ID + '&page=' + page + '&limit=100&marketType=match%20result'
     );
-    const matches = items.map(normalizeFixture).filter(Boolean);
+    const matches = items.map(safeNormalizeFixture).filter(Boolean);
     allFixturesCache.fetchedAt = Date.now();
     allFixturesCache.matches = matches;
     const oddsCount = matches.filter(m => m.providerOdds).length;
@@ -259,7 +277,7 @@ async function fetchLiveMap() {
   );
   const map = new Map();
   for (const raw of items) {
-    const norm = normalizeFixture(raw);
+    const norm = safeNormalizeFixture(raw);
     if (norm) map.set(norm.externalFixtureId, norm);
   }
   liveCache.fetchedAt = Date.now();
