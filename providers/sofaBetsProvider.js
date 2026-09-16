@@ -266,6 +266,8 @@ function parseOdds(raw) {
 }
 
 function parseStatus(raw, utcDate) {
+  const liveFlag = pick(raw, ['is_live', 'isLive', 'live', 'inPlay', 'in_play']);
+  if (liveFlag === true || String(liveFlag).toLowerCase() === 'true' || Number(liveFlag) === 1) return 'IN_PLAY';
   const value = String(pick(raw, ['status', 'matchStatus', 'gameStatus', 'eventStatus', 'state']) || '').toLowerCase();
   if (value.includes('live') || value.includes('inplay') || value.includes('in_play') || value.includes('in-play')) return 'IN_PLAY';
   if (value.includes('half') || value.includes('pause')) return 'PAUSED';
@@ -327,8 +329,9 @@ function normalizeMatch(raw) {
 
   const status = parseStatus(source, utcDate);
   const scoreObj = source.score && typeof source.score === 'object' ? source.score : {};
-  const homeScore = pick(source, ['homeScore', 'home_score', 'scoreHome']) ?? pick(scoreObj, ['home', 'Home', 'homeScore']);
-  const awayScore = pick(source, ['awayScore', 'away_score', 'scoreAway']) ?? pick(scoreObj, ['away', 'Away', 'awayScore']);
+  const liveScore = source.live_score && typeof source.live_score === 'object' ? source.live_score : (source.liveScore && typeof source.liveScore === 'object' ? source.liveScore : {});
+  const homeScore = pick(source, ['homeScore', 'home_score', 'scoreHome', 'home_score_live', 'live_home_score']) ?? pick(liveScore, ['home', 'homeScore', 'home_score']) ?? pick(scoreObj, ['home', 'Home', 'homeScore']);
+  const awayScore = pick(source, ['awayScore', 'away_score', 'scoreAway', 'away_score_live', 'live_away_score']) ?? pick(liveScore, ['away', 'awayScore', 'away_score']) ?? pick(scoreObj, ['away', 'Away', 'awayScore']);
   const hasScore = homeScore != null && awayScore != null;
 
   const odds = parseOdds(source);
@@ -426,9 +429,55 @@ async function fetchAllFootballFixtures() {
   return [];
 }
 
+async function fetchLiveFootballFixtures() {
+  const livePaths = ['/api/live-games'];
+  let lastError = null;
+  for (const base of BASES) {
+    for (const path of livePaths) {
+      try {
+        const payload = await sofaFetch(base, path, {
+          page: '1',
+          limit: '100',
+          marketType: 'match result',
+          sport: 'football'
+        });
+        const rawItems = extractItems(payload);
+        const matches = rawItems.map(safeNormalizeMatch).filter(Boolean).map(m => Object.assign(m, { status: 'IN_PLAY' }));
+        if (matches.length) {
+          console.log(`[sofaBetsProvider] live sync: ${matches.length} live fixtures from ${base}${path}`);
+          return matches;
+        }
+      } catch (e) {
+        lastError = e;
+        console.warn('[sofaBetsProvider] live ' + base + path + ' failed: ' + e.message);
+      }
+    }
+  }
+  if (lastError) console.warn('[sofaBetsProvider] live feed unavailable: ' + lastError.message);
+  return [];
+}
+
 async function getMatchesForDate(dateStr) {
   const all = await fetchAllFootballFixtures();
-  const result = all.filter(m => sameRequestedDate(m.utcDate, dateStr));
+  let result = all.filter(m => sameRequestedDate(m.utcDate, dateStr));
+
+  // SofaBets exposes live matches through a separate endpoint. Always merge
+  // the live feed for today's date so matches that have already started are
+  // not lost when the normal fixtures feed is date/upcoming oriented.
+  const todayNairobi = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+  if (dateStr === todayNairobi) {
+    const live = await fetchLiveFootballFixtures();
+    const seen = new Set(result.map(m => String(m.providerMatchId)));
+    for (const m of live) {
+      if (!seen.has(String(m.providerMatchId))) {
+        result.push(m);
+        seen.add(String(m.providerMatchId));
+      }
+    }
+  }
+
   health.fixturesForRequestedDate = result.length;
   return result;
 }
