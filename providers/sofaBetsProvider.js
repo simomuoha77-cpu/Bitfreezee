@@ -251,13 +251,13 @@ function parseOdds(raw) {
   }
 
   for (const market of markets) {
-    const marketName = String(pick(market, ['name', 'marketType', 'marketName', 'type', 'key']) || '').toLowerCase();
+    const marketName = String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type', 'key']) || '').toLowerCase();
     if (!(marketName.includes('1x2') || marketName.includes('match result') || marketName.includes('match_winner') || marketName.includes('match winner'))) continue;
     const outcomes = market.outcomes || market.selections || market.options || market.betOffers;
     if (!Array.isArray(outcomes)) continue;
     const get = wanted => {
       const found = outcomes.find(o => {
-        const label = String(pick(o, ['name', 'label', 'selectionName', 'outcomeName', 'key']) || '').toLowerCase();
+        const label = String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '').toLowerCase();
         return wanted.some(x => label === x || label.startsWith(x + ' ') || label.startsWith(x + ':'));
       });
       return found ? Number(pick(found, ['odds', 'odd', 'price', 'value', 'decimalOdds'])) : NaN;
@@ -359,6 +359,10 @@ function normalizeMatch(raw) {
     // generation overwriting them.
     odds: odds,
     _sofaProviderOdds: odds,
+    _oddsSource: odds ? 'sofabets' : null,
+    _hasProviderOdds: !!odds,
+    _skipAiOddsGeneration: !!odds,
+    _sofaMarkets: Array.isArray(source.markets) ? source.markets : null,
     _sofaRawId: String(externalId)
   };
 }
@@ -500,6 +504,17 @@ async function getMatchesForDate(dateStr) {
   if (dateStr === todayNairobi) {
     const live = await fetchLiveFootballFixtures();
     const seen = new Set(result.map(m => String(m.providerMatchId)));
+    const liveById = new Map(live.map(m => [String(m.providerMatchId), m]));
+    for (let i = 0; i < result.length; i += 1) {
+      const fresh = liveById.get(String(result[i].providerMatchId));
+      if (fresh) result[i] = Object.assign({}, result[i], fresh, {
+        odds: fresh.odds || result[i].odds,
+        _sofaProviderOdds: fresh.odds || result[i]._sofaProviderOdds,
+        _oddsSource: (fresh.odds || result[i]._sofaProviderOdds) ? 'sofabets' : null,
+        _hasProviderOdds: !!(fresh.odds || result[i]._sofaProviderOdds),
+        _skipAiOddsGeneration: !!(fresh.odds || result[i]._sofaProviderOdds)
+      });
+    }
     for (const m of live) {
       if (!seen.has(String(m.providerMatchId))) {
         result.push(m);
