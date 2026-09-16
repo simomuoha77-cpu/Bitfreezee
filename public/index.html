@@ -2723,7 +2723,9 @@ function updateFbStats(matches){
   var leagues = new Set(matches.map(function(m){return m.competition&&m.competition.code;})).size;
   document.getElementById('fbLeagues').textContent = leagues;
   // Count analyzed — aiOdds now comes directly from the backend's fixture data
-  var analyzed = matches.filter(function(m){return !!m.aiOdds;}).length;
+  var analyzed = matches.filter(function(m){
+    return !!(m.aiOdds || m.providerOdds || m._sofaProviderOdds);
+  }).length;
   document.getElementById('fbAnalyzed').textContent = analyzed;
 }
 
@@ -2830,7 +2832,7 @@ function renderFixtures(matches){
       }else{
         html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" id="odds_loading_' + m.id + '">'
           + '<div class="img-gen-spin" style="width:16px;height:16px"></div>'
-          + '<div style="font-size:10px;color:var(--t2)">AI analyzing automatically&hellip;</div>'
+          + '<div style="font-size:10px;color:var(--t2)">Waiting for bookmaker odds&hellip;</div>'
           + '</div>';
       }
 
@@ -2978,7 +2980,7 @@ function getCompFlag(areaName){
 async function analyzeMatch(matchId, days){
   var el = document.getElementById('odds_loading_' + matchId);
   var matchEl = document.getElementById('match_' + matchId);
-  if(el) el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px;color:var(--t2);font-size:11px"><div class="img-gen-spin" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div>Analyzing with AI...</div>';
+  if(el) el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px;color:var(--t2);font-size:11px"><div class="img-gen-spin" style="width:16px;height:16px;border-width:2px;flex-shrink:0"></div>Loading bookmaker odds...</div>';
 
   try{
     var resp = await fetch(JUANAI_BACKEND_URL + '/internal/analyze-now', {
