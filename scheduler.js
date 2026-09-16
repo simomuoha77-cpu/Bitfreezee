@@ -272,6 +272,21 @@ function needsAnalysis(match) {
   // nothing real to price yet, and it'll be picked up automatically once a
   // later fixture refresh resolves the actual participants.
   if (!hasKnownTeams(match)) return false;
+  const providerOdds =
+    match.providerOdds ||
+    match._sofaProviderOdds ||
+    (match.provider === 'sofabets' ? match.odds : null);
+
+  const hasRealProviderOdds =
+    providerOdds &&
+    Number(providerOdds.homeWin) > 1 &&
+    Number(providerOdds.draw) > 1 &&
+    Number(providerOdds.awayWin) > 1;
+
+  // SofaBets bookmaker odds are authoritative.
+  // NEVER send a match to AI analysis when real SofaBets odds exist.
+  if (hasRealProviderOdds) return false;
+
   if (!match.aiOdds || !match.aiAnalyzedAt) return true;
 
   if (!isLive(match)) {
