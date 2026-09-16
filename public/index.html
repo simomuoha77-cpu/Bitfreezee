@@ -2707,7 +2707,7 @@ function scheduleAutoPoll(matches){
   // game that's already over, so one lacking odds (e.g. it ended before the
   // scheduler got to it) shouldn't keep the page silently polling forever.
   var stillWaiting = (matches||[]).some(function(m){
-    var availableOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds;
+    var availableOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds;
     return !availableOdds && m.status !== 'FINISHED';
   });
   if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
@@ -2724,7 +2724,7 @@ function updateFbStats(matches){
   document.getElementById('fbLeagues').textContent = leagues;
   // Count analyzed — aiOdds now comes directly from the backend's fixture data
   var analyzed = matches.filter(function(m){
-    return !!(m.aiOdds || m.providerOdds || m._sofaProviderOdds);
+    return !!(m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds);
   }).length;
   document.getElementById('fbAnalyzed').textContent = analyzed;
 }
@@ -2790,7 +2790,7 @@ function renderFixtures(matches){
       // matches look wrong. The server is the single source of truth.
       // SofaBets/provider bookmaker odds are authoritative.
       // Use them directly for display instead of showing "AI analyzing".
-      var savedOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || null;
+      var savedOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds || null;
 
       if (savedOdds && m.aiOdds !== savedOdds) {
         savedOdds = Object.assign({}, savedOdds, {
