@@ -22,7 +22,10 @@ const FOOTBALL_SPORT_ID = Number(process.env.SOFABETS_SPORT_ID || 1);
 const REQUEST_TIMEOUT_MS = Number(process.env.SOFABETS_TIMEOUT_MS || 12000);
 const MAX_PAGES_PER_FETCH = Number(process.env.SOFABETS_MAX_PAGES || 30);
 const PAGE_FETCH_GAP_MS = 250;
-const ALL_FIXTURES_CACHE_TTL_MS = 2 * 60 * 1000;
+// Keep SofaBets odds fresh. Default is no cache so an odds change is picked up
+// on the next provider refresh. Set SOFABETS_FIXTURE_CACHE_TTL_MS only if
+// you intentionally want caching to reduce upstream requests.
+const ALL_FIXTURES_CACHE_TTL_MS = Number(process.env.SOFABETS_FIXTURE_CACHE_TTL_MS || 0);
 
 const DEFAULT_PATHS = [
   '/api/fixtures-by-sport',
@@ -350,6 +353,11 @@ function normalizeMatch(raw) {
     venue: teamName(pick(source, ['venue', 'stadium'])),
     minute: minute != null && Number.isFinite(Number(minute)) ? Number(minute) : null,
     minuteIsEstimated: minute == null,
+    // SofaBets is the authoritative odds source when odds are present.
+    // Expose them directly as well as under the provider-specific field so
+    // the canonical merge layer can carry them through without AI odds
+    // generation overwriting them.
+    odds: odds,
     _sofaProviderOdds: odds,
     _sofaRawId: String(externalId)
   };
@@ -432,17 +440,38 @@ async function fetchAllFootballFixtures() {
 async function fetchLiveFootballFixtures() {
   const livePaths = ['/api/live-games'];
   let lastError = null;
+
   for (const base of BASES) {
     for (const path of livePaths) {
       try {
-        const payload = await sofaFetch(base, path, {
-          page: '1',
-          limit: '100',
-          marketType: 'match result',
-          sport: 'football'
-        });
-        const rawItems = extractItems(payload);
-        const matches = rawItems.map(safeNormalizeMatch).filter(Boolean).map(m => Object.assign(m, { status: 'IN_PLAY' }));
+        const all = [];
+        for (let page = 1; page <= MAX_PAGES_PER_FETCH; page += 1) {
+          const payload = await sofaFetch(base, path, {
+            page: String(page),
+            limit: '100',
+            marketType: 'match result',
+            sport: 'football'
+          });
+          const rawItems = extractItems(payload);
+          if (!rawItems.length) break;
+
+          all.push(...rawItems);
+          const pg = paginationInfo(payload);
+          if (pg.hasMore === false) break;
+          if (pg.totalPages && page >= Number(pg.totalPages)) break;
+          if (pg.nextPage != null && Number(pg.nextPage) > page) {
+            page = Number(pg.nextPage) - 1;
+          } else if (!(pg.hasMore === true || pg.totalPages || pg.nextPage != null)) {
+            break;
+          }
+          await sleep(PAGE_FETCH_GAP_MS);
+        }
+
+        const matches = all
+          .map(safeNormalizeMatch)
+          .filter(Boolean)
+          .map(m => Object.assign(m, { status: 'IN_PLAY' }));
+
         if (matches.length) {
           console.log(`[sofaBetsProvider] live sync: ${matches.length} live fixtures from ${base}${path}`);
           return matches;
@@ -453,6 +482,7 @@ async function fetchLiveFootballFixtures() {
       }
     }
   }
+
   if (lastError) console.warn('[sofaBetsProvider] live feed unavailable: ' + lastError.message);
   return [];
 }
