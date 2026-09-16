@@ -2706,7 +2706,10 @@ function scheduleAutoPoll(matches){
   // Finished matches are excluded here — there's nothing to analyze for a
   // game that's already over, so one lacking odds (e.g. it ended before the
   // scheduler got to it) shouldn't keep the page silently polling forever.
-  var stillWaiting = (matches||[]).some(function(m){ return !m.aiOdds && m.status !== 'FINISHED'; });
+  var stillWaiting = (matches||[]).some(function(m){
+    var availableOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds;
+    return !availableOdds && m.status !== 'FINISHED';
+  });
   if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
   fbAutoPollTimer = setTimeout(function(){
     loadFixtures(true); // silent refresh — no spinner reset, no user action needed
