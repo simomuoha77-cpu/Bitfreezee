@@ -25,7 +25,13 @@ const PAGE_FETCH_GAP_MS = 250;
 const ALL_FIXTURES_CACHE_TTL_MS = 2 * 60 * 1000;
 
 const DEFAULT_PATHS = [
-  '/api/fixtures-by-sport'
+  '/api/fixtures-by-sport',
+  '/api/fixtures',
+  '/api/matches',
+  '/api/events',
+  '/api/sports/1/fixtures',
+  '/api/sports/football/fixtures',
+  '/api/football/fixtures'
 ];
 const PATHS = String(process.env.SOFABETS_FIXTURES_PATHS || '')
   .split(',')
@@ -79,7 +85,9 @@ async function sofaFetch(base, path, query, attempt = 1) {
     const resp = await fetch(url, {
       headers: {
         Accept: 'application/json, text/plain, */*',
-        'User-Agent': 'JuanAi-SofaBets-Provider/2.0'
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36',
+        'Origin': 'https://sofabets.com',
+        'Referer': 'https://sofabets.com/'
       },
       signal: controller.signal
     });
@@ -106,33 +114,59 @@ async function sofaFetch(base, path, query, attempt = 1) {
 function asArray(value) { return Array.isArray(value) ? value : []; }
 
 // SofaBets/backend implementations can wrap the actual list in several layers.
+function looksLikeFixture(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
+  const hasId = ['id','fixtureId','fixture_id','eventId','event_id','matchId','match_id'].some(k => x[k] != null);
+  const hasTeams = x.homeTeam != null || x.awayTeam != null || x.home_team != null || x.away_team != null || x.home != null || x.away != null || x.teams != null;
+  return hasId && hasTeams;
+}
+
 function extractItems(payload) {
-  const candidates = [
+  const direct = [
     payload,
     payload && payload.data,
     payload && payload.data && payload.data.fixtures,
     payload && payload.data && payload.data.matches,
     payload && payload.data && payload.data.items,
+    payload && payload.data && payload.data.events,
     payload && payload.fixtures,
     payload && payload.matches,
     payload && payload.results,
     payload && payload.items,
-    payload && payload.events,
-    payload && payload.data && payload.data.events
+    payload && payload.events
   ];
-  for (const c of candidates) if (Array.isArray(c)) return c;
+  for (const c of direct) if (Array.isArray(c) && c.length) return c;
+
+  // Some SofaBets responses group events under sport/league/date objects.
+  // Walk the response and find the first substantial array of fixture-like objects.
+  const seen = new Set();
+  const queue = [payload];
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object' || seen.has(node)) continue;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      const fixtureCount = node.filter(looksLikeFixture).length;
+      if (fixtureCount >= Math.min(3, node.length)) return node;
+      for (const v of node) if (v && typeof v === 'object') queue.push(v);
+    } else {
+      for (const [k,v] of Object.entries(node)) {
+        if (['pagination','meta','config','filters'].includes(k)) continue;
+        if (v && typeof v === 'object') queue.push(v);
+      }
+    }
+  }
   return [];
 }
-
 function paginationInfo(payload) {
   const root = payload && payload.data && !Array.isArray(payload.data) ? payload.data : payload || {};
+  const p = root.pagination || payload?.pagination || payload?.meta || {};
   return {
-    hasMore: root.hasMore ?? root.has_more ?? payload?.hasMore ?? payload?.has_more,
-    totalPages: root.totalPages ?? root.total_pages ?? payload?.totalPages ?? payload?.total_pages,
-    nextPage: root.nextPage ?? root.next_page ?? payload?.nextPage ?? payload?.next_page
+    hasMore: root.hasMore ?? root.has_more ?? p.hasMore ?? p.has_more ?? payload?.hasMore ?? payload?.has_more,
+    totalPages: root.totalPages ?? root.total_pages ?? p.totalPages ?? p.total_pages ?? payload?.totalPages ?? payload?.total_pages,
+    nextPage: root.nextPage ?? root.next_page ?? p.nextPage ?? p.next_page ?? payload?.nextPage ?? payload?.next_page
   };
 }
-
 async function fetchPages(base, path) {
   const all = [];
   let page = 1;
@@ -144,8 +178,10 @@ async function fetchPages(base, path) {
     const query = {
       sportId: String(FOOTBALL_SPORT_ID),
       sport_id: String(FOOTBALL_SPORT_ID),
+      sport: 'football',
       page: String(page),
       pageSize: '100',
+      page_size: '100',
       limit: '100'
     };
 
@@ -326,8 +362,15 @@ async function fetchAllFootballFixtures() {
         if (!matches.length && rawItems.length) {
           throw new Error('SofaBets returned ' + rawItems.length + ' records but none could be normalized');
         }
-        // An empty successful response is allowed, but continue to another
-        // base only when this endpoint clearly returned no data.
+        // Do not treat an empty 200 response as a working fixture feed.
+        // Continue to the next known SofaBets endpoint/base until we actually
+        // obtain football fixtures. This is important because the backend has
+        // several public API families and some return 200 with an empty body.
+        if (!matches.length) {
+          lastError = new Error('SofaBets endpoint returned 0 football fixtures: ' + base + path);
+          console.warn('[sofaBetsProvider] ' + lastError.message);
+          continue;
+        }
         allFixturesCache.fetchedAt = Date.now();
         allFixturesCache.matches = matches;
         allFixturesCache.base = base;
