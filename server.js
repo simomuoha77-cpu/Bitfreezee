@@ -202,17 +202,23 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     return true;
   });
 
-  // PARTNER COMPATIBILITY / SINGLE SOURCE OF TRUTH:
-  // SafariBet and older JuanAi consumers read match.aiOdds. For SofaBets
-  // football matches, that field must be an alias of the REAL SofaBets
-  // bookmaker object, never an AI-generated replacement. If SofaBets has no
-  // odds, explicitly remove stale AI odds from the API response so an older
-  // database analysis can never masquerade as current bookmaker prices.
+  // PARTNER COMPATIBILITY / EFFECTIVE ODDS:
+  // SafariBet consumes the normal /api/fixtures response and expects an
+  // `odds`/`aiOdds` object.  JuanAi may have an AI estimate for a match even
+  // when SofaBets has not published a bookmaker market for that match yet.
+  // Do NOT delete that analysis: SafariBet must receive the same odds JuanAi
+  // is displaying.  However, real SofaBets bookmaker odds always win and are
+  // copied into the compatibility fields so they can never be overwritten by
+  // the AI estimate.  When only an AI estimate exists, expose it explicitly
+  // as `oddsSource: 'ai'` and keep `isRealMarketOdds: false`; this is an
+  // estimate, not a bookmaker price.  When neither exists, odds remains null.
   for (let i = 0; i < matches.length; i += 1) {
     const m = matches[i];
     const sofaOdds = m && m.oddsSource === 'sofabets'
       ? (m.providerOdds || m._sofaProviderOdds || m.odds || null)
       : null;
+    const aiOdds = m && m.aiOdds ? m.aiOdds : null;
+
     if (sofaOdds) {
       matches[i] = Object.assign({}, m, {
         aiOdds: Object.assign({}, sofaOdds, {
@@ -220,23 +226,35 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
           aiGenerated: false,
           oddsSource: 'sofabets',
           realOddsSource: 'SofaBets',
-          realOddsProvider: 'sofabets',
-          providerOdds: true
+          realOddsProvider: 'sofabets'
         }),
         providerOdds: sofaOdds,
         odds: sofaOdds,
+        oddsSource: 'sofabets',
+        realOddsSource: 'SofaBets',
         isRealMarketOdds: true,
         aiGenerated: false
       });
+    } else if (aiOdds) {
+      // Preserve the exact AI analysis already stored by JuanAi so external
+      // consumers see the same prices as JuanAi.  These are clearly marked as
+      // estimates and are never presented as SofaBets bookmaker odds.
+      matches[i] = Object.assign({}, m, {
+        odds: aiOdds,
+        providerOdds: null,
+        oddsSource: 'ai',
+        realOddsSource: null,
+        isRealMarketOdds: false,
+        aiGenerated: true
+      });
     } else {
-      const copy = Object.assign({}, m);
-      delete copy.aiOdds;
-      delete copy.aiPrediction;
-      delete copy.aiConfidence;
-      delete copy.aiAnalysis;
-      delete copy.aiXG;
-      delete copy.aiValueBet;
-      matches[i] = copy;
+      matches[i] = Object.assign({}, m, {
+        odds: null,
+        providerOdds: null,
+        oddsSource: null,
+        realOddsSource: null,
+        isRealMarketOdds: false
+      });
     }
   }
 
