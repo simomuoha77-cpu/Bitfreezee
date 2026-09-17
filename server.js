@@ -258,6 +258,25 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     }
   }
 
+  // SAFARIBET MARKETS CONTRACT: guarantee `markets` and `fixture_id` are
+  // always present with the right types, even for documents written by an
+  // older deploy before this field existed (they'll get a real `markets`
+  // array again on the next scheduled SofaBets refresh — this is just a
+  // safety net for the gap until then). `markets` here is untouched by the
+  // sofaOdds/aiOdds branching above, so it is ALWAYS SofaBets-only data —
+  // AI never populates this field, never has, per the loop above only
+  // ever touching odds/aiOdds/providerOdds, not markets.
+  for (let i = 0; i < matches.length; i += 1) {
+    const m = matches[i];
+    if (!Array.isArray(m.markets)) m.markets = [];
+    if (!Number.isFinite(Number(m.fixture_id))) {
+      const fallbackId = Number(m.providerMatchId ?? m._sofaRawId);
+      m.fixture_id = Number.isFinite(fallbackId) ? fallbackId : null;
+    } else {
+      m.fixture_id = Number(m.fixture_id);
+    }
+  }
+
   // LIVE MINUTE RECOMPUTATION: see recomputeLiveMinutes() above (shared
   // with /internal/fixtures-view) for the full reasoning — short version:
   // estimateMatchMinute() used to only run once per match at
