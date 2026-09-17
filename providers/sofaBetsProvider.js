@@ -240,25 +240,6 @@ function finiteOdd(value) {
   return Number.isFinite(n) && n > 1 ? n : null;
 }
 
-// Fallback ids for the SafariBet markets contract, only used when SofaBets'
-// own raw payload doesn't include a numeric id for that market/selection.
-// See the long comment above the markets-building block in normalizeMatch()
-// for why these are a documented placeholder, not a verified real id.
-function conventionalSelectionId(label, index) {
-  const l = String(label || '').trim().toLowerCase();
-  if (l === 'home' || l === '1') return 1;
-  if (l === 'draw' || l === 'x') return 2;
-  if (l === 'away' || l === '2') return 3;
-  return index + 1;
-}
-
-function stableNumericId(str) {
-  let h = 0;
-  const s = String(str || '');
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return (h % 900000) + 100000; // 6-digit, deterministic, clearly out of typical low-range real ids
-}
-
 function collectMarketArrays(value, out, bookmakerName) {
   if (!value || typeof value !== 'object') return;
   if (Array.isArray(value)) {
@@ -483,67 +464,27 @@ function normalizeMatch(raw) {
   for (const key of ['markets', 'odds', 'market', 'betOffers', 'betoffers']) {
     if (Array.isArray(source[key])) rawMarkets.push(...source[key]);
   }
-  // ── SAFARIBET MARKETS CONTRACT ──────────────────────────────────────
-  // SafariBet's bet-placement code reads markets[].selections[].odds
-  // directly and needs numeric market_id/selection_id. Built ONLY from
-  // SofaBets' raw payload — never from AI. A selection with no real,
-  // finite bookmaker price (>1) is dropped rather than sent as null; a
-  // market left with fewer than 2 valid selections is dropped entirely
-  // rather than sent half-priced.
-  //
-  // IDs: SofaBets' own numeric id is used whenever it sends one — that's
-  // the only way an id can genuinely match what SofaBets expects back at
-  // bet-placement time. Only when SofaBets omits a numeric id does this
-  // fall back to a stable, clearly-synthetic id (conventionalSelectionId /
-  // stableNumericId) purely so the field is never null — verify these
-  // against a real captured SofaBets payload (/api/sofabets-debug) before
-  // relying on them for actual stake settlement.
   const markets = rawMarkets.map((market, index) => {
     if (!market || typeof market !== 'object') return null;
-    const rawSelections = market.outcomes || market.selections || market.options || market.betOffers || [];
-    if (!Array.isArray(rawSelections) || !rawSelections.length) return null;
-    const selections = [];
-    for (let si = 0; si < rawSelections.length; si += 1) {
-      const selection = rawSelections[si];
-      if (!selection || typeof selection !== 'object') continue;
-      const selection_name = String(pick(selection, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName']) || ('Selection ' + (si + 1)));
-      const oddsValue = finiteOdd(pick(selection, ['odds', 'odd', 'price', 'value', 'decimalOdds']));
-      if (oddsValue == null) continue; // never emit a null/invalid bookmaker odd — just omit this selection
-      const rawSelId = pick(selection, ['id', 'selectionId', 'selection_id', 'outcomeId', 'outcome_id']);
-      const selection_id = rawSelId != null && Number.isFinite(Number(rawSelId)) ? Number(rawSelId) : conventionalSelectionId(selection_name, si);
-      selections.push({ selection_id, selection_name, odds: oddsValue });
-    }
-    if (selections.length < 2) return null; // not enough real prices to make this market usable
-    const market_name = String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type']) || ('Market ' + (index + 1)));
-    const rawMarketId = pick(market, ['id', 'marketId', 'market_id', 'externalId', 'external_id']);
-    const market_id = rawMarketId != null && Number.isFinite(Number(rawMarketId)) ? Number(rawMarketId) : stableNumericId(market_name);
+    const selections = market.outcomes || market.selections || market.options || market.betOffers || [];
+    const normalizedSelections = Array.isArray(selections) ? selections.map((selection, si) => {
+      if (!selection || typeof selection !== 'object') return null;
+      const price = pick(selection, ['odds', 'odd', 'price', 'value', 'decimalOdds']);
+      return {
+        key: String(pick(selection, ['id', 'key', 'selectionId', 'selection_id', 'name', 'label']) || ('selection_' + si)),
+        name: String(pick(selection, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName']) || ('Selection ' + (si + 1))),
+        odds: Number.isFinite(Number(price)) ? Number(price) : null,
+        bookmaker: pick(selection, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || null
+      };
+    }).filter(Boolean) : [];
     return {
-      market_id,
-      market_name,
-      selections,
+      key: String(pick(market, ['id', 'key', 'marketId', 'market_id', 'type']) || ('market_' + index)),
+      name: String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type']) || 'Market'),
+      selections: normalizedSelections,
       bookmaker: pick(market, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || null
     };
   }).filter(Boolean);
-  // Fallback for SofaBets deployments that expose only a flat 1X2 object
-  // (no markets[] array at all) — the `odds` value above (from parseOdds)
-  // already carries real bookmaker homeWin/draw/awayWin numbers in that
-  // case, so surface them here as a real "Match Result" market too, using
-  // the exact same contract, rather than leaving `markets` empty for a
-  // fixture that genuinely does have real SofaBets prices.
-  const hasMatchResultMarket = markets.some(m => /1x2|match result|match_winner|match winner/i.test(m.market_name));
-  if (!hasMatchResultMarket && odds && finiteOdd(odds.homeWin) && finiteOdd(odds.draw) && finiteOdd(odds.awayWin)) {
-    markets.push({
-      market_id: 1,
-      market_name: 'Match Result',
-      selections: [
-        { selection_id: 1, selection_name: 'Home', odds: finiteOdd(odds.homeWin) },
-        { selection_id: 2, selection_name: 'Draw', odds: finiteOdd(odds.draw) },
-        { selection_id: 3, selection_name: 'Away', odds: finiteOdd(odds.awayWin) }
-      ],
-      bookmaker: null
-    });
-  }
-  const bookmakers = Array.from(new Set(markets.flatMap(m => [m.bookmaker].filter(Boolean))));
+  const bookmakers = Array.from(new Set(markets.flatMap(m => [m.bookmaker, ...m.selections.map(s => s.bookmaker)].filter(Boolean))));
   const marketOdds = odds || (markets.length ? { markets, bookmakers } : null);
   if (marketOdds && !marketOdds.markets) {
     marketOdds.markets = markets;
@@ -554,7 +495,6 @@ function normalizeMatch(raw) {
   return {
     provider: 'sofabets',
     providerMatchId: String(externalId),
-    fixture_id: Number.isFinite(Number(externalId)) ? Number(externalId) : null,
     competition: competition || 'Unknown Competition',
     season: pick(source, ['season', 'seasonName']),
     homeTeam: home,
