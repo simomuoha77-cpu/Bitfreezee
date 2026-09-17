@@ -235,161 +235,48 @@ function teamName(value) {
   return null;
 }
 
-function finiteOdd(value) {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 1 ? n : null;
-}
-
-function collectMarketArrays(value, out, bookmakerName) {
-  if (!value || typeof value !== 'object') return;
-  if (Array.isArray(value)) {
-    for (const item of value) collectMarketArrays(item, out, bookmakerName);
-    return;
-  }
-
-  const ownBookmaker = pick(value, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider', 'source']) || bookmakerName || null;
-  for (const key of ['markets', 'market', 'betOffers', 'betoffers']) {
-    const v = value[key];
-    if (Array.isArray(v)) {
-      for (const market of v) out.push({ market, bookmaker: ownBookmaker });
-    } else if (v && typeof v === 'object') {
-      for (const [marketKey, marketValue] of Object.entries(v)) {
-        if (marketValue && typeof marketValue === 'object') {
-          out.push({ market: Object.assign({ key: marketKey }, marketValue), bookmaker: ownBookmaker });
-        }
-      }
-    }
-  }
-
-  // Odds may themselves be an object containing markets/bookmakers.
-  for (const key of ['odds', 'prices', 'lines']) {
-    const nested = value[key];
-    if (nested && typeof nested === 'object') collectMarketArrays(nested, out, ownBookmaker);
-  }
-
-  // Some feeds put bookmakers at the fixture/odds level and markets below each bookmaker.
-  for (const key of ['bookmakers', 'books']) {
-    const books = value[key];
-    if (Array.isArray(books)) {
-      for (const book of books) {
-        const name = pick(book, ['name', 'bookmakerName', 'bookmaker_name', 'title', 'provider']) || ownBookmaker;
-        collectMarketArrays(book, out, name);
-      }
-    } else if (books && typeof books === 'object') {
-      for (const [name, book] of Object.entries(books)) {
-        collectMarketArrays(book, out, name);
-      }
-    }
-  }
-}
-
-function normalizeMarket(market, bookmakerName, index) {
-  if (!market || typeof market !== 'object') return null;
-  const bookmaker = pick(market, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || bookmakerName || null;
-  const selections = market.outcomes || market.selections || market.options || market.betOffers || market.choices || market.lines;
-  let rows = [];
-  if (Array.isArray(selections)) rows = selections;
-  else if (selections && typeof selections === 'object') rows = Object.entries(selections).map(([key, value]) => ({ key, ...(value && typeof value === 'object' ? value : { odds: value }) }));
-
-  const normalizedSelections = rows.map((selection, si) => {
-    if (!selection || typeof selection !== 'object') return null;
-    const price = finiteOdd(pick(selection, ['odds', 'odd', 'price', 'value', 'decimalOdds', 'decimalValue', 'rate']));
-    return {
-      key: String(pick(selection, ['id', 'key', 'selectionId', 'selection_id', 'name', 'label']) || ('selection_' + si)),
-      name: String(pick(selection, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'choiceName', 'title']) || ('Selection ' + (si + 1))),
-      odds: price,
-      bookmaker: pick(selection, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || bookmaker
-    };
-  }).filter(Boolean);
-
-  if (!normalizedSelections.length) return null;
-  return {
-    key: String(pick(market, ['id', 'key', 'marketId', 'market_id', 'type']) || ('market_' + index)),
-    name: String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type', 'title']) || 'Market'),
-    selections: normalizedSelections,
-    bookmaker
-  };
-}
-
 function parseOdds(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-
-  // First preserve a canonical 1X2 object when the fixture already exposes it.
-  const directSources = [
-    raw,
-    raw.odds,
-    raw['1X2'],
-    raw.oneXTwo,
-    raw.matchResult,
-    raw.match_result,
-    raw.matchWinner,
-    raw.match_winner
-  ].filter(v => v && typeof v === 'object' && !Array.isArray(v));
-
-  for (const direct of directSources) {
+  const markets = [];
+  if (raw && typeof raw === 'object' && (raw.homeWin != null || raw.awayWin != null)) {
     const canonical = {
-      homeWin: finiteOdd(pick(direct, ['homeWin', 'home', 'Home', '1', 'homeOdds', 'homePrice', 'home_odds', 'home_price'])),
-      draw: finiteOdd(pick(direct, ['draw', 'Draw', 'X', 'x', 'drawOdds', 'drawPrice', 'draw_odds', 'draw_price'])),
-      awayWin: finiteOdd(pick(direct, ['awayWin', 'away', 'Away', '2', 'awayOdds', 'awayPrice', 'away_odds', 'away_price']))
+      homeWin: Number(raw.homeWin ?? raw.home),
+      draw: Number(raw.draw),
+      awayWin: Number(raw.awayWin ?? raw.away)
     };
-    if (canonical.homeWin && canonical.draw && canonical.awayWin) return canonical;
+    if (Number.isFinite(canonical.homeWin) && Number.isFinite(canonical.draw) && Number.isFinite(canonical.awayWin)) return canonical;
+  }
+  for (const key of ['markets', 'odds', 'market', 'betOffers', 'betoffers']) {
+    if (Array.isArray(raw?.[key])) markets.push(...raw[key]);
   }
 
-  const rawMarketEntries = [];
-  collectMarketArrays(raw, rawMarketEntries, null);
-  const normalizedMarkets = rawMarketEntries
-    .map((entry, i) => normalizeMarket(entry.market, entry.bookmaker, i))
-    .filter(Boolean);
-
-  // Also support a plain top-level markets[] array (collectMarketArrays handles it,
-  // but this keeps the intent explicit for feeds where markets are the only odds field).
-  if (Array.isArray(raw.markets)) {
-    raw.markets.forEach((market, i) => {
-      const normalized = normalizeMarket(market, null, normalizedMarkets.length + i);
-      if (normalized) normalizedMarkets.push(normalized);
-    });
+  const direct = raw?.['1X2'] || raw?.oneXTwo || raw?.matchResult || raw?.match_result;
+  if (direct && typeof direct === 'object') {
+    const o = {
+      homeWin: Number(pick(direct, ['homeWin', 'home', 'Home', '1', 'homeOdds', 'homePrice'])),
+      draw: Number(pick(direct, ['draw', 'Draw', 'X', 'x', 'drawOdds', 'drawPrice'])),
+      awayWin: Number(pick(direct, ['awayWin', 'away', 'Away', '2', 'awayOdds', 'awayPrice']))
+    };
+    if ([o.homeWin, o.draw, o.awayWin].every(Number.isFinite)) return o;
   }
 
-  // De-duplicate identical market/bookmaker/selection groups without throwing away
-  // genuinely different bookmaker prices.
-  const unique = [];
-  const seen = new Set();
-  for (const market of normalizedMarkets) {
-    const key = JSON.stringify([
-      market.name,
-      market.bookmaker,
-      market.selections.map(s => [s.name, s.odds, s.bookmaker])
-    ]);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(market);
-  }
-
-  let oneXTwo = null;
-  for (const market of unique) {
-    const name = market.name.toLowerCase();
-    if (!(name.includes('1x2') || name.includes('match result') || name.includes('match_winner') || name.includes('match winner') || name === 'winner' || name === 'match winner')) continue;
-    const find = wanted => {
-      const found = market.selections.find(s => {
-        const label = s.name.toLowerCase().trim();
-        return wanted.some(x => label === x || label.startsWith(x + ' ') || label.startsWith(x + ':') || label.startsWith(x + '-'));
+  for (const market of markets) {
+    const marketName = String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type', 'key']) || '').toLowerCase();
+    if (!(marketName.includes('1x2') || marketName.includes('match result') || marketName.includes('match_winner') || marketName.includes('match winner'))) continue;
+    const outcomes = market.outcomes || market.selections || market.options || market.betOffers;
+    if (!Array.isArray(outcomes)) continue;
+    const get = wanted => {
+      const found = outcomes.find(o => {
+        const label = String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '').toLowerCase();
+        return wanted.some(x => label === x || label.startsWith(x + ' ') || label.startsWith(x + ':'));
       });
-      return found ? found.odds : null;
+      return found ? Number(pick(found, ['odds', 'odd', 'price', 'value', 'decimalOdds'])) : NaN;
     };
-    const candidate = { homeWin: find(['home', '1']), draw: find(['draw', 'x']), awayWin: find(['away', '2']) };
-    if (candidate.homeWin && candidate.draw && candidate.awayWin) {
-      oneXTwo = candidate;
-      break;
-    }
+    const result = { homeWin: get(['home', '1']), draw: get(['draw', 'x']), awayWin: get(['away', '2']) };
+    if ([result.homeWin, result.draw, result.awayWin].every(Number.isFinite)) return result;
   }
-
-  if (!unique.length && !oneXTwo) return null;
-  const bookmakers = Array.from(new Set(unique.flatMap(m => [m.bookmaker, ...m.selections.map(s => s.bookmaker)].filter(Boolean))));
-  const result = oneXTwo || {};
-  result.markets = unique;
-  result.bookmakers = bookmakers;
-  return result;
+  return null;
 }
+
 function parseStatus(raw, utcDate) {
   const liveFlag = pick(raw, ['is_live', 'isLive', 'live', 'inPlay', 'in_play']);
   if (liveFlag === true || String(liveFlag).toLowerCase() === 'true' || Number(liveFlag) === 1) return 'IN_PLAY';
@@ -587,7 +474,7 @@ async function fetchAllFixturesForSport(sportId) {
           continue;
         }
         allFixturesCache.set(String(sportId), { fetchedAt: Date.now(), matches, base, path });
-        const oddsCount = matches.filter(m => m._sofaProviderOdds && (m._sofaProviderOdds.homeWin || (Array.isArray(m._sofaProviderOdds.markets) && m._sofaProviderOdds.markets.length))).length;
+        const oddsCount = matches.filter(m => m._sofaProviderOdds).length;
         const leaguesCount = new Set(matches.map(m => m.competition).filter(Boolean)).size;
         recordSuccess(matches.length, 0, oddsCount, leaguesCount, base, path);
         console.log(`[sofaBetsProvider] synced ${matches.length} fixtures from ${base}${path}`);
