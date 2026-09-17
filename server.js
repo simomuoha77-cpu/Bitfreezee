@@ -135,6 +135,75 @@ app.get('/api/competitions', requireApiKey, async (req, res) => {
   }
 });
 
+
+// SafariBet consumes fixture markets, not just JuanAi's internal odds object.
+// Keep the complete JuanAi fixture intact, but expose the same odds under the
+// market/selection contract SafariBet already uses: markets[].selections[].odds.
+// This is response serialization only; it does not alter MongoDB or the
+// SofaBets/provider pipeline.
+function buildPartnerMarkets(match) {
+  const source = match.aiOdds || match.providerOdds || match._sofaProviderOdds || match.odds || match.realOdds || null;
+  if (!source || typeof source !== 'object') return Array.isArray(match.markets) ? match.markets : [];
+
+  const homeName = match.homeTeam && match.homeTeam.name ? match.homeTeam.name : 'Home';
+  const awayName = match.awayTeam && match.awayTeam.name ? match.awayTeam.name : 'Away';
+  const idBase = String(match.id || match.providerMatchId || 'fixture');
+  const markets = [];
+  let marketId = 1;
+  let selectionId = 1;
+  const addMarket = (name, entries) => {
+    const selections = entries.filter(e => Number.isFinite(Number(e.odds)) && Number(e.odds) > 1)
+      .map(e => ({ selection_id: idBase + ':' + (selectionId++), selection_name: e.name, odds: Number(e.odds) }));
+    if (selections.length) markets.push({ market_id: idBase + ':m' + (marketId++), market_name: name, selections });
+  };
+
+  const homeWin = source.homeWin != null ? source.homeWin : source.home;
+  const awayWin = source.awayWin != null ? source.awayWin : source.away;
+  const draw = source.draw;
+  addMarket('1X2', [
+    { name: homeName, odds: homeWin },
+    { name: 'Draw', odds: draw },
+    { name: awayName, odds: awayWin }
+  ]);
+  addMarket('Over/Under 2.5', [
+    { name: 'Over 2.5', odds: source.over25 },
+    { name: 'Under 2.5', odds: source.under25 }
+  ]);
+  addMarket('Both Teams To Score', [
+    { name: 'Yes', odds: source.btts },
+    { name: 'No', odds: source.bttsNo }
+  ]);
+  addMarket('Double Chance', [
+    { name: '1X', odds: source.dc_home_draw },
+    { name: '12', odds: source.dc_home_away },
+    { name: 'X2', odds: source.dc_draw_away }
+  ]);
+
+  if (source.handicap && typeof source.handicap === 'object') {
+    const line = source.handicap.line;
+    addMarket('Handicap' + (line != null ? ' ' + line : ''), [
+      { name: homeName, odds: source.handicap.home },
+      { name: awayName, odds: source.handicap.away }
+    ]);
+  }
+
+  return markets.length ? markets : (Array.isArray(match.markets) ? match.markets : []);
+}
+
+function serializePartnerFixtures(matches) {
+  return matches.map(match => {
+    const out = Object.assign({}, match);
+    const source = match.aiOdds || match.providerOdds || match._sofaProviderOdds || match.odds || match.realOdds || null;
+    if (source && typeof source === 'object') {
+      // Preserve the full JuanAi odds object and also provide a stable `odds`
+      // alias for partners that read the fixture-level field.
+      out.odds = Object.assign({}, source);
+    }
+    out.markets = buildPartnerMarkets(out);
+    return out;
+  });
+}
+
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
   const days = req.query.days || '0';
   // sport defaults to 'football' so every existing caller (BetaKE included)
@@ -220,9 +289,7 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   // when either one asks.
   recomputeLiveMinutes(matches);
 
-  // Keep the exact same fixtures, but serialize their already-existing odds
-  // in the market/selection shape SafariBet reads.
-  const partnerMatches = matches.map(attachSafariBetMarkets);
+  const partnerMatches = serializePartnerFixtures(matches);
 
   res.json({
     matches: partnerMatches,
@@ -753,79 +820,6 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // Shared by both /api/fixtures and /internal/fixtures-view — see the full
 // reasoning comment at the /api/fixtures call site below. Kept as one
 // function so the two routes can never silently drift apart in behavior.
-
-// SafariBet consumes odds from markets[].selections[].odds.  JuanAi's
-// internal match objects already contain the priced odds (SofaBets under
-// providerOdds/odds, or JuanAi's existing aiOdds), but /api/fixtures used to
-// return those values only as object fields.  Build the partner-facing market
-// shape here without changing the stored match or the pricing source.
-function attachSafariBetMarkets(match) {
-  if (!match || typeof match !== 'object') return match;
-
-  const source =
-    (match.providerOdds && typeof match.providerOdds === 'object' ? match.providerOdds : null) ||
-    (match._sofaProviderOdds && typeof match._sofaProviderOdds === 'object' ? match._sofaProviderOdds : null) ||
-    (match.odds && typeof match.odds === 'object' ? match.odds : null) ||
-    (match.aiOdds && typeof match.aiOdds === 'object' ? match.aiOdds : null);
-
-  if (!source) return match;
-
-  const num = value => {
-    const n = Number(value);
-    return Number.isFinite(n) && n > 1 ? n : null;
-  };
-  const pick = (...keys) => {
-    for (const key of keys) {
-      const value = num(source[key]);
-      if (value != null) return value;
-    }
-    return null;
-  };
-
-  const selections = [];
-  const add = (id, name, value) => {
-    const odds = num(value);
-    if (odds != null) selections.push({ selection_id: id, selection_name: name, odds });
-  };
-
-  // Football 1X2.  Accept both SofaBets' native home/draw/away keys and
-  // JuanAi's aiOdds homeWin/draw/awayWin keys; never invent a price.
-  add(1, (match.homeTeam && match.homeTeam.name) || 'Home', pick('homeWin', 'home'));
-  add(2, 'Draw', pick('draw'));
-  add(3, (match.awayTeam && match.awayTeam.name) || 'Away', pick('awayWin', 'away'));
-
-  // Preserve the additional odds JuanAi already exposes when present.
-  const extras = [
-    ['over25', 'Over 2.5'], ['under25', 'Under 2.5'],
-    ['btts', 'Both Teams To Score - Yes'], ['bttsNo', 'Both Teams To Score - No'],
-    ['dc_home_draw', 'Home or Draw'], ['dc_home_away', 'Home or Away'],
-    ['dc_draw_away', 'Draw or Away']
-  ];
-  let nextId = 10;
-  for (const [key, name] of extras) {
-    const odds = num(source[key]);
-    if (odds != null) add(nextId++, name, odds);
-  }
-
-  if (!selections.length) return match;
-
-  const markets = [{
-    market_id: 1,
-    market_name: '1X2',
-    selections: selections.slice(0, 3)
-  }];
-  const extraSelections = selections.slice(3);
-  if (extraSelections.length) {
-    markets.push({
-      market_id: 2,
-      market_name: 'Additional Markets',
-      selections: extraSelections
-    });
-  }
-
-  return Object.assign({}, match, { markets });
-}
-
 function recomputeLiveMinutes(matches) {
   matches.forEach(m => {
     // REAL BUG FIX for JuanAi's live minute running ~7-8 min behind other
