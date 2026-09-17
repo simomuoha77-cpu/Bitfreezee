@@ -18,7 +18,8 @@ const BASES = Array.from(new Set([
   'https://feed.sofabets.com'
 ].filter(Boolean).map(v => String(v).replace(/\/+$/, ''))));
 
-const FOOTBALL_SPORT_ID = Number(process.env.SOFABETS_SPORT_ID || 1);
+const SPORT_IDS = Object.freeze({ football: 1, basketball: 4, tennis: 24, hockey: 15, cricket: 6, volleyball: 91189, rugby: 73744, handball: 99614 });
+const FOOTBALL_SPORT_ID = SPORT_IDS.football;
 const REQUEST_TIMEOUT_MS = Number(process.env.SOFABETS_TIMEOUT_MS || 12000);
 const MAX_PAGES_PER_FETCH = Number(process.env.SOFABETS_MAX_PAGES || 30);
 const PAGE_FETCH_GAP_MS = 250;
@@ -32,8 +33,8 @@ const DEFAULT_PATHS = [
   '/api/fixtures',
   '/api/matches',
   '/api/events',
-  '/api/sports/1/fixtures',
-  '/api/sports/football/fixtures',
+  '/api/fixtures-by-sport',
+  '/api/sports/fixtures',
   '/api/football/fixtures'
 ];
 const PATHS = String(process.env.SOFABETS_FIXTURES_PATHS || '')
@@ -170,7 +171,7 @@ function paginationInfo(payload) {
     nextPage: root.nextPage ?? root.next_page ?? p.nextPage ?? p.next_page ?? payload?.nextPage ?? payload?.next_page
   };
 }
-async function fetchPages(base, path) {
+async function fetchPages(base, path, sportId) {
   const all = [];
   let page = 1;
   let first = true;
@@ -182,7 +183,7 @@ async function fetchPages(base, path) {
     // sportId + page + limit (+ marketType), and some backend deployments
     // return an empty/sport-null response when extra sport parameters are sent.
     const query = {
-      sportId: String(FOOTBALL_SPORT_ID),
+      sportId: String(sportId),
       page: String(page),
       limit: '100',
       marketType: 'match result'
@@ -194,7 +195,7 @@ async function fetchPages(base, path) {
     } catch (e) {
       // Some installations expose fixtures without the marketType filter.
       const fallbackQuery = {
-        sportId: String(FOOTBALL_SPORT_ID),
+        sportId: String(sportId),
         page: String(page),
         limit: '100'
       };
@@ -234,8 +235,16 @@ function teamName(value) {
   return null;
 }
 
-function parseOdds(raw, homeTeamName, awayTeamName) {
+function parseOdds(raw) {
   const markets = [];
+  if (raw && typeof raw === 'object' && (raw.homeWin != null || raw.awayWin != null)) {
+    const canonical = {
+      homeWin: Number(raw.homeWin ?? raw.home),
+      draw: Number(raw.draw),
+      awayWin: Number(raw.awayWin ?? raw.away)
+    };
+    if (Number.isFinite(canonical.homeWin) && Number.isFinite(canonical.draw) && Number.isFinite(canonical.awayWin)) return canonical;
+  }
   for (const key of ['markets', 'odds', 'market', 'betOffers', 'betoffers']) {
     if (Array.isArray(raw?.[key])) markets.push(...raw[key]);
   }
@@ -243,55 +252,27 @@ function parseOdds(raw, homeTeamName, awayTeamName) {
   const direct = raw?.['1X2'] || raw?.oneXTwo || raw?.matchResult || raw?.match_result;
   if (direct && typeof direct === 'object') {
     const o = {
-      home: Number(pick(direct, ['home', 'Home', '1', 'homeOdds', 'homePrice'])),
+      homeWin: Number(pick(direct, ['homeWin', 'home', 'Home', '1', 'homeOdds', 'homePrice'])),
       draw: Number(pick(direct, ['draw', 'Draw', 'X', 'x', 'drawOdds', 'drawPrice'])),
-      away: Number(pick(direct, ['away', 'Away', '2', 'awayOdds', 'awayPrice']))
+      awayWin: Number(pick(direct, ['awayWin', 'away', 'Away', '2', 'awayOdds', 'awayPrice']))
     };
-    if ([o.home, o.draw, o.away].every(Number.isFinite)) return o;
+    if ([o.homeWin, o.draw, o.awayWin].every(Number.isFinite)) return o;
   }
-
-  // CONFIRMED against a real response (2026-09-17): SofaBets does NOT label
-  // home/away selections with the words "home"/"away" — it uses the ACTUAL
-  // TEAM NAME as selection_name/outcome_name (e.g. "PFC Levski Sofia", not
-  // "Home"). Only the draw selection is literally labeled "draw". Matching
-  // by literal 'home'/'1' text (the old logic) therefore NEVER found home
-  // or away odds — only draw ever matched, so isFinite-on-all-three always
-  // failed and this function always returned null. Fixed by matching the
-  // two non-draw selections against the fixture's own home/away team names.
-  const normTeam = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const homeNorm = normTeam(homeTeamName);
-  const awayNorm = normTeam(awayTeamName);
 
   for (const market of markets) {
     const marketName = String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type', 'key']) || '').toLowerCase();
     if (!(marketName.includes('1x2') || marketName.includes('match result') || marketName.includes('match_winner') || marketName.includes('match winner'))) continue;
     const outcomes = market.outcomes || market.selections || market.options || market.betOffers;
     if (!Array.isArray(outcomes)) continue;
-
-    const labelOf = o => String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '');
-    const oddsOf = o => Number(pick(o, ['odds', 'odd', 'price', 'value', 'decimalOdds']));
-
-    let homeOdds = NaN, drawOdds = NaN, awayOdds = NaN;
-    const remaining = [];
-    for (const o of outcomes) {
-      const label = labelOf(o).toLowerCase();
-      if (label === 'draw' || label === 'x' || label === 'tie') { drawOdds = oddsOf(o); continue; }
-      remaining.push(o);
-    }
-    for (const o of remaining) {
-      const labelNorm = normTeam(labelOf(o));
-      if (homeNorm && labelNorm === homeNorm) homeOdds = oddsOf(o);
-      else if (awayNorm && labelNorm === awayNorm) awayOdds = oddsOf(o);
-    }
-    // If team-name matching didn't resolve both (e.g. the fixture-level
-    // team name and the selection-level team name are spelled slightly
-    // differently), fall back to position — a standard 3-selection 1X2
-    // market is consistently ordered [home, draw, away] in every sample seen.
-    if (outcomes.length === 3) {
-      if (!Number.isFinite(homeOdds)) homeOdds = oddsOf(outcomes[0]);
-      if (!Number.isFinite(awayOdds)) awayOdds = oddsOf(outcomes[2]);
-    }
-    if ([homeOdds, drawOdds, awayOdds].every(Number.isFinite)) return { home: homeOdds, draw: drawOdds, away: awayOdds };
+    const get = wanted => {
+      const found = outcomes.find(o => {
+        const label = String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '').toLowerCase();
+        return wanted.some(x => label === x || label.startsWith(x + ' ') || label.startsWith(x + ':'));
+      });
+      return found ? Number(pick(found, ['odds', 'odd', 'price', 'value', 'decimalOdds'])) : NaN;
+    };
+    const result = { homeWin: get(['home', '1']), draw: get(['draw', 'x']), awayWin: get(['away', '2']) };
+    if ([result.homeWin, result.draw, result.awayWin].every(Number.isFinite)) return result;
   }
   return null;
 }
@@ -299,7 +280,7 @@ function parseOdds(raw, homeTeamName, awayTeamName) {
 function parseStatus(raw, utcDate) {
   const liveFlag = pick(raw, ['is_live', 'isLive', 'live', 'inPlay', 'in_play']);
   if (liveFlag === true || String(liveFlag).toLowerCase() === 'true' || Number(liveFlag) === 1) return 'IN_PLAY';
-  const value = String(pick(raw, ['status', 'matchStatus', 'match_status', 'gameStatus', 'eventStatus', 'state']) || '').toLowerCase();
+  const value = String(pick(raw, ['status', 'matchStatus', 'gameStatus', 'eventStatus', 'state']) || '').toLowerCase();
   if (value.includes('live') || value.includes('inplay') || value.includes('in_play') || value.includes('in-play')) return 'IN_PLAY';
   if (value.includes('half') || value.includes('pause')) return 'PAUSED';
   if (value.includes('finish') || value.includes('ended') || value.includes('settled') || value === 'ft' || value.includes('complete')) return 'FINISHED';
@@ -335,7 +316,7 @@ function normalizeMatch(raw) {
   }
   if (!home || !away) return null;
 
-  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'competition_name', 'tournament', 'championship', 'league_name', 'leagueName']))
+  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'tournament', 'championship', 'league_name', 'leagueName']))
     || teamName(nestedLeague);
 
   const kickoff = pick(source, [
@@ -365,7 +346,37 @@ function normalizeMatch(raw) {
   const awayScore = pick(source, ['awayScore', 'away_score', 'scoreAway', 'away_score_live', 'live_away_score']) ?? pick(liveScore, ['away', 'awayScore', 'away_score']) ?? pick(scoreObj, ['away', 'Away', 'awayScore']);
   const hasScore = homeScore != null && awayScore != null;
 
-  const odds = parseOdds(source, home, away);
+  const odds = parseOdds(source);
+  const rawMarkets = [];
+  for (const key of ['markets', 'odds', 'market', 'betOffers', 'betoffers']) {
+    if (Array.isArray(source[key])) rawMarkets.push(...source[key]);
+  }
+  const markets = rawMarkets.map((market, index) => {
+    if (!market || typeof market !== 'object') return null;
+    const selections = market.outcomes || market.selections || market.options || market.betOffers || [];
+    const normalizedSelections = Array.isArray(selections) ? selections.map((selection, si) => {
+      if (!selection || typeof selection !== 'object') return null;
+      const price = pick(selection, ['odds', 'odd', 'price', 'value', 'decimalOdds']);
+      return {
+        key: String(pick(selection, ['id', 'key', 'selectionId', 'selection_id', 'name', 'label']) || ('selection_' + si)),
+        name: String(pick(selection, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName']) || ('Selection ' + (si + 1))),
+        odds: Number.isFinite(Number(price)) ? Number(price) : null,
+        bookmaker: pick(selection, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || null
+      };
+    }).filter(Boolean) : [];
+    return {
+      key: String(pick(market, ['id', 'key', 'marketId', 'market_id', 'type']) || ('market_' + index)),
+      name: String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type']) || 'Market'),
+      selections: normalizedSelections,
+      bookmaker: pick(market, ['bookmaker', 'bookmakerName', 'bookmaker_name', 'provider']) || null
+    };
+  }).filter(Boolean);
+  const bookmakers = Array.from(new Set(markets.flatMap(m => [m.bookmaker, ...m.selections.map(s => s.bookmaker)].filter(Boolean))));
+  const marketOdds = odds || (markets.length ? { markets, bookmakers } : null);
+  if (marketOdds && !marketOdds.markets) {
+    marketOdds.markets = markets;
+    marketOdds.bookmakers = bookmakers;
+  }
   const minute = pick(source, ['minute', 'liveMinute', 'matchMinute', 'elapsed', 'elapsedMinutes']);
 
   return {
@@ -385,12 +396,25 @@ function normalizeMatch(raw) {
     // Expose them directly as well as under the provider-specific field so
     // the canonical merge layer can carry them through without AI odds
     // generation overwriting them.
-    odds: odds,
-    _sofaProviderOdds: odds,
+    // REAL SOFABETS BOOKMAKER ODDS
+    // These are the authoritative market prices.
+    // AI must never replace or reprice them.
+    // Canonical football aliases are kept for existing JuanAi consumers.
+    // `markets` below remains the source of truth for all non-football/other markets.
+    odds: marketOdds,
+    providerOdds: marketOdds,
+    _sofaProviderOdds: marketOdds,
     _oddsSource: odds ? 'sofabets' : null,
-    _hasProviderOdds: !!odds,
-    _skipAiOddsGeneration: !!odds,
-    _sofaMarkets: Array.isArray(source.markets) ? source.markets : null,
+    oddsSource: marketOdds ? 'sofabets' : null,
+    realOddsSource: marketOdds ? 'SofaBets' : null,
+    isRealMarketOdds: !!marketOdds,
+    aiGenerated: false,
+    _hasProviderOdds: !!marketOdds,
+    _skipAiOddsGeneration: !!marketOdds,
+    _directProviderOdds: !!marketOdds,
+    _sofaMarkets: markets,
+    markets,
+    bookmakers,
     _sofaRawId: String(externalId)
   };
 }
@@ -425,16 +449,17 @@ function sameRequestedDate(iso, dateStr) {
   return dateInTimeZone(value, 'Africa/Nairobi') === dateStr || value.slice(0, 10) === dateStr;
 }
 
-const allFixturesCache = { fetchedAt: 0, matches: [], base: null, path: null };
+const allFixturesCache = new Map();
 
-async function fetchAllFootballFixtures() {
-  if (Date.now() - allFixturesCache.fetchedAt < ALL_FIXTURES_CACHE_TTL_MS) return allFixturesCache.matches;
+async function fetchAllFixturesForSport(sportId) {
+  const cache = allFixturesCache.get(String(sportId)) || { fetchedAt: 0, matches: [], base: null, path: null };
+  if (Date.now() - cache.fetchedAt < ALL_FIXTURES_CACHE_TTL_MS) return cache.matches;
 
   let lastError = null;
   for (const base of BASES) {
     for (const path of FIXTURE_PATHS) {
       try {
-        const rawItems = await fetchPages(base, path);
+        const rawItems = await fetchPages(base, path, sportId);
         const matches = rawItems.map(safeNormalizeMatch).filter(Boolean);
         if (!matches.length && rawItems.length) {
           throw new Error('SofaBets returned ' + rawItems.length + ' records but none could be normalized');
@@ -444,14 +469,11 @@ async function fetchAllFootballFixtures() {
         // obtain football fixtures. This is important because the backend has
         // several public API families and some return 200 with an empty body.
         if (!matches.length) {
-          lastError = new Error('SofaBets endpoint returned 0 football fixtures: ' + base + path);
+          lastError = new Error('SofaBets endpoint returned 0 fixtures for sport ' + sportId + ': ' + base + path);
           console.warn('[sofaBetsProvider] ' + lastError.message);
           continue;
         }
-        allFixturesCache.fetchedAt = Date.now();
-        allFixturesCache.matches = matches;
-        allFixturesCache.base = base;
-        allFixturesCache.path = path;
+        allFixturesCache.set(String(sportId), { fetchedAt: Date.now(), matches, base, path });
         const oddsCount = matches.filter(m => m._sofaProviderOdds).length;
         const leaguesCount = new Set(matches.map(m => m.competition).filter(Boolean)).size;
         recordSuccess(matches.length, 0, oddsCount, leaguesCount, base, path);
@@ -465,7 +487,7 @@ async function fetchAllFootballFixtures() {
   }
 
   recordFailure(lastError || new Error('No SofaBets endpoint succeeded'));
-  if (allFixturesCache.matches.length) return allFixturesCache.matches;
+  if (cache.matches.length) return cache.matches;
   return [];
 }
 
@@ -519,8 +541,11 @@ async function fetchLiveFootballFixtures() {
   return [];
 }
 
-async function getMatchesForDate(dateStr) {
-  const all = await fetchAllFootballFixtures();
+async function getMatchesForDate(dateStr, options) {
+  options = options || {};
+  const sportName = String(options.sport || 'football').toLowerCase();
+  const sportId = Number(options.sportId || SPORT_IDS[sportName] || FOOTBALL_SPORT_ID);
+  const all = await fetchAllFixturesForSport(sportId);
   let result = all.filter(m => sameRequestedDate(m.utcDate, dateStr));
 
   // SofaBets exposes live matches through a separate endpoint. Always merge
@@ -529,7 +554,7 @@ async function getMatchesForDate(dateStr) {
   const todayNairobi = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit'
   }).format(new Date());
-  if (dateStr === todayNairobi) {
+  if (sportId === FOOTBALL_SPORT_ID && dateStr === todayNairobi) {
     const live = await fetchLiveFootballFixtures();
     const seen = new Set(result.map(m => String(m.providerMatchId)));
     const liveById = new Map(live.map(m => [String(m.providerMatchId), m]));
@@ -537,10 +562,13 @@ async function getMatchesForDate(dateStr) {
       const fresh = liveById.get(String(result[i].providerMatchId));
       if (fresh) result[i] = Object.assign({}, result[i], fresh, {
         odds: fresh.odds || result[i].odds,
+        providerOdds: fresh.odds || result[i].providerOdds || result[i]._sofaProviderOdds,
         _sofaProviderOdds: fresh.odds || result[i]._sofaProviderOdds,
         _oddsSource: (fresh.odds || result[i]._sofaProviderOdds) ? 'sofabets' : null,
         _hasProviderOdds: !!(fresh.odds || result[i]._sofaProviderOdds),
-        _skipAiOddsGeneration: !!(fresh.odds || result[i]._sofaProviderOdds)
+        _skipAiOddsGeneration: !!(fresh.odds || result[i]._sofaProviderOdds),
+        markets: fresh.markets && fresh.markets.length ? fresh.markets : result[i].markets,
+        bookmakers: fresh.bookmakers && fresh.bookmakers.length ? fresh.bookmakers : result[i].bookmakers
       });
     }
     for (const m of live) {
@@ -555,4 +583,4 @@ async function getMatchesForDate(dateStr) {
   return result;
 }
 
-module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getStatus };
+module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getStatus, normalizeMatch, parseOdds, SPORT_IDS };

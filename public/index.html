@@ -2623,8 +2623,8 @@ function getFbDate(daysAhead){
 }
 
 // Fixtures + odds now come from JuanAi's own backend (server.js), which:
-//  - fetches REAL matches from football-data.org server-side (no CORS issue)
-//  - runs AI analysis automatically in the background (scheduler.js)
+//  - reads the normal /api/fixtures endpoint backed by SofaBets
+//  - runs only unrelated AI analysis in the background; AI never replaces SofaBets bookmaker odds
 // This function just displays whatever the backend already has. It does NOT
 // fetch from football-data.org directly in the browser anymore, and there is
 // no demo/sample fixture fallback — if the backend has nothing yet, say so.
@@ -2641,7 +2641,7 @@ async function loadFixtures(silent){
   }
 
   try{
-    var resp = await fetch(JUANAI_BACKEND_URL + '/internal/fixtures-view?days=' + days);
+    var resp = await fetch(JUANAI_BACKEND_URL + '/api/fixtures?days=' + days + '&sport=football');
     if(!resp.ok) throw new Error('Backend returned ' + resp.status);
     var data = await resp.json();
     var matches = data.matches || [];
@@ -2693,13 +2693,10 @@ async function loadFixtures(silent){
   }
 }
 
-// ── Auto-poll: no manual "Generate AI Odds" clicking needed ──────────────
-// The scheduler in scheduler.js is already analyzing matches in the
-// background at its own pace (paced to respect free-tier API limits, so it
-// can take a couple minutes per match). This just quietly re-fetches the
-// fixtures view every 20s, ONLY while at least one visible match is still
-// waiting on odds, and stops once everything's analyzed — so there's no
-// endless polling once the page is fully up to date.
+// ── Auto-poll for SofaBets refreshes ─────────────────────────────────────
+// Re-fetch the normal fixture endpoint while a visible match has no provider
+// odds yet. A match with unavailable odds is rendered explicitly as
+// unavailable; no fake values are generated.
 var fbAutoPollTimer = null;
 function scheduleAutoPoll(matches){
   if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
@@ -2707,7 +2704,7 @@ function scheduleAutoPoll(matches){
   // game that's already over, so one lacking odds (e.g. it ended before the
   // scheduler got to it) shouldn't keep the page silently polling forever.
   var stillWaiting = (matches||[]).some(function(m){
-    var availableOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds;
+    var availableOdds = m.providerOdds || m._sofaProviderOdds || m.odds;
     return !availableOdds && m.status !== 'FINISHED';
   });
   if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
@@ -2724,7 +2721,7 @@ function updateFbStats(matches){
   document.getElementById('fbLeagues').textContent = leagues;
   // Count analyzed — aiOdds now comes directly from the backend's fixture data
   var analyzed = matches.filter(function(m){
-    return !!(m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds);
+    return !!(m.providerOdds || m._sofaProviderOdds || m.odds);
   }).length;
   document.getElementById('fbAnalyzed').textContent = analyzed;
 }
@@ -2733,7 +2730,7 @@ function renderFixtures(matches){
   // Applies the league filter dropdown (fbSelectedLeagueCode) client-side,
   // so switching leagues doesn't need a backend round-trip — matches for
   // every accessible league are already in `matches`, fetched once from
-  // the backend's now-dynamic /internal/fixtures-view.
+  // the backend's normal /api/fixtures endpoint.
   if(fbSelectedLeagueCode){
     matches = matches.filter(function(m){ return m.competition && m.competition.code === fbSelectedLeagueCode; });
   }
@@ -2782,7 +2779,7 @@ function renderFixtures(matches){
       + '</div>';
 
     group.matches.forEach(function(m){
-      // aiOdds comes straight from the backend's /internal/fixtures-view response,
+      // Provider odds come straight from the backend's normal /api/fixtures response,
       // which is the scheduler's real, freshly-analyzed data. We do NOT read any
       // cached localStorage odds here anymore — a stale browser cache from
       // earlier testing could otherwise silently override real server data with
@@ -2790,36 +2787,8 @@ function renderFixtures(matches){
       // matches look wrong. The server is the single source of truth.
       // SofaBets/provider bookmaker odds are authoritative.
       // Use them directly for display instead of showing "AI analyzing".
-      var savedOdds = m.aiOdds || m.providerOdds || m._sofaProviderOdds || m.odds || null;
-
-      // UI fallback: find existing bookmaker odds anywhere inside this fixture.
-      if (!savedOdds) {
-        var findOdds = function(obj, depth) {
-          if (!obj || depth > 5 || typeof obj !== 'object') return null;
-          if (
-            obj.homeWin != null &&
-            obj.draw != null &&
-            obj.awayWin != null
-          ) return obj;
-
-          var keys = Object.keys(obj);
-          for (var i = 0; i < keys.length; i++) {
-            var found = findOdds(obj[keys[i]], depth + 1);
-            if (found) return found;
-          }
-          return null;
-        };
-
-        savedOdds = findOdds(m, 0);
-      }
-
-      if (savedOdds && m.aiOdds !== savedOdds) {
-        savedOdds = Object.assign({}, savedOdds, {
-          isRealMarketOdds: true,
-          aiGenerated: false,
-          oddsSource: 'sofabets'
-        });
-      }
+      var savedOdds = m.providerOdds || m._sofaProviderOdds || m.odds || null;
+      if(savedOdds && !savedOdds.markets && Array.isArray(m.markets)) savedOdds = Object.assign({}, savedOdds, {markets:m.markets, bookmakers:m.bookmakers||[]});
 
       var statusLabel = getMatchStatus(m);
       var statusColor = m.status==='IN_PLAY'||m.status==='PAUSED' ? 'var(--ok)' : m.status==='FINISHED' ? 'var(--tm)' : m.status==='AWAITING_RESULT' ? '#e8a33d' : 'var(--acc)';
@@ -2851,10 +2820,7 @@ function renderFixtures(matches){
       if(savedOdds){
         html += renderOddsBlock(savedOdds, m.id, days);
       }else{
-        html += '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" id="odds_loading_' + m.id + '">'
-          + '<div class="img-gen-spin" style="width:16px;height:16px"></div>'
-          + '<div style="font-size:10px;color:var(--t2)"> </div>'
-          + '</div>';
+        html += '<div style="padding:8px 0;color:var(--tm);font-size:10px;text-align:center">Odds unavailable from SofaBets</div>';
       }
 
       html += '</div>';
@@ -2867,50 +2833,42 @@ function renderFixtures(matches){
 }
 
 function renderOddsBlock(odds, matchId, days){
-  var liveBadge = odds.isLiveRepriced
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,79,107,.15);color:var(--err);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800"><span style="width:5px;height:5px;border-radius:50%;background:var(--err);display:inline-block;animation:pulse 1.5s infinite"></span> LIVE-PRICED' + (odds.liveAt && odds.liveAt.minute ? ' · ' + odds.liveAt.minute + "'" : '') + '</span>'
-    : '';
-  var marginBadge = (odds.marginApplied != null)
-    ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(16,217,160,.12);color:var(--ok);border-radius:5px;padding:1px 6px;margin-left:6px;font-size:8px;font-weight:800">+' + (odds.marginApplied * 100).toFixed(0) + '% MARGIN</span>'
-    : '';
-  // Real market odds (from SharpAPI) get a distinct green header instead of
-  // the AI-estimate warning — these are genuine sportsbook prices, not a
-  // model's guess, so the disclaimer language is different and more
-  // reassuring. Live-repriced odds always fall back to the AI warning since
-  // live repricing never uses real odds (see analyzeMatch in ai.js).
-  var headerHtml = (odds.isRealMarketOdds && !odds.isLiveRepriced)
-    ? '<div style="font-size:9px;color:var(--ok);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ Real Market Odds' + (odds.realOddsSource ? ' (' + esc(odds.realOddsSource) + ')' : '') + marginBadge + '</div>'
-    : '<div style="font-size:9px;color:var(--warn);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ AI Estimate — NOT Safe for Real-Money Bets' + marginBadge + liveBadge + '</div>';
-  var html = '<div style="margin-top:6px">'
-    + headerHtml
-    // 1X2
-    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
-    + oddsBtn('1', odds.homeWin, '#6366f1')
-    + oddsBtn('X', odds.draw, '#ffb800')
-    + oddsBtn('2', odds.awayWin, '#ff4f6b')
-    + '</div>'
-    // Over/Under + BTTS — only shown when actually available. SharpAPI's
-    // free tier only covers moneyline (1X2), so real-odds matches won't have
-    // these; showing '?' placeholders for markets we simply don't have data
-    // for is more confusing than just omitting the row.
-    + ((odds.over25 || odds.btts) ? (
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px">'
-      + oddsBtn('O2.5', odds.over25, '#10d9a0')
-      + oddsBtn('U2.5', odds.under25, '#38bdf8')
-      + oddsBtn('BTTS', odds.btts, '#a855f7')
-      + oddsBtn('No', odds.bttsNo, '#8896b0')
-      + '</div>'
-    ) : '')
-    // Double Chance — always shown, since these are derived directly from
-    // the real (or AI) 1X2 odds and are always computable.
-    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:8px">'
-    + oddsBtn('1X', odds.dc_home_draw, '#6366f1')
-    + oddsBtn('12', odds.dc_home_away, '#ff4f6b')
-    + oddsBtn('X2', odds.dc_draw_away, '#ffb800')
-    + '</div>';
+  var isReal = !!(odds && odds.isRealMarketOdds && odds.oddsSource === 'sofabets');
+  var html = '<div style="margin-top:6px">';
+  html += isReal
+    ? '<div style="font-size:9px;color:var(--ok);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✅ Real SofaBets Market Odds</div>'
+    : '<div style="font-size:9px;color:var(--warn);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">⚠️ AI Estimate — NOT Safe for Real-Money Bets</div>';
 
-  // Prediction bar
-  if(odds.prediction){
+  // Football 1X2 aliases are present only when SofaBets actually supplied them.
+  var has1x2 = odds && (odds.homeWin != null || odds.draw != null || odds.awayWin != null);
+  if(has1x2){
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">'
+      + oddsBtn('1', odds.homeWin, '#6366f1')
+      + oddsBtn('X', odds.draw, '#ffb800')
+      + oddsBtn('2', odds.awayWin, '#ff4f6b')
+      + '</div>';
+  }
+
+  // Other SofaBets markets are rendered only from the normalized provider
+  // market list. Nothing is derived or fabricated for a missing selection.
+  if(Array.isArray(odds.markets) && odds.markets.length){
+    odds.markets.forEach(function(market){
+      if(!market || !Array.isArray(market.selections) || !market.selections.length) return;
+      html += '<div style="font-size:9px;color:var(--tm);font-weight:700;margin:6px 0 4px">' + esc(market.name || 'Market') + '</div>';
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:5px;margin-bottom:6px">';
+      market.selections.forEach(function(selection){
+        html += oddsBtn(selection.name || selection.key || 'Selection', selection.odds, '#6366f1');
+      });
+      html += '</div>';
+    });
+  }
+
+  if(!has1x2 && !(Array.isArray(odds.markets) && odds.markets.length)){
+    html += '<div style="padding:8px 0;color:var(--tm);font-size:10px;text-align:center">Odds unavailable from SofaBets</div>';
+  }
+
+  // AI controls are intentionally not shown for real SofaBets market odds.
+  if(!isReal && odds.prediction){
     var confColor = odds.confidence >= 70 ? 'var(--ok)' : odds.confidence >= 50 ? 'var(--warn)' : 'var(--err)';
     html += '<div style="background:var(--bg3);border-radius:8px;padding:8px 10px;font-size:11px;border:1px solid var(--bdr)">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
@@ -2918,21 +2876,18 @@ function renderOddsBlock(odds, matchId, days){
       + '<span style="font-weight:700;color:' + confColor + '">' + odds.confidence + '% confident</span>'
       + '</div>'
       + (odds.valueBet ? '<div style="color:var(--warn);font-weight:700;margin-bottom:4px">💡 Value Bet: ' + esc(odds.valueBet) + '</div>' : '')
-      + (odds.consistencyWarning ? '<div style="color:var(--err);font-weight:700;margin-bottom:4px;font-size:11px">⚠️ ' + esc(odds.consistencyWarning) + '</div>' : '')
       + (odds.analysis ? '<div style="color:var(--t2);line-height:1.5;margin-top:4px">' + esc(odds.analysis.substring(0,180)) + (odds.analysis.length>180?'...':'') + '</div>' : '')
       + '</div>';
+    html += '<div style="display:flex;justify-content:flex-end;margin-top:6px">'
+      + '<button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:1px solid var(--bdr);color:var(--tm);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-solid fa-rotate-right"></i> Re-analyze</button>'
+      + '</div>';
   }
-
-  html += '<div style="display:flex;justify-content:flex-end;margin-top:6px">'
-    + '<button onclick="analyzeMatch(\'' + matchId + '\',\'' + days + '\')" style="background:none;border:1px solid var(--bdr);color:var(--tm);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'Inter\',sans-serif"><i class="fa-solid fa-rotate-right"></i> Re-analyze</button>'
-    + '</div>';
-
   html += '</div>';
   return html;
 }
 
 function oddsBtn(label, val, color){
-  var display = val ? parseFloat(val).toFixed(2) : '?';
+  var display = (val != null && Number.isFinite(parseFloat(val))) ? parseFloat(val).toFixed(2) : 'Unavailable';
   return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:7px;padding:6px 4px;text-align:center">'
     + '<div style="font-size:9px;color:var(--tm);font-weight:700;margin-bottom:2px">' + label + '</div>'
     + '<div style="font-size:13px;font-weight:800;color:' + color + '">' + display + '</div>'

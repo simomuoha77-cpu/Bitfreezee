@@ -25,7 +25,6 @@ const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const sofaBetsData = require('./sofaBetsData');
-const sofaBetsProvider = require('./providers/sofaBetsProvider');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -56,6 +55,12 @@ function extractApiKey(req) {
 }
 
 async function requireApiKey(req, res, next) {
+  // JuanAi's own browser UI uses the same normal fixture endpoint. Same-origin
+  // browser requests are allowed without exposing an API key in public JS;
+  // external callers must still provide a valid API key.
+  if (!extractApiKey(req) && req.headers['sec-fetch-site'] === 'same-origin') {
+    return next();
+  }
   const key = extractApiKey(req);
   const valid = await db.isValidApiKey(key);
   if (!valid) {
@@ -104,9 +109,8 @@ function requireAdmin(req, res, next) {
 // ── PUBLIC-FACING API (what BetaKE calls) ──────────────────────────
 
 // GET /api/fixtures?key=jsk_xxx&days=0
-// Returns REAL fixtures (football-data.org + odds-api.io) + odds — real
-// market prices (SharpAPI/odds-api.io) where available, AI estimates as
-// fallback — kept fresh automatically in the background.
+// Returns fixtures from SofaBets only. Real SofaBets bookmaker markets/odds
+// are preserved end-to-end; no other football fixture provider is merged.
 //
 // REAL-MONEY SAFETY: AI-generated odds are a probability ESTIMATE, not a
 // real market price with real liquidity behind it. If you're accepting
@@ -140,26 +144,17 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   // sport defaults to 'football' so every existing caller (BetaKE included)
   // keeps working identically without needing to add this param at all.
   // Pass ?sport=basketball for basketball fixtures instead.
-  const sport = req.query.sport === 'basketball' ? 'basketball' : 'football';
+  const requestedSport = String(req.query.sport || 'football').toLowerCase();
+  const sport = ['football', 'basketball', 'tennis', 'hockey', 'cricket', 'volleyball', 'rugby', 'handball'].includes(requestedSport) ? requestedSport : 'football';
 
-  // REAL-TIME TRIGGER: for today's football fixtures specifically, poke
-  // the scheduler to refresh right now if one is already due, instead of
-  // only ever waiting for the next fixed setInterval tick (which could be
-  // up to TODAY_REFRESH_INTERVAL_MS away even though fresh data was
-  // needed right now). Deliberately NOT awaited — the actual outbound
-  // fetch to football-data.org/odds-api.io takes real network time, and
-  // blocking every single caller (including partner sites needing a fast
-  // response) on that would trade one kind of lag for a worse one. This
-  // request still gets whatever's currently cached (at most
-  // TODAY_REFRESH_INTERVAL_MS stale, same as before), but it also kicks
-  // off the refresh that the NEXT request moments later will benefit
-  // from — in practice, for a page that polls repeatedly (like a live
-  // match view), this means live data catches up within roughly one
-  // polling cycle of becoming due, not up to a full 60s of dead time
-  // beforehand. sport==='football' guard since basketball has its own
-  // separate refresh timer (see scheduler.js) not covered by this trigger.
-  if (sport === 'football' && String(days) === '0') {
-    scheduler.refreshTodayIfDue().catch(() => {}); // errors already logged inside refreshFixturesForDay itself
+  // Normal fixture endpoint: trigger the SofaBets-backed scheduler when this
+  // sport/day bucket is due. The endpoint itself only reads MongoDB after the
+  // refresh is awaited, so the response and persisted data use the same path.
+  const supportedSports = ['football', 'basketball', 'tennis', 'hockey', 'cricket', 'volleyball', 'rugby', 'handball'];
+  if (supportedSports.includes(sport)) {
+    try { await scheduler.refreshSofaSportIfDue(sport, Number(days)); } catch (e) {
+      console.warn('[fixtures] SofaBets ' + sport + ' refresh unavailable: ' + e.message);
+    }
   }
 
   const bucket = await db.getFixtures(days, sport);
@@ -201,9 +196,7 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     // basketball match under realOddsOnly=1, since that field structurally
     // doesn't exist for them — not because their odds aren't real.
     if (realOddsOnly) {
-      const hasRealOdds = sport === 'basketball'
-        ? !!m.realOdds
-        : !!(m.aiOdds && m.aiOdds.isRealMarketOdds);
+      const hasRealOdds = !!(m.providerOdds && m.oddsSource === 'sofabets') || (sport === 'basketball' ? !!m.realOdds : !!(m.aiOdds && m.aiOdds.isRealMarketOdds));
       if (!hasRealOdds) return false;
     }
     return true;
@@ -227,11 +220,7 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     updatedAt: bucket.updatedAt,
     oddsMargin: ai.DEFAULT_MARGIN,
     realOddsOnlyFilterApplied: realOddsOnly,
-    disclaimer: sport === 'basketball'
-      ? 'Basketball matches only ever carry REAL bookmaker odds (via odds-api.io) or no odds at all (match.realOdds === null) — there is no AI-estimated fallback for this sport. A null match.realOdds means no bookmaker has priced this match yet; do not bet real money against it.'
-      : (realOddsOnly
-        ? 'realOddsOnly=1 was set: every match returned has aiOdds.isRealMarketOdds === true, meaning a real bookmaker (SharpAPI/odds-api.io) actually priced it — safe to use for real-money staking. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied on top of the real price. Still manage your own exposure regardless of these numbers.'
-        : 'IMPORTANT for real-money betting: check aiOdds.isRealMarketOdds on EVERY match before accepting a stake. true = a real bookmaker priced this match (via SharpAPI/odds-api.io) — safe to bet real money against. false/absent = the odds are an AI-generated ESTIMATE, not a real market price, and should NOT be used to accept real-money stakes — there is no real liquidity or bookmaker risk management behind that number. Pass ?realOddsOnly=1 to have this filtering done for you server-side. A ' + (ai.DEFAULT_MARGIN * 100).toFixed(0) + '% margin is applied either way.')
+    disclaimer: 'SofaBets is the sole sports fixture/market source. providerOdds/markets contain bookmaker data exactly as received; absent odds are unavailable and are never fabricated.',
   });
 });
 
@@ -746,7 +735,7 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // separate internal-only secret, or only allow from localhost/admin
 // session) so a leaked betting-site API key can't be used to write data.
 
-// Shared by both /api/fixtures and /internal/fixtures-view — see the full
+// Shared by the normal /api/fixtures route — see the full
 // reasoning comment at the /api/fixtures call site below. Kept as one
 // function so the two routes can never silently drift apart in behavior.
 function recomputeLiveMinutes(matches) {
@@ -839,7 +828,7 @@ function recomputeLiveMinutes(matches) {
     // already correctly moved to AWAITING_RESULT or FINISHED (see
     // convertOddsApiIoEvent's 130-minute cutoff logic). Since this
     // function runs on every incoming /api/fixtures and
-    // /internal/fixtures-view call (far more often than the scheduler's
+    // fixture API call (far more often than the scheduler's
     // 60s refresh), that meant a match could be correctly marked
     // AWAITING_RESULT by the scheduler and then immediately get reverted
     // back to "IN_PLAY, ~98'" the very next time anyone actually looked at
@@ -886,120 +875,6 @@ function recomputeLiveMinutes(matches) {
   return matches;
 }
 
-// GET /internal/fixtures-view?days=0 — read-only, used by JuanAi's own UI
-// (the public Football tab, shown to ALL visitors, not just admins) to
-// display whatever the scheduler already fetched/analyzed. Deliberately
-// NOT behind requireAdmin — unlike the other /internal/* routes, this one
-// only ever reads already-public match/odds data, so there's nothing
-// here an admin secret would meaningfully protect; gating it would have
-// broken the regular Football tab for every visitor.
-app.get('/internal/fixtures-view', async (req, res) => {
-  const days = req.query.days || '0';
-
-  // CRITICAL: JuanAi's Football UI must read SofaBets bookmaker odds
-  // directly instead of waiting for the background AI/scheduler pipeline.
-  // SofaBets is authoritative whenever it supplies 1X2 market odds.
-  try {
-    const dateStr = footballData.getDateString(days);
-    const rawMatches = await sofaBetsProvider.getMatchesForDate(dateStr);
-
-    const matches = rawMatches.map(m => {
-      const odds = m._sofaProviderOdds || m.providerOdds || m.odds || null;
-      const hasRealOdds =
-        odds &&
-        Number(odds.homeWin) > 1 &&
-        Number(odds.draw) > 1 &&
-        Number(odds.awayWin) > 1;
-
-      const leagueCode = m.competition
-        ? String(m.competition).toUpperCase()
-            .replace(/[^A-Z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '')
-        : null;
-
-      return {
-        id: m.id || ('sofabets:' + String(m.providerMatchId)),
-        providerMatchId: m.providerMatchId,
-        source: 'sofabets',
-        sourceProviders: ['sofabets'],
-        primarySource: 'sofabets',
-        utcDate: m.utcDate,
-        status: m.status,
-        minute: m.minute != null ? m.minute : null,
-        minuteIsEstimated: m.minuteIsEstimated !== undefined ? m.minuteIsEstimated : true,
-
-        homeTeam: {
-          id: null,
-          name: m.homeTeam,
-          crest: null
-        },
-        awayTeam: {
-          id: null,
-          name: m.awayTeam,
-          crest: null
-        },
-
-        score: {
-          winner: null,
-          fullTime: (m.score && m.score.fullTime) || null,
-          halfTime: (m.score && m.score.halfTime) || null
-        },
-
-        competition: {
-          id: null,
-          name: m.competition || null,
-          code: leagueCode
-        },
-
-        season: m.season || null,
-        venue: m.venue || null,
-        sport: 'football',
-
-        // REAL SofaBets bookmaker odds — no AI calculation.
-        odds: hasRealOdds ? odds : null,
-        providerOdds: hasRealOdds ? odds : null,
-        _sofaProviderOdds: hasRealOdds ? odds : null,
-        oddsSource: hasRealOdds ? 'sofabets' : null,
-        realOddsSource: hasRealOdds ? 'SofaBets' : null,
-        isRealMarketOdds: hasRealOdds,
-        aiGenerated: false,
-        _skipAiOddsGeneration: hasRealOdds,
-        _directProviderOdds: hasRealOdds
-      };
-    });
-
-    recomputeLiveMinutes(matches);
-
-    return res.json({
-      matches,
-      fetchedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      source: 'sofabets'
-    });
-  } catch (e) {
-    console.error('[fixtures-view] direct SofaBets fetch failed:', e.message);
-
-    // Keep the old database path as a safety fallback.
-    const bucket = await db.getFixtures(days);
-    if (bucket && Array.isArray(bucket.matches)) {
-      recomputeLiveMinutes(bucket.matches);
-    }
-
-    return res.json(bucket || {
-      matches: [],
-      fetchedAt: null,
-      source: 'database-fallback'
-    });
-  }
-});
-
-// GET /internal/competitions — powers the frontend's league filter
-// dropdown (see loadCompetitionsList() in public/index.html) with the SAME
-// dynamic football-data.org GET /v4/competitions response that
-// footballData.js's getMatchesForDate now actually fetches from, instead of
-// a separately-maintained, easily-stale manual list. Read-only, cheap to
-// call from the frontend since footballData.js caches the underlying
-// football-data.org call for 12h.
 app.get('/internal/competitions', async (req, res) => {
   try {
     const competitions = await footballData.getAvailableCompetitions();

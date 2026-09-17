@@ -1,126 +1,63 @@
-// footballProviders.js — merges all configured football providers.
-// SofaBets is first so its fixture/odds data is retained when available.
-const { mergeProviderMatches } = require('./lib/canonicalMatch');
-
+// footballProviders.js — JuanAi's canonical football source.
+// SofaBets is the ONLY provider used for the main football fixture feed.
 const sofabets = require('./providers/sofaBetsProvider');
-const bigballsdata = require('./providers/bigballsdataProvider');
-const apiFootball = require('./providers/apiFootballProvider');
-const footballDataOrg = require('./providers/footballDataOrgProvider');
-const sportmonks = require('./providers/sportmonksProvider');
-const thesportsdb = require('./providers/thesportsdbProvider');
-const highlightly = require('./providers/highlightlyProvider');
-const apiSports = require('./providers/apiSportsProvider');
-
-const PROVIDERS_IN_PRIORITY_ORDER = [sofabets, bigballsdata, apiFootball, footballDataOrg, sportmonks, thesportsdb, highlightly, apiSports];
 
 function toAppShape(m) {
-  const leagueCode = m.competition ? m.competition.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
-  return {
-    id: m.id,
-    providerMatchId: m.providerMatchId,
-    source: m.primarySource,
-    sourceProviders: m.sourceProviders,
-    primarySource: m.primarySource,
-    utcDate: m.utcDate,
-    status: m.status,
-    minute: m.minute != null ? m.minute : null,
-    minuteIsEstimated: m.minuteIsEstimated !== undefined ? m.minuteIsEstimated : true,
+  const leagueCode = m.competition ? String(m.competition).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
+  const odds = m.providerOdds || m._sofaProviderOdds || m.odds || null;
+  return Object.assign({}, m, {
+    id: m.id || ('sofa_' + String(m.providerMatchId)),
+    provider: 'sofabets',
+    source: 'sofabets',
+    primarySource: 'sofabets',
+    sourceProviders: ['sofabets'],
     homeTeam: { id: null, name: m.homeTeam, crest: null },
     awayTeam: { id: null, name: m.awayTeam, crest: null },
-    score: { winner: null, fullTime: (m.score && m.score.fullTime) || null, halfTime: (m.score && m.score.halfTime) || null },
     competition: { id: null, name: m.competition || null, code: leagueCode },
-    season: m.season || null,
-    venue: m.venue || null,
+    score: { winner: null, fullTime: (m.score && m.score.fullTime) || null, halfTime: (m.score && m.score.halfTime) || null },
     sport: 'football',
-    // Preserve provider-native odds. Previously these were silently dropped.
-    odds: m.providerOdds || m._sofaProviderOdds || null,
-    providerOdds: m.providerOdds || m._sofaProviderOdds || null
-  };
-}
-
-function matchKey(m) {
-  return [
-    String(m.homeTeam || '').trim().toLowerCase(),
-    String(m.awayTeam || '').trim().toLowerCase(),
-    m.utcDate ? new Date(m.utcDate).getTime() : ''
-  ].join('|');
+    odds,
+    providerOdds: odds,
+    _sofaProviderOdds: odds,
+    oddsSource: odds ? 'sofabets' : null,
+    realOddsSource: odds ? 'SofaBets' : null,
+    isRealMarketOdds: !!odds,
+    aiGenerated: false,
+    _skipAiOddsGeneration: !!odds,
+    _directProviderOdds: !!odds,
+    markets: m.markets || (odds && odds.markets) || [],
+    bookmakers: m.bookmakers || (odds && odds.bookmakers) || []
+  });
 }
 
 async function getMatchesForDate(dateStr, options) {
   options = options || {};
   const attempted = [];
-  let anyProviderSucceeded = false;
-  const perProviderResults = [];
-
-  for (const provider of PROVIDERS_IN_PRIORITY_ORDER) {
-    if (!provider.isConfigured()) {
-      attempted.push({ provider: provider.providerName, result: 'not configured (no key set)' });
-      continue;
-    }
-
-    try {
-      const matches = provider === bigballsdata
-        ? await provider.getMatchesForDate(dateStr, options)
-        : await provider.getMatchesForDate(dateStr);
-      anyProviderSucceeded = true;
-      attempted.push({ provider: provider.providerName, result: matches.length + ' match(es)' });
-      if (matches.length) perProviderResults.push({ provider: provider.providerName, matches });
-    } catch (e) {
-      attempted.push({ provider: provider.providerName, result: 'error: ' + e.message });
-      console.error('[footballProviders] ' + provider.providerName + ' failed for ' + dateStr + ': ' + e.message);
-    }
+  try {
+    const rawMatches = await sofabets.getMatchesForDate(dateStr, options);
+    const matches = rawMatches.map(toAppShape);
+    attempted.push({ provider: sofabets.providerName, result: matches.length + ' match(es)' });
+    return {
+      matches,
+      providerLog: attempted,
+      primaryProviderUsed: matches.length ? 'sofabets' : null,
+      providersUsed: matches.length ? ['sofabets'] : [],
+      anyProviderSucceeded: true
+    };
+  } catch (e) {
+    attempted.push({ provider: sofabets.providerName, result: 'error: ' + e.message });
+    console.error('[footballProviders] sofabets failed for ' + dateStr + ': ' + e.message);
+    return { matches: [], providerLog: attempted, primaryProviderUsed: null, providersUsed: [], anyProviderSucceeded: false };
   }
-
-  const mergedCanonical = mergeProviderMatches(perProviderResults);
-
-  // Recover SofaBets native odds after canonicalMatch.js deduplication. The
-  // previous version attached _sofaProviderOdds to a raw fixture and then
-  // lost it during merge/toAppShape, so JuanAi could never use those odds.
-  const oddsByKey = new Map();
-  for (const bucket of perProviderResults) {
-    for (const m of bucket.matches) {
-      const odds = m._sofaProviderOdds || m.providerOdds || null;
-      if (odds) oddsByKey.set(matchKey(m), odds);
-    }
-  }
-
-  for (const m of mergedCanonical) {
-    const sofaOdds = oddsByKey.get(matchKey(m));
-
-    if (sofaOdds) {
-      // SofaBets is the real bookmaker source.
-      // Never let AI/generated odds overwrite these values.
-      m.providerOdds = sofaOdds;
-      m.odds = sofaOdds;
-      m.oddsSource = 'sofabets';
-      m.realOddsSource = 'SofaBets';
-      m.isRealMarketOdds = true;
-      m.aiGenerated = false;
-      m._skipAiOddsGeneration = true;
-      m._directProviderOdds = true;
-    }
-  }
-
-  const merged = mergedCanonical.map(toAppShape);
-  const providersWithData = perProviderResults.map(r => r.provider);
-  return {
-    matches: merged,
-    providerLog: attempted,
-    primaryProviderUsed: providersWithData[0] || null,
-    providersUsed: providersWithData,
-    anyProviderSucceeded
-  };
 }
 
 function getAllProviderStatus() {
-  return PROVIDERS_IN_PRIORITY_ORDER.map(p => {
-    try { return p.getStatus(); }
-    catch (e) { return { provider: p.providerName, error: e.message }; }
-  });
+  try { return [sofabets.getStatus()]; }
+  catch (e) { return [{ provider: sofabets.providerName, error: e.message }]; }
 }
 
 module.exports = {
   getMatchesForDate,
   getAllProviderStatus,
-  PROVIDER_NAMES: PROVIDERS_IN_PRIORITY_ORDER.map(p => p.providerName)
+  PROVIDER_NAMES: ['sofabets']
 };
