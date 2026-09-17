@@ -183,7 +183,20 @@ async function refreshSofaSportIfDue(sport, days) {
 
   const run = (async () => {
     const dateStr = footballData.getDateString(days);
-    const matches = await sofaBetsProvider.getMatchesForDate(dateStr, { sport: normalizedSport, sportId });
+    let matches;
+    if (normalizedSport === 'football') {
+      // IMPORTANT: the public /api/fixtures contract expects the same
+      // normalized shape used by JuanAi's main scheduler (homeTeam/awayTeam
+      // objects, canonical odds, provider metadata). Do not save the raw
+      // SofaBets provider shape directly here; doing so made /api/fixtures
+      // filter every match out because homeTeam was a string instead of an
+      // object with .name, even though JuanAi's own internal view still had
+      // the games. This is the SafariBet-empty bug.
+      const result = await footballProviders.getMatchesForDate(dateStr, { sport: normalizedSport, sportId });
+      matches = result.matches;
+    } else {
+      matches = await sofaBetsProvider.getMatchesForDate(dateStr, { sport: normalizedSport, sportId });
+    }
     const existing = await db.getFixtures(days, normalizedSport);
     if (matches.length === 0 && existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
       console.warn('[scheduler] SofaBets ' + normalizedSport + ' returned no matches for days=' + days + ' — keeping existing data');

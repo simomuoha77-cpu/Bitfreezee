@@ -181,8 +181,8 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     if (!includeFinished && m.utcDate && (Date.now() - new Date(m.utcDate).getTime()) > STALE_MATCH_CUTOFF_MS) return false;
     // TBD vs TBD matches (knockout rounds not yet decided) have nothing
     // real to bet on and shouldn't be exposed to external sites at all.
-    const home = m.homeTeam && m.homeTeam.name;
-    const away = m.awayTeam && m.awayTeam.name;
+    const home = typeof m.homeTeam === 'string' ? m.homeTeam : (m.homeTeam && (m.homeTeam.name || m.homeTeam.shortName));
+    const away = typeof m.awayTeam === 'string' ? m.awayTeam : (m.awayTeam && (m.awayTeam.name || m.awayTeam.shortName));
     if (!home || !away || home.toUpperCase() === 'TBD' || away.toUpperCase() === 'TBD') return false;
     // If the caller only wants matches safe for real-money staking, drop
     // anything whose odds are an AI estimate rather than a real bookmaker
@@ -201,6 +201,44 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     }
     return true;
   });
+
+  // PARTNER COMPATIBILITY / SINGLE SOURCE OF TRUTH:
+  // SafariBet and older JuanAi consumers read match.aiOdds. For SofaBets
+  // football matches, that field must be an alias of the REAL SofaBets
+  // bookmaker object, never an AI-generated replacement. If SofaBets has no
+  // odds, explicitly remove stale AI odds from the API response so an older
+  // database analysis can never masquerade as current bookmaker prices.
+  for (let i = 0; i < matches.length; i += 1) {
+    const m = matches[i];
+    const sofaOdds = m && m.oddsSource === 'sofabets'
+      ? (m.providerOdds || m._sofaProviderOdds || m.odds || null)
+      : null;
+    if (sofaOdds) {
+      matches[i] = Object.assign({}, m, {
+        aiOdds: Object.assign({}, sofaOdds, {
+          isRealMarketOdds: true,
+          aiGenerated: false,
+          oddsSource: 'sofabets',
+          realOddsSource: 'SofaBets',
+          realOddsProvider: 'sofabets',
+          providerOdds: true
+        }),
+        providerOdds: sofaOdds,
+        odds: sofaOdds,
+        isRealMarketOdds: true,
+        aiGenerated: false
+      });
+    } else {
+      const copy = Object.assign({}, m);
+      delete copy.aiOdds;
+      delete copy.aiPrediction;
+      delete copy.aiConfidence;
+      delete copy.aiAnalysis;
+      delete copy.aiXG;
+      delete copy.aiValueBet;
+      matches[i] = copy;
+    }
+  }
 
   // LIVE MINUTE RECOMPUTATION: see recomputeLiveMinutes() above (shared
   // with /internal/fixtures-view) for the full reasoning — short version:

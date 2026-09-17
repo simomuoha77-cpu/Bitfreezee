@@ -19,6 +19,10 @@ function toAppShape(m) {
     odds,
     providerOdds: odds,
     _sofaProviderOdds: odds,
+    // Compatibility field for existing partner clients such as SafariBet.
+    // This is NOT AI-generated when SofaBets supplied bookmaker odds; it is
+    // the same normalized provider object exposed under the legacy field.
+    aiOdds: odds || null,
     oddsSource: odds ? 'sofabets' : null,
     realOddsSource: odds ? 'SofaBets' : null,
     isRealMarketOdds: !!odds,
