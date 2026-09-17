@@ -567,18 +567,23 @@ async function analyzeMatch(match, history, liveState) {
     match._sofaProviderOdds ||
     (match.provider === 'sofabets' ? match.odds : null);
 
+  // SofaBets' normalizer may expose the 1X2 prices as home/draw/away
+  // while older stored fixtures can contain homeWin/draw/awayWin. Accept
+  // both shapes so real SofaBets prices can NEVER fall through to AI pricing.
+  const sofaHomeWin = sofaOdds && (sofaOdds.homeWin != null ? sofaOdds.homeWin : sofaOdds.home);
+  const sofaAwayWin = sofaOdds && (sofaOdds.awayWin != null ? sofaOdds.awayWin : sofaOdds.away);
   const hasDirectSofaOdds =
     sofaOdds &&
-    Number(sofaOdds.homeWin) > 1 &&
+    Number(sofaHomeWin) > 1 &&
     Number(sofaOdds.draw) > 1 &&
-    Number(sofaOdds.awayWin) > 1;
+    Number(sofaAwayWin) > 1;
 
   if (hasDirectSofaOdds) {
     const directOdds = {
       ...sofaOdds,
-      homeWin: Number(sofaOdds.homeWin),
+      homeWin: Number(sofaHomeWin),
       draw: Number(sofaOdds.draw),
-      awayWin: Number(sofaOdds.awayWin),
+      awayWin: Number(sofaAwayWin),
 
       // Explicitly identify the real provider source.
       isRealMarketOdds: true,
