@@ -220,42 +220,12 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   // when either one asks.
   recomputeLiveMinutes(matches);
 
-  // PUBLIC ODDS BRIDGE: JuanAi's dashboard can display aiOdds because it
-  // already has that field in the stored fixture. External consumers such
-  // as SafariBet, however, consume the public /api/fixtures response and
-  // expect the odds to travel with each match under `odds`. Build that field
-  // here without changing or overwriting the stored fixture. SofaBets odds
-  // remain authoritative when present; otherwise the existing JuanAi
-  // aiOdds are exposed as the display odds. This is deliberately a response
-  // shaping change only — no fixture source, scheduler, database schema, or
-  // login flow is changed.
-  const publicMatches = matches.map(m => {
-    const sourceOdds = m.providerOdds || m.odds || null;
-    const aiOdds = m.aiOdds || null;
-    const rawOdds = sourceOdds || aiOdds;
-    if (!rawOdds || typeof rawOdds !== 'object') return m;
-
-    const home = Number.isFinite(Number(rawOdds.home))
-      ? Number(rawOdds.home)
-      : Number(rawOdds.homeWin);
-    const draw = Number.isFinite(Number(rawOdds.draw))
-      ? Number(rawOdds.draw)
-      : Number(rawOdds.drawWin);
-    const away = Number.isFinite(Number(rawOdds.away))
-      ? Number(rawOdds.away)
-      : Number(rawOdds.awayWin);
-
-    const publicOdds = Object.assign({}, rawOdds);
-    if (Number.isFinite(home)) { publicOdds.home = home; publicOdds.homeWin = home; }
-    if (Number.isFinite(draw)) publicOdds.draw = draw;
-    if (Number.isFinite(away)) { publicOdds.away = away; publicOdds.awayWin = away; }
-    publicOdds.source = sourceOdds ? (m.oddsSource || 'sofabets') : 'juanaI-ai';
-
-    return Object.assign({}, m, { odds: publicOdds });
-  });
+  // Keep the exact same fixtures, but serialize their already-existing odds
+  // in the market/selection shape SafariBet reads.
+  const partnerMatches = matches.map(attachSafariBetMarkets);
 
   res.json({
-    matches: publicMatches,
+    matches: partnerMatches,
     sport,
     fetchedAt: bucket.fetchedAt,
     updatedAt: bucket.updatedAt,
@@ -783,6 +753,79 @@ app.post('/api/casino/play/bet/:betId/cashout', requireApiKey, async (req, res) 
 // Shared by both /api/fixtures and /internal/fixtures-view — see the full
 // reasoning comment at the /api/fixtures call site below. Kept as one
 // function so the two routes can never silently drift apart in behavior.
+
+// SafariBet consumes odds from markets[].selections[].odds.  JuanAi's
+// internal match objects already contain the priced odds (SofaBets under
+// providerOdds/odds, or JuanAi's existing aiOdds), but /api/fixtures used to
+// return those values only as object fields.  Build the partner-facing market
+// shape here without changing the stored match or the pricing source.
+function attachSafariBetMarkets(match) {
+  if (!match || typeof match !== 'object') return match;
+
+  const source =
+    (match.providerOdds && typeof match.providerOdds === 'object' ? match.providerOdds : null) ||
+    (match._sofaProviderOdds && typeof match._sofaProviderOdds === 'object' ? match._sofaProviderOdds : null) ||
+    (match.odds && typeof match.odds === 'object' ? match.odds : null) ||
+    (match.aiOdds && typeof match.aiOdds === 'object' ? match.aiOdds : null);
+
+  if (!source) return match;
+
+  const num = value => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 1 ? n : null;
+  };
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = num(source[key]);
+      if (value != null) return value;
+    }
+    return null;
+  };
+
+  const selections = [];
+  const add = (id, name, value) => {
+    const odds = num(value);
+    if (odds != null) selections.push({ selection_id: id, selection_name: name, odds });
+  };
+
+  // Football 1X2.  Accept both SofaBets' native home/draw/away keys and
+  // JuanAi's aiOdds homeWin/draw/awayWin keys; never invent a price.
+  add(1, (match.homeTeam && match.homeTeam.name) || 'Home', pick('homeWin', 'home'));
+  add(2, 'Draw', pick('draw'));
+  add(3, (match.awayTeam && match.awayTeam.name) || 'Away', pick('awayWin', 'away'));
+
+  // Preserve the additional odds JuanAi already exposes when present.
+  const extras = [
+    ['over25', 'Over 2.5'], ['under25', 'Under 2.5'],
+    ['btts', 'Both Teams To Score - Yes'], ['bttsNo', 'Both Teams To Score - No'],
+    ['dc_home_draw', 'Home or Draw'], ['dc_home_away', 'Home or Away'],
+    ['dc_draw_away', 'Draw or Away']
+  ];
+  let nextId = 10;
+  for (const [key, name] of extras) {
+    const odds = num(source[key]);
+    if (odds != null) add(nextId++, name, odds);
+  }
+
+  if (!selections.length) return match;
+
+  const markets = [{
+    market_id: 1,
+    market_name: '1X2',
+    selections: selections.slice(0, 3)
+  }];
+  const extraSelections = selections.slice(3);
+  if (extraSelections.length) {
+    markets.push({
+      market_id: 2,
+      market_name: 'Additional Markets',
+      selections: extraSelections
+    });
+  }
+
+  return Object.assign({}, match, { markets });
+}
+
 function recomputeLiveMinutes(matches) {
   matches.forEach(m => {
     // REAL BUG FIX for JuanAi's live minute running ~7-8 min behind other
