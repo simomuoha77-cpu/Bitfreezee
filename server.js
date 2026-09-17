@@ -142,8 +142,28 @@ app.get('/api/competitions', requireApiKey, async (req, res) => {
 // This is response serialization only; it does not alter MongoDB or the
 // SofaBets/provider pipeline.
 function buildPartnerMarkets(match) {
-  const source = match.aiOdds || match.providerOdds || match._sofaProviderOdds || match.odds || match.realOdds || null;
+  const source = match.providerOdds || match._sofaProviderOdds || (match.provider === 'sofabets' ? match.odds : null) || match.aiOdds || match.odds || match.realOdds || null;
   if (!source || typeof source !== 'object') return Array.isArray(match.markets) ? match.markets : [];
+
+  // SofaBets already provides normalized markets with every selection and price.
+  // Pass those markets through unchanged instead of rebuilding only a few
+  // hard-coded markets. This keeps all provider odds available to SafariBet.
+  const nativeMarkets = Array.isArray(source.markets) && source.markets.length
+    ? source.markets
+    : (Array.isArray(match.markets) ? match.markets : []);
+  if (nativeMarkets.length) {
+    return nativeMarkets.map((market, mi) => ({
+      market_id: String(market.key != null ? market.key : (market.market_id != null ? market.market_id : ('m' + (mi + 1)))),
+      market_name: String(market.name || market.market_name || 'Market'),
+      bookmaker: market.bookmaker || null,
+      selections: (Array.isArray(market.selections) ? market.selections : []).filter(s => Number.isFinite(Number(s.odds)) && Number(s.odds) > 1).map((selection, si) => ({
+        selection_id: String(selection.key != null ? selection.key : (selection.selection_id != null ? selection.selection_id : ('s' + (si + 1)))),
+        selection_name: String(selection.name || selection.selection_name || 'Selection'),
+        odds: Number(selection.odds),
+        bookmaker: selection.bookmaker || market.bookmaker || null
+      }))
+    })).filter(m => m.selections.length);
+  }
 
   const homeName = match.homeTeam && match.homeTeam.name ? match.homeTeam.name : 'Home';
   const awayName = match.awayTeam && match.awayTeam.name ? match.awayTeam.name : 'Away';
@@ -193,7 +213,7 @@ function buildPartnerMarkets(match) {
 function serializePartnerFixtures(matches) {
   return matches.map(match => {
     const out = Object.assign({}, match);
-    const source = match.aiOdds || match.providerOdds || match._sofaProviderOdds || match.odds || match.realOdds || null;
+    const source = match.providerOdds || match._sofaProviderOdds || (match.provider === 'sofabets' ? match.odds : null) || match.aiOdds || match.odds || match.realOdds || null;
     if (source && typeof source === 'object') {
       // Preserve the full JuanAi odds object and also provide a stable `odds`
       // alias for partners that read the fixture-level field.
@@ -1099,14 +1119,26 @@ app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
 // though, so it's rate-limited per IP instead (same pattern as /api/chat/stream)
 // to prevent runaway cost from repeated clicking/scripting, without blocking the
 // feature for everyone.
-app.post('/internal/analyze-now', (req, res) => {
-  // Game AI analysis is permanently disabled. This endpoint remains only so
-  // old clients do not accidentally trigger an AI request.
-  return res.status(410).json({
-    ok: false,
-    disabled: true,
-    error: 'Game AI analysis is disabled. JuanAi uses provider/SofaBets data only.'
-  });
+app.post('/internal/analyze-now', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkChatRateLimit(ip)) { // reuse the same per-IP bucket/limits as the chat proxy
+    return res.status(429).json({ error: 'Too many analysis requests — please slow down' });
+  }
+  const { matchId, days } = req.body || {};
+  if (!matchId || days === undefined) {
+    return res.status(400).json({ error: 'matchId and days are required' });
+  }
+  const bucket = await db.getFixtures(days);
+  const match = bucket && bucket.matches && bucket.matches.find(m => String(m.id) === String(matchId));
+  if (!match) return res.status(404).json({ error: 'Match not found' });
+
+  try {
+    const odds = await ai.analyzeMatch(match);
+    await db.upsertMatchOdds(matchId, days, odds);
+    res.json({ ok: true, odds });
+  } catch (e) {
+    res.status(502).json({ error: 'AI analysis failed: ' + e.message });
+  }
 });
 
 // NOTE: The old POST /internal/fixtures and POST /internal/odds routes have
