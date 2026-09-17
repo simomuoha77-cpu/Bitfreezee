@@ -235,7 +235,7 @@ function teamName(value) {
   return null;
 }
 
-function parseOdds(raw) {
+function parseOdds(raw, homeTeamName, awayTeamName) {
   const markets = [];
   if (raw && typeof raw === 'object' && (raw.homeWin != null || raw.awayWin != null)) {
     const canonical = {
@@ -259,20 +259,45 @@ function parseOdds(raw) {
     if ([o.homeWin, o.draw, o.awayWin].every(Number.isFinite)) return o;
   }
 
+  // CONFIRMED against a real SofaBets response: selections are labeled with
+  // the ACTUAL TEAM NAME (e.g. "PFC Levski Sofia"), not the word
+  // "home"/"away" — only the draw selection is literally labeled "draw".
+  // Matching by literal 'home'/'1' text therefore never finds the home or
+  // away price; only draw ever matched, so [homeWin, draw, awayWin].every
+  // (Number.isFinite) always failed and this returned null for every real
+  // match. Fixed by matching the two non-draw selections against the
+  // fixture's own home/away team names, falling back to position (a
+  // standard 3-selection 1X2 market is consistently [home, draw, away]).
+  const normTeam = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const homeNorm = normTeam(homeTeamName);
+  const awayNorm = normTeam(awayTeamName);
+
   for (const market of markets) {
     const marketName = String(pick(market, ['name', 'marketType', 'marketName', 'market_name', 'type', 'key']) || '').toLowerCase();
     if (!(marketName.includes('1x2') || marketName.includes('match result') || marketName.includes('match_winner') || marketName.includes('match winner'))) continue;
     const outcomes = market.outcomes || market.selections || market.options || market.betOffers;
     if (!Array.isArray(outcomes)) continue;
-    const get = wanted => {
-      const found = outcomes.find(o => {
-        const label = String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '').toLowerCase();
-        return wanted.some(x => label === x || label.startsWith(x + ' ') || label.startsWith(x + ':'));
-      });
-      return found ? Number(pick(found, ['odds', 'odd', 'price', 'value', 'decimalOdds'])) : NaN;
-    };
-    const result = { homeWin: get(['home', '1']), draw: get(['draw', 'x']), awayWin: get(['away', '2']) };
-    if ([result.homeWin, result.draw, result.awayWin].every(Number.isFinite)) return result;
+
+    const labelOf = o => String(pick(o, ['name', 'label', 'selectionName', 'selection_name', 'outcomeName', 'key']) || '');
+    const oddsOf = o => Number(pick(o, ['odds', 'odd', 'price', 'value', 'decimalOdds']));
+
+    let homeWin = NaN, draw = NaN, awayWin = NaN;
+    const remaining = [];
+    for (const o of outcomes) {
+      const label = labelOf(o).toLowerCase();
+      if (label === 'draw' || label === 'x' || label === 'tie') { draw = oddsOf(o); continue; }
+      remaining.push(o);
+    }
+    for (const o of remaining) {
+      const labelNorm = normTeam(labelOf(o));
+      if (homeNorm && labelNorm === homeNorm) homeWin = oddsOf(o);
+      else if (awayNorm && labelNorm === awayNorm) awayWin = oddsOf(o);
+    }
+    if (outcomes.length === 3) {
+      if (!Number.isFinite(homeWin)) homeWin = oddsOf(outcomes[0]);
+      if (!Number.isFinite(awayWin)) awayWin = oddsOf(outcomes[2]);
+    }
+    if ([homeWin, draw, awayWin].every(Number.isFinite)) return { homeWin, draw, awayWin };
   }
   return null;
 }
@@ -280,7 +305,7 @@ function parseOdds(raw) {
 function parseStatus(raw, utcDate) {
   const liveFlag = pick(raw, ['is_live', 'isLive', 'live', 'inPlay', 'in_play']);
   if (liveFlag === true || String(liveFlag).toLowerCase() === 'true' || Number(liveFlag) === 1) return 'IN_PLAY';
-  const value = String(pick(raw, ['status', 'matchStatus', 'gameStatus', 'eventStatus', 'state']) || '').toLowerCase();
+  const value = String(pick(raw, ['status', 'matchStatus', 'match_status', 'gameStatus', 'eventStatus', 'state']) || '').toLowerCase();
   if (value.includes('live') || value.includes('inplay') || value.includes('in_play') || value.includes('in-play')) return 'IN_PLAY';
   if (value.includes('half') || value.includes('pause')) return 'PAUSED';
   if (value.includes('finish') || value.includes('ended') || value.includes('settled') || value === 'ft' || value.includes('complete')) return 'FINISHED';
@@ -316,7 +341,7 @@ function normalizeMatch(raw) {
   }
   if (!home || !away) return null;
 
-  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'tournament', 'championship', 'league_name', 'leagueName']))
+  const competition = teamName(pick(source, ['competition', 'league', 'competitionName', 'competition_name', 'tournament', 'championship', 'league_name', 'leagueName']))
     || teamName(nestedLeague);
 
   const kickoff = pick(source, [
@@ -346,7 +371,7 @@ function normalizeMatch(raw) {
   const awayScore = pick(source, ['awayScore', 'away_score', 'scoreAway', 'away_score_live', 'live_away_score']) ?? pick(liveScore, ['away', 'awayScore', 'away_score']) ?? pick(scoreObj, ['away', 'Away', 'awayScore']);
   const hasScore = homeScore != null && awayScore != null;
 
-  const odds = parseOdds(source);
+  const odds = parseOdds(source, home, away);
   const rawMarkets = [];
   for (const key of ['markets', 'odds', 'market', 'betOffers', 'betoffers']) {
     if (Array.isArray(source[key])) rawMarkets.push(...source[key]);
