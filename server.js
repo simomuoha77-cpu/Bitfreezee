@@ -25,6 +25,7 @@ const ai = require('./ai');
 const realOdds = require('./realOdds');
 const footballData = require('./footballData');
 const sofaBetsData = require('./sofaBetsData');
+const sofaBetsProvider = require('./providers/sofaBetsProvider');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
@@ -202,44 +203,60 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
     return true;
   });
 
-  // PARTNER COMPATIBILITY / SINGLE SOURCE OF TRUTH:
-  // SafariBet and older JuanAi consumers read match.aiOdds. For SofaBets
-  // football matches, that field must be an alias of the REAL SofaBets
-  // bookmaker object, never an AI-generated replacement. If SofaBets has no
-  // odds, explicitly remove stale AI odds from the API response so an older
-  // database analysis can never masquerade as current bookmaker prices.
+  // PARTNER API ODDS BRIDGE: SafariBet calls this normal /api/fixtures
+  // endpoint. JuanAi already has the odds; expose those same odds here.
+  // Priority: real SofaBets bookmaker odds, otherwise the existing JuanAi
+  // aiOdds. Never delete an existing analysis and never fabricate a price.
+  function normalizeOneXTwoOdds(odds) {
+    if (!odds || typeof odds !== 'object') return null;
+    const home = Number(odds.homeWin ?? odds.home ?? odds['1']);
+    const draw = Number(odds.draw ?? odds.x ?? odds.X);
+    const away = Number(odds.awayWin ?? odds.away ?? odds['2']);
+    if (![home, draw, away].every(Number.isFinite)) return null;
+    return Object.assign({}, odds, {
+      homeWin: home, draw: draw, awayWin: away,
+      home: home, away: away, '1': home, x: draw, '2': away
+    });
+  }
+
   for (let i = 0; i < matches.length; i += 1) {
     const m = matches[i];
     const sofaOdds = m && m.oddsSource === 'sofabets'
       ? (m.providerOdds || m._sofaProviderOdds || m.odds || null)
       : null;
-    if (sofaOdds) {
+    const realSofaOdds = normalizeOneXTwoOdds(sofaOdds);
+    const existingAiOdds = m && m.aiOdds ? m.aiOdds : null;
+
+    if (realSofaOdds) {
       matches[i] = Object.assign({}, m, {
-        aiOdds: Object.assign({}, sofaOdds, {
+        odds: realSofaOdds,
+        providerOdds: realSofaOdds,
+        aiOdds: Object.assign({}, realSofaOdds, {
           isRealMarketOdds: true,
           aiGenerated: false,
           oddsSource: 'sofabets',
           realOddsSource: 'SofaBets',
-          realOddsProvider: 'sofabets',
-          providerOdds: true
+          realOddsProvider: 'sofabets'
         }),
-        providerOdds: sofaOdds,
-        odds: sofaOdds,
+        oddsSource: 'sofabets',
+        realOddsSource: 'SofaBets',
         isRealMarketOdds: true,
         aiGenerated: false
       });
-    } else if (m && m.aiOdds) {
-      // JuanAi already has an analyzed price for this match. Keep it in the
-      // normal partner API instead of deleting it just because SofaBets has
-      // no bookmaker market for this particular fixture. SafariBet consumes
-      // this same /api/fixtures response, so this is the missing bridge.
+    } else if (existingAiOdds) {
+      // This is the case shown in JuanAi's Football screen: the match is
+      // already analyzed and has odds, but SofaBets did not provide a
+      // bookmaker market for that particular fixture. SafariBet still needs
+      // the same odds JuanAi displays.
+      const effectiveOdds = normalizeOneXTwoOdds(existingAiOdds) || existingAiOdds;
       matches[i] = Object.assign({}, m, {
-        odds: m.aiOdds,
-        providerOdds: null,
-        oddsSource: 'ai',
-        realOddsSource: null,
-        isRealMarketOdds: false,
-        aiGenerated: true
+        odds: effectiveOdds,
+        oddsSource: existingAiOdds.isRealMarketOdds === true
+          ? (existingAiOdds.oddsSource || 'sofabets') : 'ai',
+        realOddsSource: existingAiOdds.isRealMarketOdds === true
+          ? (existingAiOdds.realOddsSource || 'SofaBets') : null,
+        isRealMarketOdds: existingAiOdds.isRealMarketOdds === true,
+        aiGenerated: existingAiOdds.isRealMarketOdds !== true
       });
     } else {
       matches[i] = Object.assign({}, m, {
@@ -924,6 +941,55 @@ function recomputeLiveMinutes(matches) {
   });
   return matches;
 }
+
+// GET /internal/fixtures-view?days=0 — JuanAi's own Football UI reads this
+// route. Keep it intact; SafariBet uses /api/fixtures separately.
+app.get('/internal/fixtures-view', async (req, res) => {
+  const days = req.query.days || '0';
+  try {
+    const dateStr = footballData.getDateString(days);
+    const rawMatches = await sofaBetsProvider.getMatchesForDate(dateStr);
+    const matches = rawMatches.map(m => {
+      const odds = m._sofaProviderOdds || m.providerOdds || m.odds || null;
+      const hasRealOdds = !!(odds &&
+        Number(odds.homeWin ?? odds.home ?? odds['1']) > 1 &&
+        Number(odds.draw ?? odds.x ?? odds.X) > 1 &&
+        Number(odds.awayWin ?? odds.away ?? odds['2']) > 1);
+      const leagueCode = m.competition
+        ? String(m.competition).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+        : null;
+      return {
+        id: m.id || ('sofabets:' + String(m.providerMatchId)),
+        providerMatchId: m.providerMatchId,
+        source: 'sofabets', sourceProviders: ['sofabets'], primarySource: 'sofabets',
+        utcDate: m.utcDate, status: m.status,
+        minute: m.minute != null ? m.minute : null,
+        minuteIsEstimated: m.minuteIsEstimated !== undefined ? m.minuteIsEstimated : true,
+        homeTeam: { id: null, name: m.homeTeam, crest: null },
+        awayTeam: { id: null, name: m.awayTeam, crest: null },
+        score: { winner: null, fullTime: (m.score && m.score.fullTime) || null, halfTime: (m.score && m.score.halfTime) || null },
+        competition: { id: null, name: m.competition || null, code: leagueCode },
+        season: m.season || null, venue: m.venue || null, sport: 'football',
+        odds: hasRealOdds ? odds : null,
+        providerOdds: hasRealOdds ? odds : null,
+        _sofaProviderOdds: hasRealOdds ? odds : null,
+        oddsSource: hasRealOdds ? 'sofabets' : null,
+        realOddsSource: hasRealOdds ? 'SofaBets' : null,
+        isRealMarketOdds: hasRealOdds,
+        aiGenerated: false,
+        _skipAiOddsGeneration: hasRealOdds,
+        _directProviderOdds: hasRealOdds
+      };
+    });
+    recomputeLiveMinutes(matches);
+    return res.json({ matches, fetchedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: 'sofabets' });
+  } catch (e) {
+    console.error('[fixtures-view] direct SofaBets fetch failed:', e.message);
+    const bucket = await db.getFixtures(days);
+    if (bucket && Array.isArray(bucket.matches)) recomputeLiveMinutes(bucket.matches);
+    return res.json(bucket || { matches: [], fetchedAt: null, source: 'database-fallback' });
+  }
+});
 
 app.get('/internal/competitions', async (req, res) => {
   try {
