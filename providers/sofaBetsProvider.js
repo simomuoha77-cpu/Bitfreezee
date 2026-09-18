@@ -21,7 +21,6 @@ const BASES = Array.from(new Set([
 const SPORT_IDS = Object.freeze({ football: 1, basketball: 4, tennis: 24, hockey: 15, cricket: 6, volleyball: 91189, rugby: 73744, handball: 99614 });
 const FOOTBALL_SPORT_ID = SPORT_IDS.football;
 const REQUEST_TIMEOUT_MS = Number(process.env.SOFABETS_TIMEOUT_MS || 12000);
-const LIVE_REQUEST_TIMEOUT_MS = Number(process.env.SOFABETS_LIVE_TIMEOUT_MS || 2500);
 const MAX_PAGES_PER_FETCH = Number(process.env.SOFABETS_MAX_PAGES || 30);
 const PAGE_FETCH_GAP_MS = 250;
 // Keep SofaBets odds fresh. Default is no cache so an odds change is picked up
@@ -99,7 +98,7 @@ async function sofaFetch(base, path, query, attempt = 1) {
     if (resp.status === 429 && attempt < 3) {
       clearTimeout(timer);
       await sleep(1200 * attempt);
-      return sofaFetch(base, path, query, attempt + 1, timeoutMs);
+      return sofaFetch(base, path, query, attempt + 1);
     }
     if (!resp.ok) throw new Error('SofaBets HTTP ' + resp.status + ' for ' + url);
     const text = await resp.text();
@@ -108,7 +107,7 @@ async function sofaFetch(base, path, query, attempt = 1) {
   } catch (e) {
     if (attempt < 2 && e.name !== 'AbortError') {
       await sleep(700);
-      return sofaFetch(base, path, query, attempt + 1, timeoutMs);
+      return sofaFetch(base, path, query, attempt + 1);
     }
     throw e;
   } finally {
@@ -531,7 +530,7 @@ async function fetchLiveFootballFixtures() {
             limit: '100',
             marketType: 'match result',
             sport: 'football'
-          }, 1, LIVE_REQUEST_TIMEOUT_MS);
+          });
           const rawItems = extractItems(payload);
           if (!rawItems.length) break;
 
@@ -609,4 +608,4 @@ async function getMatchesForDate(dateStr, options) {
   return result;
 }
 
-module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getLiveFootballFixtures: fetchLiveFootballFixtures, getStatus, normalizeMatch, parseOdds, SPORT_IDS };
+module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getStatus, normalizeMatch, parseOdds, SPORT_IDS, fetchLiveFootballFixtures };

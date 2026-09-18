@@ -139,12 +139,64 @@ app.get('/api/competitions', requireApiKey, async (req, res) => {
   }
 });
 
+// SafariBet consumes the JuanAi fixture API directly. Its frontend expects
+// numeric-compatible fixture_id/market_id/selection_id fields and each
+// selection's decimal odds under markets[].selections[]. Preserve every
+// SofaBets market available; never replace bookmaker prices with AI odds.
+function stableNumericId(value, seed) {
+  const n = Number(value);
+  if (Number.isSafeInteger(n) && n >= 0) return n;
+  const str = String(value == null ? '' : value) + ':' + String(seed || '');
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0) || 1;
+}
+
+function safariBetMarkets(match) {
+  const raw = Array.isArray(match.markets) ? match.markets :
+    (match.providerOdds && Array.isArray(match.providerOdds.markets) ? match.providerOdds.markets :
+      (match._sofaProviderOdds && Array.isArray(match._sofaProviderOdds.markets) ? match._sofaProviderOdds.markets : []));
+  return raw.map((market, mi) => {
+    const marketKey = market && (market.key ?? market.id ?? market.market_id ?? market.type ?? mi);
+    const selections = Array.isArray(market && market.selections) ? market.selections : [];
+    return {
+      market_id: stableNumericId(marketKey, String(match.providerMatchId || match.id || '') + ':m' + mi),
+      market_name: String(market && (market.name ?? market.market_name ?? market.marketType ?? market.type) || 'Market'),
+      selections: selections.map((sel, si) => {
+        const selectionKey = sel && (sel.key ?? sel.id ?? sel.selection_id ?? sel.name ?? si);
+        const odds = Number(sel && sel.odds);
+        return {
+          selection_id: stableNumericId(selectionKey, String(match.providerMatchId || match.id || '') + ':m' + mi + ':s' + si),
+          selection_name: String(sel && (sel.name ?? sel.selection_name ?? sel.label ?? sel.outcomeName) || 'Selection ' + (si + 1)),
+          odds: Number.isFinite(odds) ? odds : 0
+        };
+      }).filter(sel => sel.odds > 1)
+    };
+  }).filter(m => m.selections.length);
+}
+
+function serializeSafariBetFixtures(matches) {
+  return matches.map(match => {
+    const out = Object.assign({}, match);
+    const providerOdds = match.providerOdds || match._sofaProviderOdds ||
+      (match.oddsSource === 'sofabets' ? match.odds : null);
+    const fixtureId = stableNumericId(match.providerMatchId || match.fixture_id || match.id, 'fixture');
+    out.fixture_id = fixtureId;
+    out.fixture_name = String(match.fixture_name ||
+      ((match.homeTeam && match.homeTeam.name) || match.homeTeam || 'Home') + ' v ' +
+      ((match.awayTeam && match.awayTeam.name) || match.awayTeam || 'Away'));
+    out.start_time_utc = match.start_time_utc || match.utcDate || null;
+    out.is_live = match.status === 'IN_PLAY' || match.status === 'PAUSED';
+    out.markets = safariBetMarkets(match);
+    if (providerOdds && typeof providerOdds === 'object') out.odds = Object.assign({}, providerOdds);
+    // Never expose stale/generated AI odds to SafariBet. Provider odds above
+    // are the only betting prices this endpoint should carry.
+    delete out.aiOdds;
+    return out;
+  });
+}
+
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
-  // Fixture data includes live scores and bookmaker prices. Never let a
-  // browser/CDN cache delay a fresh SofaBets update.
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
   const days = req.query.days || '0';
   // sport defaults to 'football' so every existing caller (BetaKE included)
   // keeps working identically without needing to add this param at all.
@@ -159,12 +211,6 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   if (supportedSports.includes(sport)) {
     try { await scheduler.refreshSofaSportIfDue(sport, Number(days)); } catch (e) {
       console.warn('[fixtures] SofaBets ' + sport + ' refresh unavailable: ' + e.message);
-    }
-  }
-
-  if (sport === 'football' && Number(days) === 0 && req.query.realtime === '1') {
-    try { await scheduler.refreshLiveFootballNow(); } catch (e) {
-      console.warn('[fixtures] SofaBets live refresh unavailable: ' + e.message);
     }
   }
 
@@ -225,7 +271,7 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   recomputeLiveMinutes(matches);
 
   res.json({
-    matches,
+    matches: serializeSafariBetFixtures(matches),
     sport,
     fetchedAt: bucket.fetchedAt,
     updatedAt: bucket.updatedAt,
@@ -914,10 +960,26 @@ app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
 // though, so it's rate-limited per IP instead (same pattern as /api/chat/stream)
 // to prevent runaway cost from repeated clicking/scripting, without blocking the
 // feature for everyone.
-app.post('/internal/analyze-now', (req, res) => {
-  return res.status(410).json({
-    error: 'Game AI analysis is disabled. SofaBets bookmaker odds are the only game prices used by JuanAi.'
-  });
+app.post('/internal/analyze-now', async (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  if (!checkChatRateLimit(ip)) { // reuse the same per-IP bucket/limits as the chat proxy
+    return res.status(429).json({ error: 'Too many analysis requests — please slow down' });
+  }
+  const { matchId, days } = req.body || {};
+  if (!matchId || days === undefined) {
+    return res.status(400).json({ error: 'matchId and days are required' });
+  }
+  const bucket = await db.getFixtures(days);
+  const match = bucket && bucket.matches && bucket.matches.find(m => String(m.id) === String(matchId));
+  if (!match) return res.status(404).json({ error: 'Match not found' });
+
+  try {
+    const odds = await ai.analyzeMatch(match);
+    await db.upsertMatchOdds(matchId, days, odds);
+    res.json({ ok: true, odds });
+  } catch (e) {
+    res.status(502).json({ error: 'AI analysis failed: ' + e.message });
+  }
 });
 
 // NOTE: The old POST /internal/fixtures and POST /internal/odds routes have

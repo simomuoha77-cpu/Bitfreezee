@@ -12,21 +12,22 @@
 //      are older than ANALYSIS_MAX_AGE_MS (so upcoming matches get
 //      refreshed analysis as kickoff approaches, not just once).
 //
-// Live polling is isolated to SofaBets' dedicated live feed.
+// Paced conservatively to avoid hammering SofaBets and the AI providers.
 
 const db = require('./db');
 const footballData = require('./footballData');
 const footballProviders = require('./footballProviders'); // SofaBets-only football source
+const ai = require('./ai');
 
 const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixture lists every 15 min — nothing there is live/about-to-finish, so this doesn't need to be fast
-const TODAY_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
-const LIVE_SYNC_INTERVAL_MS = 1000; // refresh SofaBets live score + bookmaker odds every 1 second  // widened from 60s: getMatchesForDate now fans out to ~12 sequential per-competition calls (see footballData.js) instead of 1, so a single refresh can take over a minute on one key alone — 60s was no longer enough headroom to reliably finish one cycle before the next was due.
+const TODAY_REFRESH_INTERVAL_MS = 3 * 60 * 1000;  // widened from 60s: getMatchesForDate now fans out to ~12 sequential per-competition calls (see footballData.js) instead of 1, so a single refresh can take over a minute on one key alone — 60s was no longer enough headroom to reliably finish one cycle before the next was due.
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // FAST path: if the score has changed since last analysis, re-price within this window — a goal should update odds almost immediately, like a real in-play book
 const LIVE_SAFETY_REFRESH_MS = 4 * 60 * 1000;        // SLOW path: even with NO score change, still refresh at least this often — odds should drift with the clock alone (less time left = more certainty), and this is also the safety net for matches this deployment doesn't track a live clock for
 // NOTE: per-match serial pacing (ANALYSIS_PACE_MS / LIVE_ANALYSIS_PACE_MS)
 // was replaced by concurrent batch processing below — see CONCURRENCY and
+// BATCH_GAP_MS inside analysisPassInner. Serializing every single match
 // behind a fixed delay meant total throughput was capped by that delay
 // alone, never by actual AI capacity — so adding more keys couldn't help,
 // since nothing was ever using more than one key at a time to begin with.
@@ -222,8 +223,30 @@ async function refreshBasketballFixturesForDay(days) {
   }
 }
 
-// Game AI analysis has been removed from the scheduler. SofaBets is the
-// sole source of live score and bookmaker odds.
+// Game AI analysis is intentionally disabled. SofaBets bookmaker odds are
+// already the authoritative prices and must pass through unchanged.
+async function analysisPass() { return; }
+
+let liveRefreshInFlight = false;
+async function refreshLiveSofaBetsNow() {
+  if (liveRefreshInFlight) return;
+  liveRefreshInFlight = true;
+  try {
+    const sofaBetsProvider = require('./providers/sofaBetsProvider');
+    const liveRaw = await sofaBetsProvider.fetchLiveFootballFixtures();
+    if (!liveRaw.length) return;
+    const live = liveRaw.map(footballProviders.toAppShape);
+    // Only upsert the live subset. Never prune day=0 here because the live
+    // endpoint is not a complete upcoming-fixtures catalogue.
+    await db.saveFixtures(0, live, 'football');
+    console.log('[scheduler] 1s LIVE sync: ' + live.length + ' SofaBets football fixtures updated');
+  } catch (e) {
+    // A single upstream miss must never wipe the existing board.
+    console.warn('[scheduler] 1s SofaBets live sync failed: ' + e.message);
+  } finally {
+    liveRefreshInFlight = false;
+  }
+}
 
 let fixtureRefreshLoopInFlight = false;
 async function fixtureRefreshLoop() {
@@ -255,130 +278,10 @@ async function basketballFixtureRefreshLoop() {
   }
 }
 
-
-// ── REAL-TIME SOFABETS LIVE SYNC ─────────────────────────────────────────────
-// SofaBets exposes a dedicated /api/live-games feed. Poll only that small live
-// feed every second instead of re-fetching the entire fixture catalogue.
-// This keeps live scores and bookmaker odds moving without involving game AI.
-let liveSyncInFlight = null;
-let lastLiveSyncAt = 0;
-
-function liveMatchChanged(a, b) {
-  if (!a || !b) return true;
-  const pick = m => ({
-    status: m.status || null,
-    minute: m.minute == null ? null : m.minute,
-    score: m.score || null,
-    odds: m.odds || null,
-    providerOdds: m.providerOdds || null,
-    markets: m.markets || null,
-    bookmakers: m.bookmakers || null
-  });
-  try { return JSON.stringify(pick(a)) !== JSON.stringify(pick(b)); }
-  catch (_) { return true; }
-}
-
-async function refreshLiveFootballNow() {
-  if (liveSyncInFlight) return liveSyncInFlight;
-  liveSyncInFlight = (async () => {
-    const provider = require('./providers/sofaBetsProvider');
-    try {
-      const live = await provider.getLiveFootballFixtures();
-      lastLiveSyncAt = Date.now();
-      if (!Array.isArray(live) || !live.length) return 0;
-
-      const bucket = await db.getFixtures(0, 'football');
-      const existing = bucket && Array.isArray(bucket.matches) ? bucket.matches : [];
-      const byProviderId = new Map(existing.map(m => [
-        String(m.providerMatchId || String(m.id || '').replace(/^sofa_/, '')),
-        m
-      ]));
-      const changed = [];
-
-      for (const fresh of live) {
-        const providerId = String(fresh.providerMatchId || '');
-        if (!providerId) continue;
-        const old = byProviderId.get(providerId);
-
-        // Keep JuanAi's normal canonical fixture shape. The live provider
-        // object uses plain team-name strings; never write that raw shape into
-        // Mongo or the frontend, because the dashboard expects homeTeam.name.
-        const updated = old ? Object.assign({}, old, {
-          status: fresh.status || old.status,
-          score: fresh.score || old.score,
-          minute: fresh.minute != null ? fresh.minute : old.minute,
-          minuteIsEstimated: fresh.minute != null ? false : old.minuteIsEstimated,
-          odds: fresh.odds || old.odds || null,
-          providerOdds: fresh.odds || old.providerOdds || old._sofaProviderOdds || null,
-          _sofaProviderOdds: fresh.odds || old._sofaProviderOdds || null,
-          _oddsSource: fresh.odds ? 'sofabets' : old._oddsSource,
-          oddsSource: fresh.odds ? 'sofabets' : old.oddsSource,
-          realOddsSource: fresh.odds ? 'SofaBets' : old.realOddsSource,
-          isRealMarketOdds: fresh.odds ? true : !!old.isRealMarketOdds,
-          aiGenerated: false,
-          _hasProviderOdds: fresh.odds ? true : !!old._hasProviderOdds,
-          _skipAiOddsGeneration: true,
-          _directProviderOdds: fresh.odds ? true : !!old._directProviderOdds,
-          markets: fresh.markets && fresh.markets.length ? fresh.markets : (old.markets || []),
-          bookmakers: fresh.bookmakers && fresh.bookmakers.length ? fresh.bookmakers : (old.bookmakers || [])
-        }) : {
-          id: 'sofa_' + providerId,
-          provider: 'sofabets',
-          source: 'sofabets',
-          primarySource: 'sofabets',
-          sourceProviders: ['sofabets'],
-          providerMatchId: providerId,
-          homeTeam: { id: null, name: fresh.homeTeam || 'Home', crest: null },
-          awayTeam: { id: null, name: fresh.awayTeam || 'Away', crest: null },
-          competition: { id: null, name: fresh.competition || 'Unknown Competition', code: fresh.competition ? String(fresh.competition).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null },
-          utcDate: fresh.utcDate || null,
-          status: fresh.status || 'IN_PLAY',
-          score: fresh.score || { fullTime: null, halfTime: null },
-          sport: 'football',
-          minute: fresh.minute != null ? fresh.minute : null,
-          minuteIsEstimated: fresh.minute == null,
-          odds: fresh.odds || null,
-          providerOdds: fresh.odds || null,
-          _sofaProviderOdds: fresh.odds || null,
-          _oddsSource: fresh.odds ? 'sofabets' : null,
-          oddsSource: fresh.odds ? 'sofabets' : null,
-          realOddsSource: fresh.odds ? 'SofaBets' : null,
-          isRealMarketOdds: !!fresh.odds,
-          aiGenerated: false,
-          aiOdds: null,
-          _hasProviderOdds: !!fresh.odds,
-          _skipAiOddsGeneration: true,
-          _directProviderOdds: !!fresh.odds,
-          markets: fresh.markets || [],
-          bookmakers: fresh.bookmakers || []
-        };
-
-        if (!old || liveMatchChanged(old, updated)) changed.push(updated);
-      }
-
-      if (changed.length) {
-        await db.saveFixtures(0, changed, 'football');
-      }
-      return changed.length;
-    } catch (e) {
-      console.warn('[scheduler] SofaBets 1s live sync failed: ' + e.message);
-      return 0;
-    } finally {
-      liveSyncInFlight = null;
-    }
-  })();
-  return liveSyncInFlight;
-}
-
-async function liveSyncLoop() {
-  if (Date.now() - lastLiveSyncAt < LIVE_SYNC_INTERVAL_MS) return;
-  await refreshLiveFootballNow();
-}
-
 function start() {
   if (running) return;
   running = true;
-  console.log('[scheduler] Starting background SofaBets refresh + 1s live score/odds sync.');
+  console.log('[scheduler] Starting background auto-refresh (no manual clicks needed)');
   console.log('[scheduler] SofaBets is the sole sports-data provider for the main fixture feed; provider bookmaker odds are authoritative.');
 
 
@@ -392,18 +295,22 @@ function start() {
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
   console.log('[scheduler] Football fixture source: SofaBets only.');
 
-  // Live score + bookmaker odds sync: SofaBets -> JuanAi -> MongoDB every 1s.
-  liveSyncLoop();
-  setInterval(liveSyncLoop, LIVE_SYNC_INTERVAL_MS);
-  console.log('[scheduler] SofaBets LIVE score/odds sync: every 1 second.');
-
   // Basketball uses SofaBets sportId=4 and preserves its native markets.
   setTimeout(function(){
     basketballFixtureRefreshLoop();
     setInterval(basketballFixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
   }, 5 * 1000);
 
-  // Game AI analysis is intentionally disabled. SofaBets bookmaker odds are the only prices used.\n\n  // Expiry job: deletes any match whose kickoff was more than 3 hours ago,
+  // Game AI analysis is OFF. Do not call Gemini/Groq for fixtures.
+  console.log('[scheduler] Game AI analysis: DISABLED — SofaBets bookmaker odds are used directly.');
+
+  // Live score + live odds bridge: poll SofaBets' dedicated live endpoint
+  // every second. Only changed documents result in Mongo writes because
+  // db.saveFixtures has an unchanged-content guard.
+  refreshLiveSofaBetsNow();
+  setInterval(refreshLiveSofaBetsNow, 1000);
+
+  // Expiry job: deletes any match whose kickoff was more than 3 hours ago,
   // regardless of what status any source reports — this is what actually
   // stops a match from being stuck showing as live/pending forever if
   // odds-api.io never marks it "settled" in our data. Runs every 5 min;
@@ -459,4 +366,4 @@ async function refreshTodayIfDue() {
   }
 }
 
-module.exports = { start: start, refreshTodayIfDue, refreshSofaSportIfDue, refreshLiveFootballNow };
+module.exports = { start: start, refreshTodayIfDue, refreshSofaSportIfDue };

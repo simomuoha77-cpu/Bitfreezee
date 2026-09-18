@@ -5,7 +5,7 @@ const sofabets = require('./providers/sofaBetsProvider');
 function toAppShape(m) {
   const leagueCode = m.competition ? String(m.competition).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
   const odds = m.providerOdds || m._sofaProviderOdds || m.odds || null;
-  // Game AI odds are intentionally disabled. SofaBets provider odds remain authoritative.
+  // No AI odds are generated or mirrored. SofaBets provider markets/odds are the source of truth.
   return Object.assign({}, m, {
     id: m.id || ('sofa_' + String(m.providerMatchId)),
     provider: 'sofabets',
@@ -20,7 +20,7 @@ function toAppShape(m) {
     odds,
     providerOdds: odds,
     _sofaProviderOdds: odds,
-    aiOdds: null,
+    // Deliberately do not create aiOdds: game analysis is disabled.
     oddsSource: odds ? 'sofabets' : null,
     realOddsSource: odds ? 'SofaBets' : null,
     isRealMarketOdds: !!odds,
@@ -61,5 +61,6 @@ function getAllProviderStatus() {
 module.exports = {
   getMatchesForDate,
   getAllProviderStatus,
+  toAppShape,
   PROVIDER_NAMES: ['sofabets']
 };
