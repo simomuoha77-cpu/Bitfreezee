@@ -2624,7 +2624,7 @@ function getFbDate(daysAhead){
 
 // Fixtures + odds now come from JuanAi's own backend (server.js), which:
 //  - reads the normal /api/fixtures endpoint backed by SofaBets
-//  - runs only unrelated AI analysis in the background; AI never replaces SofaBets bookmaker odds
+//  - does not run game AI analysis; SofaBets bookmaker odds are authoritative
 // This function just displays whatever the backend already has. It does NOT
 // fetch from football-data.org directly in the browser anymore, and there is
 // no demo/sample fixture fallback — if the backend has nothing yet, say so.
@@ -2641,7 +2641,7 @@ async function loadFixtures(silent){
   }
 
   try{
-    var resp = await fetch(JUANAI_BACKEND_URL + '/api/fixtures?days=' + days + '&sport=football');
+    var resp = await fetch(JUANAI_BACKEND_URL + '/api/fixtures?days=' + days + '&sport=football&realtime=' + (days === '0' ? '1' : '0') + '&_rt=' + Date.now(), { cache: 'no-store' });
     if(!resp.ok) throw new Error('Backend returned ' + resp.status);
     var data = await resp.json();
     var matches = data.matches || [];
@@ -2652,13 +2652,13 @@ async function loadFixtures(silent){
           '<div style="text-align:center;padding:30px;color:var(--t2)">'
           + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
           + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
-          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
+          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes live SofaBets score/odds every 1 second. Check back shortly, or verify <code>node server.js</code> is running.</div>'
           + '</div>';
       }
       fbMatches = [];
       updateFbStats([]);
       if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); }
-      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, 20000);
+      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, days === '0' ? 1000 : 20000);
       return;
     }
 
@@ -2684,6 +2684,9 @@ async function loadFixtures(silent){
     scheduleAutoPoll(visibleMatches);
 
   }catch(e){
+    if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
+    var retryDays = document.getElementById('fbDays').value;
+    fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, retryDays === '0' ? 1000 : 20000);
     document.getElementById('fixturesList').innerHTML =
       '<div style="text-align:center;padding:24px;color:var(--err)">'
       + '<i class="fa-solid fa-circle-exclamation" style="font-size:28px;display:block;margin-bottom:10px"></i>'
@@ -2700,17 +2703,14 @@ async function loadFixtures(silent){
 var fbAutoPollTimer = null;
 function scheduleAutoPoll(matches){
   if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
-  // Finished matches are excluded here — there's nothing to analyze for a
-  // game that's already over, so one lacking odds (e.g. it ended before the
-  // scheduler got to it) shouldn't keep the page silently polling forever.
-  var stillWaiting = (matches||[]).some(function(m){
-    var availableOdds = m.providerOdds || m._sofaProviderOdds || m.odds;
-    return !availableOdds && m.status !== 'FINISHED';
-  });
-  if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
+  var days = document.getElementById('fbDays').value;
+  // Today is a live board: re-read JuanAi every 1 second. The backend's
+  // realtime=1 path reads the one-second SofaBets live sync, and no browser
+  // or CDN cache is allowed to hold an older score/odds response.
+  var interval = days === '0' ? 1000 : 20000;
   fbAutoPollTimer = setTimeout(function(){
-    loadFixtures(true); // silent refresh — no spinner reset, no user action needed
-  }, 20000);
+    loadFixtures(true);
+  }, interval);
 }
 
 function updateFbStats(matches){

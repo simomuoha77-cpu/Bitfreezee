@@ -140,6 +140,11 @@ app.get('/api/competitions', requireApiKey, async (req, res) => {
 });
 
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
+  // Fixture data includes live scores and bookmaker prices. Never let a
+  // browser/CDN cache delay a fresh SofaBets update.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const days = req.query.days || '0';
   // sport defaults to 'football' so every existing caller (BetaKE included)
   // keeps working identically without needing to add this param at all.
@@ -154,6 +159,12 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   if (supportedSports.includes(sport)) {
     try { await scheduler.refreshSofaSportIfDue(sport, Number(days)); } catch (e) {
       console.warn('[fixtures] SofaBets ' + sport + ' refresh unavailable: ' + e.message);
+    }
+  }
+
+  if (sport === 'football' && Number(days) === 0 && req.query.realtime === '1') {
+    try { await scheduler.refreshLiveFootballNow(); } catch (e) {
+      console.warn('[fixtures] SofaBets live refresh unavailable: ' + e.message);
     }
   }
 
@@ -903,26 +914,10 @@ app.get('/internal/casino/exposure', requireAdmin, (req, res) => {
 // though, so it's rate-limited per IP instead (same pattern as /api/chat/stream)
 // to prevent runaway cost from repeated clicking/scripting, without blocking the
 // feature for everyone.
-app.post('/internal/analyze-now', async (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  if (!checkChatRateLimit(ip)) { // reuse the same per-IP bucket/limits as the chat proxy
-    return res.status(429).json({ error: 'Too many analysis requests — please slow down' });
-  }
-  const { matchId, days } = req.body || {};
-  if (!matchId || days === undefined) {
-    return res.status(400).json({ error: 'matchId and days are required' });
-  }
-  const bucket = await db.getFixtures(days);
-  const match = bucket && bucket.matches && bucket.matches.find(m => String(m.id) === String(matchId));
-  if (!match) return res.status(404).json({ error: 'Match not found' });
-
-  try {
-    const odds = await ai.analyzeMatch(match);
-    await db.upsertMatchOdds(matchId, days, odds);
-    res.json({ ok: true, odds });
-  } catch (e) {
-    res.status(502).json({ error: 'AI analysis failed: ' + e.message });
-  }
+app.post('/internal/analyze-now', (req, res) => {
+  return res.status(410).json({
+    error: 'Game AI analysis is disabled. SofaBets bookmaker odds are the only game prices used by JuanAi.'
+  });
 });
 
 // NOTE: The old POST /internal/fixtures and POST /internal/odds routes have

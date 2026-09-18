@@ -12,22 +12,21 @@
 //      are older than ANALYSIS_MAX_AGE_MS (so upcoming matches get
 //      refreshed analysis as kickoff approaches, not just once).
 //
-// Paced conservatively to avoid hammering SofaBets and the AI providers.
+// Live polling is isolated to SofaBets' dedicated live feed.
 
 const db = require('./db');
 const footballData = require('./footballData');
 const footballProviders = require('./footballProviders'); // SofaBets-only football source
-const ai = require('./ai');
 
 const FIXTURE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // refresh future-day fixture lists every 15 min — nothing there is live/about-to-finish, so this doesn't need to be fast
-const TODAY_REFRESH_INTERVAL_MS = 3 * 60 * 1000;  // widened from 60s: getMatchesForDate now fans out to ~12 sequential per-competition calls (see footballData.js) instead of 1, so a single refresh can take over a minute on one key alone — 60s was no longer enough headroom to reliably finish one cycle before the next was due.
+const TODAY_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const LIVE_SYNC_INTERVAL_MS = 1000; // refresh SofaBets live score + bookmaker odds every 1 second  // widened from 60s: getMatchesForDate now fans out to ~12 sequential per-competition calls (see footballData.js) instead of 1, so a single refresh can take over a minute on one key alone — 60s was no longer enough headroom to reliably finish one cycle before the next was due.
 const ANALYSIS_LOOP_INTERVAL_MS = 90 * 1000;         // check for unanalyzed matches every 90s
 const ANALYSIS_MAX_AGE_MS = 3 * 60 * 60 * 1000;      // re-analyze if odds older than 3h (pre-match only)
 const LIVE_ANALYSIS_MAX_AGE_MS = 60 * 1000;          // FAST path: if the score has changed since last analysis, re-price within this window — a goal should update odds almost immediately, like a real in-play book
 const LIVE_SAFETY_REFRESH_MS = 4 * 60 * 1000;        // SLOW path: even with NO score change, still refresh at least this often — odds should drift with the clock alone (less time left = more certainty), and this is also the safety net for matches this deployment doesn't track a live clock for
 // NOTE: per-match serial pacing (ANALYSIS_PACE_MS / LIVE_ANALYSIS_PACE_MS)
 // was replaced by concurrent batch processing below — see CONCURRENCY and
-// BATCH_GAP_MS inside analysisPassInner. Serializing every single match
 // behind a fixed delay meant total throughput was capped by that delay
 // alone, never by actual AI capacity — so adding more keys couldn't help,
 // since nothing was ever using more than one key at a time to begin with.
@@ -223,231 +222,8 @@ async function refreshBasketballFixturesForDay(days) {
   }
 }
 
-function needsAnalysis(match) {
-  // Never analyze a finished match — the game is over, there's nothing left
-  // to price, and without this check a finished match that somehow never
-  // got odds (e.g. it ended faster than the scheduler's cycle) would keep
-  // getting retried every single pass, forever, burning API calls for
-  // nothing.
-  if (match.status === 'FINISHED') return false;
-  // Never analyze a match with undetermined teams (TBD vs TBD) — there's
-  // nothing real to price yet, and it'll be picked up automatically once a
-  // later fixture refresh resolves the actual participants.
-  if (!hasKnownTeams(match)) return false;
-  const providerOdds =
-    match.providerOdds ||
-    match._sofaProviderOdds ||
-    (match.provider === 'sofabets' ? match.odds : null);
-
-  const hasRealProviderOdds =
-    providerOdds &&
-    Number(providerOdds.homeWin ?? providerOdds.home) > 1 &&
-    Number(providerOdds.draw) > 1 &&
-    Number(providerOdds.awayWin ?? providerOdds.away) > 1;
-
-  // SofaBets bookmaker odds are authoritative.
-  // NEVER send a match to AI analysis when real SofaBets odds exist.
-  if (hasRealProviderOdds) return false;
-
-  if (!match.aiOdds || !match.aiAnalyzedAt) return true;
-
-  if (!isLive(match)) {
-    return (Date.now() - match.aiAnalyzedAt) > ANALYSIS_MAX_AGE_MS;
-  }
-
-  // REAL FIX for "too many live matches to keep up with": re-analyzing
-  // EVERY live match every 60s regardless of whether anything actually
-  // happened was spending the same limited AI budget on a scoreless,
-  // unchanged 0-0 match as on one where a goal just went in. With 100+
-  // matches live at once, that's a lot of wasted calls on matches where
-  // nothing changed, crowding out matches that genuinely need a fresh
-  // price. Now: a real score change gets the fast refresh (near
-  // real-time); an unchanged score only gets refreshed on the slower
-  // safety-net interval, freeing up capacity for whatever actually moved.
-  const scoreChanged = match.aiAnalyzedAtScore != null && match.aiAnalyzedAtScore !== describeGoalsOnly(match);
-  const age = Date.now() - match.aiAnalyzedAt;
-  if (scoreChanged) return age > 5000; // near-instant — a tiny debounce only, not a real gate
-  return age > LIVE_SAFETY_REFRESH_MS;
-}
-
-// Caps how many matches we attempt to analyze in a single pass. With two
-// merged fixture sources now returning far more matches than
-// football-data.org alone (1500+ across 8 day-buckets in real testing),
-// trying to analyze everything at once immediately exhausts both Gemini's
-// and Groq's free-tier quotas in minutes. Instead, each pass only takes the
-// highest-priority slice — live matches first, then soonest-kickoff first —
-// and leaves the rest for the next pass. Over enough passes everything
-// still gets analyzed eventually; it just respects real rate limits instead
-// of front-loading a burst that guarantees failures.
-const MAX_MATCHES_PER_ANALYSIS_PASS = 14; // raised from 6 — that number was tuned for 11 total AI keys; the pool has since grown to 23 combined (16 Gemini + 7 Groq), and /api/status showed ALL of them healthy with zero blocked while coverage was still crawling (59/1370 analyzed). 14 is a deliberately moderate ~2.3x increase, not a jump to what 23 keys might theoretically sustain — raise further only after confirming this doesn't reintroduce the mass-blocking bursts seen at higher rates before.
-const MAX_LIVE_MATCHES_PER_PASS = 60; // raised from 25 — that "generous safety ceiling... should never realistically be hit" WAS being hit (49 live matches observed in production, above the old cap of 25), silently truncating live re-pricing coverage every single pass. 60 leaves real headroom above what's actually been observed.
-
-// RE-ENTRANCY GUARD: setInterval fires on a fixed schedule regardless of
-// whether the PREVIOUS analysisPass() call has actually finished yet. Even
-// with concurrent batch processing (CONCURRENCY matches at once, see
-// analysisPassInner below), a busy period with live matches near the
-// MAX_LIVE_MATCHES_PER_PASS ceiling can still take longer than the
-// 90-second interval between scheduled triggers. Without this guard, a new
-// pass could start while a previous one was still mid-flight, running TWO
-// OR MORE analysis loops concurrently, each independently hitting the same
-// shared AI
-// (Gemini/Groq) and real-odds (odds-api.io) key pools — multiplying actual
-// call volume well beyond what the pacing constants were designed for,
-// and a very plausible root cause of "entire key pool blocked" errors
-// appearing despite the pacing looking conservative on paper.
-let analysisPassRunning = false;
-
-async function analysisPass() {
-  if (analysisPassRunning) {
-    console.log('[scheduler] Skipping this analysisPass trigger — a previous pass is still running (prevents overlapping concurrent passes from multiplying API call volume)');
-    return;
-  }
-  analysisPassRunning = true;
-  try {
-    await analysisPassInner();
-  } finally {
-    analysisPassRunning = false;
-  }
-}
-
-async function analysisPassInner() {
-  // Collect everything needing analysis across all day-buckets first, then
-  // sort so LIVE matches always jump the queue, and everything else is
-  // ordered by soonest kickoff first — a match kicking off in an hour
-  // should never sit behind one 6 days out just because of iteration order.
-  const queue = [];
-  for (const days of FOOTBALL_DAY_BUCKETS) {
-    const bucket = await db.getFixtures(days);
-    if (!bucket || !Array.isArray(bucket.matches)) continue;
-    bucket.matches.filter(needsAnalysis).forEach(match => queue.push({ match, days }));
-  }
-  queue.sort((a, b) => {
-    const liveA = isLive(a.match) ? 1 : 0;
-    const liveB = isLive(b.match) ? 1 : 0;
-    if (liveA !== liveB) return liveB - liveA; // live matches always first
-    const timeA = a.match.utcDate ? new Date(a.match.utcDate).getTime() : Infinity;
-    const timeB = b.match.utcDate ? new Date(b.match.utcDate).getTime() : Infinity;
-    return timeA - timeB; // soonest kickoff next
-  });
-
-  const totalPending = queue.length;
-  // Live matches are NEVER capped — they always get processed this pass,
-  // regardless of MAX_MATCHES_PER_ANALYSIS_PASS. Only the non-live backlog
-  // catch-up respects the cap. This guarantees a live match never gets
-  // skipped/delayed just because there's a large backlog of pre-match
-  // fixtures competing for the same pass — the exact "missing live games"
-  // symptom this fixes.
-  const liveMatches = queue.filter(q => isLive(q.match)).slice(0, MAX_LIVE_MATCHES_PER_PASS);
-  const nonLiveMatches = queue.filter(q => !isLive(q.match));
-  const thisPass = liveMatches.concat(nonLiveMatches.slice(0, MAX_MATCHES_PER_ANALYSIS_PASS));
-  if (totalPending > thisPass.length) {
-    console.log('[scheduler] ' + totalPending + ' matches need analysis (' + liveMatches.length + ' live, processed uncapped) — processing ' + Math.min(nonLiveMatches.length, MAX_MATCHES_PER_ANALYSIS_PASS) + ' non-live this pass, rest will follow in subsequent passes');
-  }
-
-  // REAL FIX for "analyzing fewer games than before, even with more API
-  // keys added": matches were being processed one at a time in a strict
-  // serial line, with an artificial delay between EACH one, regardless of
-  // how many AI keys were sitting idle. That made total throughput capped
-  // by the pacing delay alone, not by actual AI capacity — adding more keys
-  // couldn't help, because nothing was ever calling more than one key at a
-  // time in the first place. With 90 live matches needing re-analysis every
-  // 60s, a strictly serial line (even at a fast per-match pace) takes
-  // several minutes to cycle through — by the time it loops back around,
-  // most matches are stale again, so the same matches dominate every pass
-  // while the rest of the backlog barely moves. Processing in small
-  // concurrent batches actually uses the key pool the way it was meant to
-  // be used — each concurrent request naturally picks its own available key
-  // via the existing round-robin picker in ai.js.
-  const CONCURRENCY = 3; // pulled back from 6 — production logs after deploying 6 showed the entire Gemini+Groq pool going fully blocked again within minutes, the same failure pattern seen at LIVE_ANALYSIS_PACE_MS=2500 before. This confirms the real ceiling here isn't about serial-vs-concurrent processing alone — the providers' actual sustainable burst rate is lower than 6 simultaneous requests, regardless of total key count. 3 is a more conservative step up from strictly-serial (1); if the pool still goes dark at this level, the next real lever is spacing BATCH_GAP_MS out further, not raising concurrency again.
-  const BATCH_GAP_MS = 3000; // raised from 1500 alongside the concurrency pullback — more breathing room between waves of requests.
-
-  for (let i = 0; i < thisPass.length; i += CONCURRENCY) {
-    const batch = thisPass.slice(i, i + CONCURRENCY);
-    await Promise.all(batch.map(async ({ match, days }) => {
-      const live = isLive(match);
-      try {
-        // Head-to-head and recent form don't change mid-match, so skip that
-        // fetch for live re-pricing passes — it was already captured
-        // pre-match (or isn't needed) and re-fetching it here would just
-        // burn API budget that's better spent getting the next live update
-        // out faster.
-        const history = live ? null : await fetchMatchHistory(match);
-        const odds = await ai.analyzeMatch(match, history, live ? buildLiveState(match) : null);
-        await db.upsertMatchOdds(match.id, days, odds, describeGoalsOnly(match));
-        var home = match.homeTeam && match.homeTeam.name;
-        var away = match.awayTeam && match.awayTeam.name;
-        console.log('[scheduler] Analyzed match ' + match.id + ' (' + home + ' vs ' + away + ') for days=' + days
-          + (live ? ' [LIVE re-price, score ' + describeScore(match) + ']' : (history ? ' [with real history]' : ' [no history available]')));
-      } catch (e) {
-        console.error('[scheduler] Analysis FAILED for match ' + match.id + ': ' + e.message);
-        // Leave this match without odds rather than faking a result. One
-        // match failing inside Promise.all does NOT block or cancel the
-        // rest of the batch — each has its own try/catch.
-      }
-    }));
-    if (i + CONCURRENCY < thisPass.length) {
-      await new Promise(function(r){ setTimeout(r, BATCH_GAP_MS); });
-    }
-  }
-}
-
-// Builds a compact live-state summary (score, minute, status) to hand to the
-// AI so it reprices based on what's actually happening in the match, not
-// pre-match assumptions about team strength.
-function buildLiveState(match) {
-  const score = match.score && match.score.fullTime ? match.score.fullTime : (match.score && match.score.halfTime) || null;
-  return {
-    minute: match.minute || null,
-    status: match.status,
-    homeGoals: score ? score.home : null,
-    awayGoals: score ? score.away : null
-  };
-}
-
-function describeScore(match) {
-  const s = buildLiveState(match);
-  return (s.homeGoals != null ? s.homeGoals : '?') + '-' + (s.awayGoals != null ? s.awayGoals : '?') + (s.minute ? (' @ ' + s.minute + "'") : '');
-}
-
-// Goals-only, deliberately WITHOUT the minute — used specifically for
-// score-change detection in needsAnalysis(). describeScore() above
-// includes the minute for human-readable log lines, but the minute changes
-// on nearly every poll regardless of whether a goal happened, which would
-// make a "has the score changed" comparison against it true almost every
-// single time — silently defeating the entire point of the optimization.
-function describeGoalsOnly(match) {
-  const s = buildLiveState(match);
-  return (s.homeGoals != null ? s.homeGoals : '?') + '-' + (s.awayGoals != null ? s.awayGoals : '?');
-}
-
-// Pulls real head-to-head + each team's recent form from football-data.org
-// so the AI grounds its odds in actual results instead of pure model
-// "memory" of the teams. Each call already goes through footballData's own
-// throttle, and we space these 3 calls out further since a single match
-// analysis now costs 3 requests instead of 0 — still comfortably under the
-// free tier's 10 req/min when combined with ANALYSIS_PACE_MS.
-async function fetchMatchHistory(match) {
-  // odds-api.io-sourced matches (prefixed "oaio_") don't have a valid
-  // football-data.org match/team ID — calling getHeadToHead or
-  // getTeamRecentForm with one would just burn API quota on a guaranteed
-  // failure. These matches simply proceed without real history; the AI
-  // prompt already handles a null history gracefully (falls back to
-  // general knowledge, flags lower confidence).
-  if (String(match.id).startsWith('oaio_')) return null;
-
-  try {
-    const h2h = await footballData.getHeadToHead(match.id, 10);
-    const homeId = match.homeTeam && match.homeTeam.id;
-    const awayId = match.awayTeam && match.awayTeam.id;
-    const homeForm = homeId ? await footballData.getTeamRecentForm(homeId, 5) : null;
-    const awayForm = awayId ? await footballData.getTeamRecentForm(awayId, 5) : null;
-    if (!h2h && !homeForm && !awayForm) return null;
-    return { h2h: h2h, homeForm: homeForm, awayForm: awayForm };
-  } catch (e) {
-    console.error('[scheduler] History fetch failed for match ' + match.id + ': ' + e.message);
-    return null;
-  }
-}
+// Game AI analysis has been removed from the scheduler. SofaBets is the
+// sole source of live score and bookmaker odds.
 
 let fixtureRefreshLoopInFlight = false;
 async function fixtureRefreshLoop() {
@@ -479,10 +255,130 @@ async function basketballFixtureRefreshLoop() {
   }
 }
 
+
+// ── REAL-TIME SOFABETS LIVE SYNC ─────────────────────────────────────────────
+// SofaBets exposes a dedicated /api/live-games feed. Poll only that small live
+// feed every second instead of re-fetching the entire fixture catalogue.
+// This keeps live scores and bookmaker odds moving without involving game AI.
+let liveSyncInFlight = null;
+let lastLiveSyncAt = 0;
+
+function liveMatchChanged(a, b) {
+  if (!a || !b) return true;
+  const pick = m => ({
+    status: m.status || null,
+    minute: m.minute == null ? null : m.minute,
+    score: m.score || null,
+    odds: m.odds || null,
+    providerOdds: m.providerOdds || null,
+    markets: m.markets || null,
+    bookmakers: m.bookmakers || null
+  });
+  try { return JSON.stringify(pick(a)) !== JSON.stringify(pick(b)); }
+  catch (_) { return true; }
+}
+
+async function refreshLiveFootballNow() {
+  if (liveSyncInFlight) return liveSyncInFlight;
+  liveSyncInFlight = (async () => {
+    const provider = require('./providers/sofaBetsProvider');
+    try {
+      const live = await provider.getLiveFootballFixtures();
+      lastLiveSyncAt = Date.now();
+      if (!Array.isArray(live) || !live.length) return 0;
+
+      const bucket = await db.getFixtures(0, 'football');
+      const existing = bucket && Array.isArray(bucket.matches) ? bucket.matches : [];
+      const byProviderId = new Map(existing.map(m => [
+        String(m.providerMatchId || String(m.id || '').replace(/^sofa_/, '')),
+        m
+      ]));
+      const changed = [];
+
+      for (const fresh of live) {
+        const providerId = String(fresh.providerMatchId || '');
+        if (!providerId) continue;
+        const old = byProviderId.get(providerId);
+
+        // Keep JuanAi's normal canonical fixture shape. The live provider
+        // object uses plain team-name strings; never write that raw shape into
+        // Mongo or the frontend, because the dashboard expects homeTeam.name.
+        const updated = old ? Object.assign({}, old, {
+          status: fresh.status || old.status,
+          score: fresh.score || old.score,
+          minute: fresh.minute != null ? fresh.minute : old.minute,
+          minuteIsEstimated: fresh.minute != null ? false : old.minuteIsEstimated,
+          odds: fresh.odds || old.odds || null,
+          providerOdds: fresh.odds || old.providerOdds || old._sofaProviderOdds || null,
+          _sofaProviderOdds: fresh.odds || old._sofaProviderOdds || null,
+          _oddsSource: fresh.odds ? 'sofabets' : old._oddsSource,
+          oddsSource: fresh.odds ? 'sofabets' : old.oddsSource,
+          realOddsSource: fresh.odds ? 'SofaBets' : old.realOddsSource,
+          isRealMarketOdds: fresh.odds ? true : !!old.isRealMarketOdds,
+          aiGenerated: false,
+          _hasProviderOdds: fresh.odds ? true : !!old._hasProviderOdds,
+          _skipAiOddsGeneration: true,
+          _directProviderOdds: fresh.odds ? true : !!old._directProviderOdds,
+          markets: fresh.markets && fresh.markets.length ? fresh.markets : (old.markets || []),
+          bookmakers: fresh.bookmakers && fresh.bookmakers.length ? fresh.bookmakers : (old.bookmakers || [])
+        }) : {
+          id: 'sofa_' + providerId,
+          provider: 'sofabets',
+          source: 'sofabets',
+          primarySource: 'sofabets',
+          sourceProviders: ['sofabets'],
+          providerMatchId: providerId,
+          homeTeam: { id: null, name: fresh.homeTeam || 'Home', crest: null },
+          awayTeam: { id: null, name: fresh.awayTeam || 'Away', crest: null },
+          competition: { id: null, name: fresh.competition || 'Unknown Competition', code: fresh.competition ? String(fresh.competition).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null },
+          utcDate: fresh.utcDate || null,
+          status: fresh.status || 'IN_PLAY',
+          score: fresh.score || { fullTime: null, halfTime: null },
+          sport: 'football',
+          minute: fresh.minute != null ? fresh.minute : null,
+          minuteIsEstimated: fresh.minute == null,
+          odds: fresh.odds || null,
+          providerOdds: fresh.odds || null,
+          _sofaProviderOdds: fresh.odds || null,
+          _oddsSource: fresh.odds ? 'sofabets' : null,
+          oddsSource: fresh.odds ? 'sofabets' : null,
+          realOddsSource: fresh.odds ? 'SofaBets' : null,
+          isRealMarketOdds: !!fresh.odds,
+          aiGenerated: false,
+          aiOdds: null,
+          _hasProviderOdds: !!fresh.odds,
+          _skipAiOddsGeneration: true,
+          _directProviderOdds: !!fresh.odds,
+          markets: fresh.markets || [],
+          bookmakers: fresh.bookmakers || []
+        };
+
+        if (!old || liveMatchChanged(old, updated)) changed.push(updated);
+      }
+
+      if (changed.length) {
+        await db.saveFixtures(0, changed, 'football');
+      }
+      return changed.length;
+    } catch (e) {
+      console.warn('[scheduler] SofaBets 1s live sync failed: ' + e.message);
+      return 0;
+    } finally {
+      liveSyncInFlight = null;
+    }
+  })();
+  return liveSyncInFlight;
+}
+
+async function liveSyncLoop() {
+  if (Date.now() - lastLiveSyncAt < LIVE_SYNC_INTERVAL_MS) return;
+  await refreshLiveFootballNow();
+}
+
 function start() {
   if (running) return;
   running = true;
-  console.log('[scheduler] Starting background auto-refresh + auto-analysis (no manual clicks needed)');
+  console.log('[scheduler] Starting background SofaBets refresh + 1s live score/odds sync.');
   console.log('[scheduler] SofaBets is the sole sports-data provider for the main fixture feed; provider bookmaker odds are authoritative.');
 
 
@@ -496,19 +392,18 @@ function start() {
   setInterval(fixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
   console.log('[scheduler] Football fixture source: SofaBets only.');
 
+  // Live score + bookmaker odds sync: SofaBets -> JuanAi -> MongoDB every 1s.
+  liveSyncLoop();
+  setInterval(liveSyncLoop, LIVE_SYNC_INTERVAL_MS);
+  console.log('[scheduler] SofaBets LIVE score/odds sync: every 1 second.');
+
   // Basketball uses SofaBets sportId=4 and preserves its native markets.
   setTimeout(function(){
     basketballFixtureRefreshLoop();
     setInterval(basketballFixtureRefreshLoop, TODAY_REFRESH_INTERVAL_MS);
   }, 5 * 1000);
 
-  // Give the first fixture refresh a head start before the first analysis pass.
-  setTimeout(function(){
-    analysisPass();
-    setInterval(analysisPass, ANALYSIS_LOOP_INTERVAL_MS);
-  }, 10 * 1000);
-
-  // Expiry job: deletes any match whose kickoff was more than 3 hours ago,
+  // Game AI analysis is intentionally disabled. SofaBets bookmaker odds are the only prices used.\n\n  // Expiry job: deletes any match whose kickoff was more than 3 hours ago,
   // regardless of what status any source reports — this is what actually
   // stops a match from being stuck showing as live/pending forever if
   // odds-api.io never marks it "settled" in our data. Runs every 5 min;
@@ -564,4 +459,4 @@ async function refreshTodayIfDue() {
   }
 }
 
-module.exports = { start: start, refreshTodayIfDue, refreshSofaSportIfDue };
+module.exports = { start: start, refreshTodayIfDue, refreshSofaSportIfDue, refreshLiveFootballNow };
