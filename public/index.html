@@ -2458,9 +2458,156 @@ function switchMainTab(t){
 // of this code — Math.random-based RNG is fine ONLY because nothing real is
 // at stake here.
 var casinoInit=false;
-function initCasino(){
+
+async function initCasino(){
   if(casinoInit)return;
   casinoInit=true;
+
+  var grid=document.querySelector('#casinoPanel .casino-grid');
+  if(!grid)return;
+
+  var status=document.createElement('div');
+  status.id='casinoApiProStatus';
+  status.style.cssText='grid-column:1/-1;padding:12px;color:var(--tm);font-size:12px';
+  status.textContent='Loading Casino API Pro games…';
+  grid.appendChild(status);
+
+  try{
+    var resp=await fetch(JUANAI_BACKEND_URL+'/api/casino-api-pro/games',{cache:'no-store'});
+    var result=await resp.json();
+
+    if(!resp.ok || !result.success){
+      throw new Error(result.message || ('Casino API Pro HTTP '+resp.status));
+    }
+
+    var data=result.data;
+    var games=Array.isArray(data) ? data :
+      (data && Array.isArray(data.games) ? data.games :
+      (data && Array.isArray(data.data) ? data.data : []));
+
+    status.remove();
+
+    var old=document.getElementById('casinoApiProGames');
+    if(old)old.remove();
+
+    var section=document.createElement('div');
+    section.id='casinoApiProGames';
+    section.style.cssText='grid-column:1/-1';
+
+    var title=document.createElement('h3');
+    title.textContent='🎰 Casino API Pro Games';
+    title.style.cssText='margin:8px 0 14px;color:var(--t1)';
+    section.appendChild(title);
+
+    if(!games.length){
+      var empty=document.createElement('div');
+      empty.style.cssText='padding:16px;color:var(--tm);font-size:12px';
+      empty.textContent='Casino API Pro is connected, but no games were returned.';
+      section.appendChild(empty);
+      grid.appendChild(section);
+      return;
+    }
+
+    var cards=document.createElement('div');
+    cards.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px';
+
+    games.forEach(function(game){
+      var id=game.id || game.gameId || game.game_id || '';
+      var name=game.name || game.title || game.gameName || id || 'Casino Game';
+      var category=game.category || game.type || game.gameType || 'Casino';
+      var thumb=game.thumbnail || game.image || game.logo || '';
+
+      var card=document.createElement('div');
+      card.className='cgame-card';
+      card.style.cssText='padding:16px;min-height:150px;display:flex;flex-direction:column;gap:9px';
+
+      if(thumb){
+        var img=document.createElement('img');
+        img.src=thumb;
+        img.alt=name;
+        img.loading='lazy';
+        img.style.cssText='width:100%;height:100px;object-fit:cover;border-radius:9px';
+        img.onerror=function(){this.style.display='none'};
+        card.appendChild(img);
+      }
+
+      var h=document.createElement('h4');
+      h.textContent=name;
+      h.style.margin='0';
+      card.appendChild(h);
+
+      var c=document.createElement('div');
+      c.textContent=category;
+      c.style.cssText='font-size:11px;color:var(--tm)';
+      card.appendChild(c);
+
+      var btn=document.createElement('button');
+      btn.className='crash-btn play';
+      btn.textContent='Play ▶';
+      btn.style.cssText='padding:10px 18px;margin-top:auto';
+      btn.onclick=function(){
+        if(!id){
+          toast('This Casino API Pro game has no game ID','error');
+          return;
+        }
+        launchCasinoApiProGame(id);
+      };
+      card.appendChild(btn);
+
+      cards.appendChild(card);
+    });
+
+    section.appendChild(cards);
+    grid.appendChild(section);
+
+  }catch(e){
+    console.error('Casino API Pro catalogue:',e);
+    status.textContent='⚠️ Casino API Pro: '+e.message;
+    status.style.color='var(--err)';
+  }
+}
+
+async function launchCasinoApiProGame(gameId){
+  toast('Opening Casino API Pro game…','info');
+
+  /*
+   * Catalogue loading is intentionally separate from game-session
+   * authentication. The backend still controls the Casino API Pro
+   * credentials and session creation.
+   */
+  var url='/api/casino-api-pro/session';
+
+  try{
+    var utoken=null;
+    try{
+      utoken=sGet('ju_utoken') || sGet('utoken') || null;
+    }catch(e){}
+
+    if(!utoken){
+      toast('Please sign in before launching this Casino API Pro game.','warning');
+      return;
+    }
+
+    var resp=await fetch(JUANAI_BACKEND_URL+url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({utoken:utoken,gameId:gameId})
+    });
+
+    var result=await resp.json();
+
+    if(!resp.ok || !result.success){
+      throw new Error(result.message || ('HTTP '+resp.status));
+    }
+
+    var launchUrl=result.url || result.launchUrl || result.gameUrl;
+    if(!launchUrl)throw new Error('Casino API Pro returned no launch URL');
+
+    window.open(launchUrl,'_blank','noopener');
+  }catch(e){
+    console.error('Casino API Pro launch:',e);
+    toast('Could not launch game: '+e.message,'error');
+  }
 }
 
 // ── Aviator — real server-authoritative crash game, own page ──
@@ -2624,7 +2771,7 @@ function getFbDate(daysAhead){
 
 // Fixtures + odds now come from JuanAi's own backend (server.js), which:
 //  - reads the normal /api/fixtures endpoint backed by SofaBets
-//  - does not run game AI analysis; SofaBets bookmaker odds are authoritative
+//  - runs only unrelated AI analysis in the background; AI never replaces SofaBets bookmaker odds
 // This function just displays whatever the backend already has. It does NOT
 // fetch from football-data.org directly in the browser anymore, and there is
 // no demo/sample fixture fallback — if the backend has nothing yet, say so.
@@ -2641,7 +2788,7 @@ async function loadFixtures(silent){
   }
 
   try{
-    var resp = await fetch(JUANAI_BACKEND_URL + '/api/fixtures?days=' + days + '&sport=football&realtime=' + (days === '0' ? '1' : '0') + '&_rt=' + Date.now(), { cache: 'no-store' });
+    var resp = await fetch(JUANAI_BACKEND_URL + '/api/fixtures?days=' + days + '&sport=football');
     if(!resp.ok) throw new Error('Backend returned ' + resp.status);
     var data = await resp.json();
     var matches = data.matches || [];
@@ -2652,13 +2799,13 @@ async function loadFixtures(silent){
           '<div style="text-align:center;padding:30px;color:var(--t2)">'
           + '<i class="fa-solid fa-clock" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>'
           + '<div style="font-size:13px">No fixtures loaded yet for ' + dateStr + '.</div>'
-          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes live SofaBets score/odds every 1 second. Check back shortly, or verify <code>node server.js</code> is running.</div>'
+          + '<div style="font-size:11px;color:var(--tm);margin-top:6px">The backend refreshes real fixtures automatically every 15 minutes. Check back shortly, or verify <code>node server.js</code> is running.</div>'
           + '</div>';
       }
       fbMatches = [];
       updateFbStats([]);
       if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); }
-      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, days === '0' ? 1000 : 20000);
+      fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, 20000);
       return;
     }
 
@@ -2684,9 +2831,6 @@ async function loadFixtures(silent){
     scheduleAutoPoll(visibleMatches);
 
   }catch(e){
-    if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
-    var retryDays = document.getElementById('fbDays').value;
-    fbAutoPollTimer = setTimeout(function(){ loadFixtures(true); }, retryDays === '0' ? 1000 : 20000);
     document.getElementById('fixturesList').innerHTML =
       '<div style="text-align:center;padding:24px;color:var(--err)">'
       + '<i class="fa-solid fa-circle-exclamation" style="font-size:28px;display:block;margin-bottom:10px"></i>'
@@ -2703,14 +2847,17 @@ async function loadFixtures(silent){
 var fbAutoPollTimer = null;
 function scheduleAutoPoll(matches){
   if(fbAutoPollTimer){ clearTimeout(fbAutoPollTimer); fbAutoPollTimer = null; }
-  var days = document.getElementById('fbDays').value;
-  // Today is a live board: re-read JuanAi every 1 second. The backend's
-  // realtime=1 path reads the one-second SofaBets live sync, and no browser
-  // or CDN cache is allowed to hold an older score/odds response.
-  var interval = days === '0' ? 1000 : 20000;
+  // Finished matches are excluded here — there's nothing to analyze for a
+  // game that's already over, so one lacking odds (e.g. it ended before the
+  // scheduler got to it) shouldn't keep the page silently polling forever.
+  var stillWaiting = (matches||[]).some(function(m){
+    var availableOdds = m.providerOdds || m._sofaProviderOdds || m.odds;
+    return !availableOdds && m.status !== 'FINISHED';
+  });
+  if(!stillWaiting) return; // everything analyzable is analyzed — nothing to poll for
   fbAutoPollTimer = setTimeout(function(){
-    loadFixtures(true);
-  }, interval);
+    loadFixtures(true); // silent refresh — no spinner reset, no user action needed
+  }, 20000);
 }
 
 function updateFbStats(matches){

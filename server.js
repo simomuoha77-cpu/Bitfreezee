@@ -30,13 +30,21 @@ const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
 const walletClient = require('./walletClient');
 const userToken = require('./userToken');
+const casinoApiPro = require('./casinoApiPro');
+const casinoApiProWallet = require('./casinoApiProWallet');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({
+  limit: '5mb',
+  // Casino API Pro HMAC wallet callbacks sign the exact raw JSON bytes.
+  // Keep a copy so verification is possible without changing the existing
+  // JSON parsing behavior used by the rest of JuanAi.
+  verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); }
+}));
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -106,6 +114,106 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+
+// ── CASINO API PRO (external game provider) ─────────────────────────────
+// This is deliberately separate from casino.js / the existing Aviator and
+// JetX pages. Those games are NOT modified by this integration.
+//
+// JuanAi keeps Casino API Pro credentials server-side. SafariBet calls the
+// session endpoint with its normal JuanAi API key and a signed user token;
+// JuanAi then asks Casino API Pro for a short-lived launch URL.
+//
+// Required env:
+//   CASINO_API_PRO_KEY=ck_test_... or ck_live_...
+//   CASINO_API_PRO_SECRET=cs_test_... or cs_live_...
+//   JUANAI_USER_TOKEN_SECRET=...
+//
+// For real-money wallet callbacks from Casino API Pro:
+//   CASINO_API_PRO_PARTNER_API_KEY=<SafariBet's JuanAi jsk_ key>
+//   CASINO_API_PRO_WALLET_HMAC_SECRET=<same secret configured in CAPRO>
+//   CASINO_API_PRO_WALLET_AUTH=HMAC_SIGNATURE
+//
+// The selected partner wallet must already be registered with /internal/wallet.
+// Casino API Pro then calls JuanAi, and JuanAi forwards balance/debit/credit/
+// refund/rollback to SafariBet's wallet. Casino API Pro never gets to see or
+// hold the player's SafariBet balance itself.
+
+app.get('/api/casino-api-pro/games', async (req, res) => {
+  try {
+    if (!casinoApiPro.isConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'Casino API Pro credentials are not configured on JuanAi'
+      });
+    }
+    const data = await casinoApiPro.listGames();
+    res.json({ success: true, data, environment: casinoApiPro.environment() });
+  } catch (e) {
+    res.status(e.statusCode || 502).json({
+      success: false,
+      message: e.message
+    });
+  }
+});
+
+// POST /api/casino-api-pro/session
+// Body: { utoken, gameId, currency?, playerName?, ttlSeconds? }
+// The utoken is the same signed user identity used by the existing casino
+// integration. The provider player_id is NEVER accepted directly from the
+// browser, preventing one user from launching another user's wallet.
+app.post('/api/casino-api-pro/session', requireApiKey, async (req, res) => {
+  try {
+    if (!casinoApiPro.isConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'Casino API Pro credentials are not configured on JuanAi'
+      });
+    }
+
+    const token = req.body?.utoken;
+    const userId = userToken.verify(token);
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Missing or invalid utoken'
+      });
+    }
+
+    const { gameId, currency, playerName, ttlSeconds } = req.body || {};
+    if (!gameId) {
+      return res.status(400).json({ success: false, message: 'gameId is required' });
+    }
+
+    const session = await casinoApiPro.createSession({
+      gameId,
+      playerId: String(userId),
+      currency: String(currency || process.env.CASINO_API_PRO_CURRENCY || 'KES').toUpperCase(),
+      playerName,
+      ttlSeconds
+    });
+
+    res.json({
+      success: true,
+      environment: casinoApiPro.environment(),
+      session
+    });
+  } catch (e) {
+    res.status(e.statusCode || 502).json({
+      success: false,
+      message: e.message
+    });
+  }
+});
+
+// Provider wallet callbacks. These are NOT public player endpoints.
+// Configure Casino API Pro's Developer → Wallet base URL to this server and
+// use HMAC_SIGNATURE authentication in production.
+app.post('/wallet/balance', casinoApiProWallet.authMiddleware, casinoApiProWallet.balance);
+app.post('/wallet/debit', casinoApiProWallet.authMiddleware, casinoApiProWallet.debit);
+app.post('/wallet/credit', casinoApiProWallet.authMiddleware, casinoApiProWallet.credit);
+app.post('/wallet/refund', casinoApiProWallet.authMiddleware, casinoApiProWallet.refund);
+app.post('/wallet/rollback', casinoApiProWallet.authMiddleware, casinoApiProWallet.rollback);
+
 // ── PUBLIC-FACING API (what BetaKE calls) ──────────────────────────
 
 // GET /api/fixtures?key=jsk_xxx&days=0
@@ -138,63 +246,6 @@ app.get('/api/competitions', requireApiKey, async (req, res) => {
     res.status(500).json({ error: e.message, competitions: [] });
   }
 });
-
-// SafariBet consumes the JuanAi fixture API directly. Its frontend expects
-// numeric-compatible fixture_id/market_id/selection_id fields and each
-// selection's decimal odds under markets[].selections[]. Preserve every
-// SofaBets market available; never replace bookmaker prices with AI odds.
-function stableNumericId(value, seed) {
-  const n = Number(value);
-  if (Number.isSafeInteger(n) && n >= 0) return n;
-  const str = String(value == null ? '' : value) + ':' + String(seed || '');
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
-  return (h >>> 0) || 1;
-}
-
-function safariBetMarkets(match) {
-  const raw = Array.isArray(match.markets) ? match.markets :
-    (match.providerOdds && Array.isArray(match.providerOdds.markets) ? match.providerOdds.markets :
-      (match._sofaProviderOdds && Array.isArray(match._sofaProviderOdds.markets) ? match._sofaProviderOdds.markets : []));
-  return raw.map((market, mi) => {
-    const marketKey = market && (market.key ?? market.id ?? market.market_id ?? market.type ?? mi);
-    const selections = Array.isArray(market && market.selections) ? market.selections : [];
-    return {
-      market_id: stableNumericId(marketKey, String(match.providerMatchId || match.id || '') + ':m' + mi),
-      market_name: String(market && (market.name ?? market.market_name ?? market.marketType ?? market.type) || 'Market'),
-      selections: selections.map((sel, si) => {
-        const selectionKey = sel && (sel.key ?? sel.id ?? sel.selection_id ?? sel.name ?? si);
-        const odds = Number(sel && sel.odds);
-        return {
-          selection_id: stableNumericId(selectionKey, String(match.providerMatchId || match.id || '') + ':m' + mi + ':s' + si),
-          selection_name: String(sel && (sel.name ?? sel.selection_name ?? sel.label ?? sel.outcomeName) || 'Selection ' + (si + 1)),
-          odds: Number.isFinite(odds) ? odds : 0
-        };
-      }).filter(sel => sel.odds > 1)
-    };
-  }).filter(m => m.selections.length);
-}
-
-function serializeSafariBetFixtures(matches) {
-  return matches.map(match => {
-    const out = Object.assign({}, match);
-    const providerOdds = match.providerOdds || match._sofaProviderOdds ||
-      (match.oddsSource === 'sofabets' ? match.odds : null);
-    const fixtureId = stableNumericId(match.providerMatchId || match.fixture_id || match.id, 'fixture');
-    out.fixture_id = fixtureId;
-    out.fixture_name = String(match.fixture_name ||
-      ((match.homeTeam && match.homeTeam.name) || match.homeTeam || 'Home') + ' v ' +
-      ((match.awayTeam && match.awayTeam.name) || match.awayTeam || 'Away'));
-    out.start_time_utc = match.start_time_utc || match.utcDate || null;
-    out.is_live = match.status === 'IN_PLAY' || match.status === 'PAUSED';
-    out.markets = safariBetMarkets(match);
-    if (providerOdds && typeof providerOdds === 'object') out.odds = Object.assign({}, providerOdds);
-    // Never expose stale/generated AI odds to SafariBet. Provider odds above
-    // are the only betting prices this endpoint should carry.
-    delete out.aiOdds;
-    return out;
-  });
-}
 
 app.get('/api/fixtures', requireApiKey, async (req, res) => {
   const days = req.query.days || '0';
@@ -271,7 +322,7 @@ app.get('/api/fixtures', requireApiKey, async (req, res) => {
   recomputeLiveMinutes(matches);
 
   res.json({
-    matches: serializeSafariBetFixtures(matches),
+    matches,
     sport,
     fetchedAt: bucket.fetchedAt,
     updatedAt: bucket.updatedAt,

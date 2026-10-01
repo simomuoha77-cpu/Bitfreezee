@@ -608,4 +608,4 @@ async function getMatchesForDate(dateStr, options) {
   return result;
 }
 
-module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getStatus, normalizeMatch, parseOdds, SPORT_IDS, fetchLiveFootballFixtures };
+module.exports = { providerName: 'sofabets', isConfigured, getMatchesForDate, getStatus, normalizeMatch, parseOdds, SPORT_IDS };
