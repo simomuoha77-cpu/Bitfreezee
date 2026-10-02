@@ -2583,11 +2583,6 @@ async function launchCasinoApiProGame(gameId){
       utoken=sGet('ju_utoken') || sGet('utoken') || null;
     }catch(e){}
 
-    if(!utoken){
-      toast('Please sign in before launching this Casino API Pro game.','warning');
-      return;
-    }
-
     var resp=await fetch(JUANAI_BACKEND_URL+url,{
       method:'POST',
       headers:{'Content-Type':'application/json'},

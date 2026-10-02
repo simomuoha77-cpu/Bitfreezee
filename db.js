@@ -25,8 +25,7 @@ const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
 const FIXTURES_COLLECTION = 'fixtures';
 const KEYS_COLLECTION = 'apikeys';
-const WALLETS_COLLECTION = 'partnerwallets';
-const PARTNER_API_COLLECTION = 'partnerapi_credentials'; // separate jcas_/jgam_ API credentials for partner integrations
+const WALLETS_COLLECTION = 'partnerwallets'; // partner API key -> wallet base URL + HMAC secret, for real-money casino integration (see walletClient.js)
 const SETTINGS_COLLECTION = 'settings'; // generic key-value store — added specifically to persist per-key API usage tracking (odds-api.io daily/hourly call counts) across restarts. Without this, every restart reset the app's OWN idea of "how much of each key's daily budget is used" back to zero, while the real usage tracked on the provider's end did NOT reset — so a day with many restarts (e.g. redeploys) let the app confidently keep using keys it THOUGHT had room, until the real provider-side count caught up and every key hit its actual daily wall at the same moment. This was directly observed in production: 11 separate odds-api.io keys all showing "480/480 used, blocked" simultaneously on a day with unusually many restarts.
 
 let client = null;
@@ -35,7 +34,6 @@ let mongoConnectAttempted = false;
 let fixturesCollection = null;
 let apiKeysCollection = null;
 let walletsCollection = null;
-let partnerApiCollection = null;
 let settingsCollection = null;
 
 // In-memory fallback so the server keeps working (within a single running
@@ -46,7 +44,6 @@ let settingsCollection = null;
 let fixturesFallback = {}; // keyed by `${days}` -> { matches: [...], fetchedAt, updatedAt }
 let apiKeysFallback = [];
 let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
-let partnerApiFallback = []; // { id, type, name, apiKey, secret, active, createdAt }
 let settingsFallback = {}; // keyed by setting name -> value (JSON-serializable)
 let usingFallback = false;
 let lastWrittenMatchContent = new Map(); // `${bucketKey}:${matchId}` -> last-written JSON string — see saveFixtures below for why this exists
@@ -68,7 +65,6 @@ async function connectMongo() {
     fixturesCollection = db.collection(FIXTURES_COLLECTION);
     apiKeysCollection = db.collection(KEYS_COLLECTION);
     walletsCollection = db.collection(WALLETS_COLLECTION);
-    partnerApiCollection = db.collection(PARTNER_API_COLLECTION);
     settingsCollection = db.collection(SETTINGS_COLLECTION);
     // This index is what actually enforces "no duplicate canonical
     // matches" at the database level: matchId now stores the CANONICAL id
@@ -80,8 +76,6 @@ async function connectMongo() {
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });
     await walletsCollection.createIndex({ apiKey: 1 }, { unique: true });
-    await partnerApiCollection.createIndex({ apiKey: 1 }, { unique: true });
-    await partnerApiCollection.createIndex({ type: 1, active: 1 });
     await settingsCollection.createIndex({ name: 1 }, { unique: true });
     mongoReady = true;
     usingFallback = false;
@@ -476,80 +470,6 @@ async function revokeApiKey(id) {
   }
 }
 
-
-// ── Separate Casino/Game API credential storage ────────────────────────
-// These credentials are intentionally separate from the legacy jsk_ API
-// keys. Casino integrations use jcas_ keys; game integrations use jgam_ keys.
-// Secrets are returned only when a credential is created.
-async function savePartnerApiCredential(record) {
-  await ensureMongo();
-  if (usingFallback) {
-    partnerApiFallback = partnerApiFallback.filter(x => x.apiKey !== record.apiKey);
-    partnerApiFallback.push(record);
-    return record;
-  }
-  try {
-    await partnerApiCollection.updateOne(
-      { apiKey: record.apiKey },
-      { $set: record },
-      { upsert: true }
-    );
-    return record;
-  } catch (e) {
-    console.error('[db] savePartnerApiCredential failed, falling back to in-memory: ' + e.message);
-    partnerApiFallback = partnerApiFallback.filter(x => x.apiKey !== record.apiKey);
-    partnerApiFallback.push(record);
-    return record;
-  }
-}
-
-async function getPartnerApiCredential(apiKey, type) {
-  await ensureMongo();
-  if (usingFallback) {
-    return partnerApiFallback.find(x => x.apiKey === apiKey && x.type === type) || null;
-  }
-  try {
-    return await partnerApiCollection.findOne({ apiKey, type });
-  } catch (e) {
-    console.error('[db] getPartnerApiCredential failed: ' + e.message);
-    return null;
-  }
-}
-
-async function getPartnerApiCredentials(type) {
-  await ensureMongo();
-  if (usingFallback) {
-    return partnerApiFallback
-      .filter(x => !type || x.type === type)
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-  }
-  try {
-    return await partnerApiCollection.find(type ? { type } : {}).sort({ createdAt: -1 }).toArray();
-  } catch (e) {
-    console.error('[db] getPartnerApiCredentials failed: ' + e.message);
-    return partnerApiFallback.filter(x => !type || x.type === type);
-  }
-}
-
-async function revokePartnerApiCredential(id, type) {
-  await ensureMongo();
-  if (usingFallback) {
-    const found = partnerApiFallback.find(x => x.id === id && x.type === type);
-    if (found) found.active = false;
-    return !!found;
-  }
-  try {
-    const result = await partnerApiCollection.updateOne(
-      { id: String(id), type },
-      { $set: { active: false, revokedAt: new Date().toISOString() } }
-    );
-    return result.matchedCount > 0;
-  } catch (e) {
-    console.error('[db] revokePartnerApiCredential failed: ' + e.message);
-    return false;
-  }
-}
-
 // ── Partner wallet config storage ──────────────────────────────────
 // One document per partner API key: their wallet base URL + HMAC shared
 // secret (see walletClient.js). Persisted the same way as API keys so a
@@ -804,10 +724,6 @@ module.exports = {
   saveWallet,
   getWallet,
   getAllWallets,
-  savePartnerApiCredential,
-  getPartnerApiCredential,
-  getPartnerApiCredentials,
-  revokePartnerApiCredential,
   getMongoStatus,
   ensureMongo,
   getSetting,

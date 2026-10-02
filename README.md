@@ -296,24 +296,3 @@ Casino API Pro's sandbox and live environments are separate; the same game
 engine is used, but rounds/data do not cross between test and live. This
 integration therefore treats `ck_test_` and `ck_live_` as distinct
 environments and never attempts to bridge their game state.
-
-
-## JuanAI Partner Casino/Game APIs
-
-JuanAI now exposes two separate integration APIs:
-
-- **Casino API:** `jcas_...` API key + separate HMAC secret.
-- **Game API:** `jgam_...` API key + separate HMAC secret.
-
-The player's money remains on the **betting site's/operator's wallet**. JuanAI is the game/integration layer and does not become the authoritative player ledger. Casino transactions use the registered operator wallet for balance, debit, credit and refund/rollback.
-
-Documentation:
-- `/docs/casino-api.html`
-- `/docs/game-api.html`
-- `/docs/`
-
-Admin credential creation requires `ADMIN_SECRET`:
-- `POST /internal/casino-api/credentials`
-- `POST /internal/game-api/credentials`
-
-Register the betting site's wallet against the generated `jcas_...` key using the existing `/internal/wallet` admin endpoint. The wallet adapter uses HMAC-signed server-to-server requests.
