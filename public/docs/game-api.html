@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JuanAI Game API</title><style>body{font-family:system-ui;margin:0;background:#0b1020;color:#eef2ff}main{max-width:980px;margin:auto;padding:28px}pre{background:#151c32;padding:16px;border-radius:10px;overflow:auto}code{color:#c7d2fe}.card{background:#11182b;padding:18px;border-radius:12px;margin:16px 0}</style></head>
+<body><main>
+<h1>JuanAI Game API</h1>
+<p>Separate integration API for game providers/platforms. Game integrations receive <code>jgam_...</code> API keys and separate secrets.</p>
+<div class="card"><b>Important:</b> game credentials are separate from Casino API credentials. A <code>jgam_...</code> key cannot call Casino API endpoints.</div>
+<h2>Authentication</h2>
+<pre>X-JuanAI-Game-Key: jgam_...
+X-JuanAI-Timestamp: 1760000000
+X-JuanAI-Signature: HMAC_SHA256(secret, timestamp + "." + rawBody)</pre>
+<h2>Endpoints</h2>
+<pre>GET /api/v1/games/catalog
+GET /api/v1/games/:gameId</pre>
+<h2>Catalogue response</h2>
+<p>The catalogue contains only games currently registered by JuanAI's casino integration. Do not treat a game as live merely because a provider advertises it; JuanAI only lists registered active games.</p>
+<h2>Wallet boundary</h2>
+<p>JuanAI games do not create a second player wallet. For real-money casino play, the betting site's wallet is authoritative and the Casino API handles the debit/credit/refund transaction flow.</p>
+</main></body></html>

@@ -32,6 +32,7 @@ const walletClient = require('./walletClient');
 const userToken = require('./userToken');
 const casinoApiPro = require('./casinoApiPro');
 const casinoApiProWallet = require('./casinoApiProWallet');
+const partnerApi = require('./partnerApi');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -114,6 +115,160 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+
+
+// ── SEPARATE PARTNER CASINO / GAME APIs ───────────────────────────────
+// These are the documented integration APIs for betting sites and game
+// providers. They intentionally do NOT reuse the legacy jsk_ API-key system.
+//
+// CASINO API: jcas_... + HMAC secret
+// GAME API:   jgam_... + HMAC secret
+//
+// Real-money balance remains on the betting site's wallet. JuanAI only
+// asks that wallet to balance/debit/credit/refund and records game outcomes.
+
+app.post('/internal/casino-api/credentials', requireAdmin, async (req, res) => {
+  try {
+    const record = partnerApi.createCredentials('casino', req.body?.name);
+    await db.savePartnerApiCredential(record);
+    // Secret is returned only at creation time.
+    res.status(201).json({
+      success: true,
+      type: 'casino',
+      id: record.id,
+      name: record.name,
+      apiKey: record.apiKey,
+      secret: record.secret,
+      message: 'Store the secret now. It is not returned by the list endpoint.'
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.get('/internal/casino-api/credentials', requireAdmin, async (_req, res) => {
+  const rows = await db.getPartnerApiCredentials('casino');
+  res.json({
+    success: true,
+    data: rows.map(({ secret, ...safe }) => safe)
+  });
+});
+
+app.post('/internal/casino-api/credentials/:id/revoke', requireAdmin, async (req, res) => {
+  const ok = await db.revokePartnerApiCredential(req.params.id, 'casino');
+  res.status(ok ? 200 : 404).json({ success: ok });
+});
+
+app.post('/internal/game-api/credentials', requireAdmin, async (req, res) => {
+  try {
+    const record = partnerApi.createCredentials('game', req.body?.name);
+    await db.savePartnerApiCredential(record);
+    res.status(201).json({
+      success: true,
+      type: 'game',
+      id: record.id,
+      name: record.name,
+      apiKey: record.apiKey,
+      secret: record.secret,
+      message: 'Store the secret now. It is not returned by the list endpoint.'
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.get('/internal/game-api/credentials', requireAdmin, async (_req, res) => {
+  const rows = await db.getPartnerApiCredentials('game');
+  res.json({
+    success: true,
+    data: rows.map(({ secret, ...safe }) => safe)
+  });
+});
+
+app.post('/internal/game-api/credentials/:id/revoke', requireAdmin, async (req, res) => {
+  const ok = await db.revokePartnerApiCredential(req.params.id, 'game');
+  res.status(ok ? 200 : 404).json({ success: ok });
+});
+
+// Casino API — betting-site integration. The site's own wallet remains
+// authoritative; walletClient calls it synchronously before accepting a bet.
+app.get('/api/v1/casino/games', partnerApi.requireCasinoApi, (req, res) => {
+  res.json({ success: true, data: casinoIntegration.listGames() });
+});
+
+app.get('/api/v1/casino/balance', partnerApi.requireCasinoApi, async (req, res) => {
+  const playerId = req.query.playerId;
+  if (!playerId) return res.status(400).json({ success: false, message: 'playerId is required' });
+  const result = await casinoIntegration.getBalance(req.partnerApiKey, String(playerId));
+  res.status(result.success ? 200 : 502).json(result);
+});
+
+app.post('/api/v1/casino/session', partnerApi.requireCasinoApi, async (req, res) => {
+  const { playerId, username } = req.body || {};
+  if (!playerId) return res.status(400).json({ success: false, message: 'playerId is required' });
+  if (!userToken.isConfigured()) {
+    return res.status(503).json({ success: false, message: 'JUANAI_USER_TOKEN_SECRET is not configured' });
+  }
+  try {
+    const utoken = userToken.sign(String(playerId));
+    const balance = await casinoIntegration.getBalance(req.partnerApiKey, String(playerId));
+    res.json({
+      success: true,
+      playerId: String(playerId),
+      username: username || null,
+      utoken,
+      balance: balance.success ? balance.balance : null,
+      walletSource: 'betting_site'
+    });
+  } catch (e) {
+    res.status(502).json({ success: false, message: e.message });
+  }
+});
+
+app.post('/api/v1/casino/bet', partnerApi.requireCasinoApi, async (req, res) => {
+  const { gameId, playerId, slot, stake } = req.body || {};
+  if (!playerId) return res.status(400).json({ success: false, message: 'playerId is required' });
+  const result = await casinoIntegration.placeBet(
+    req.partnerApiKey, String(playerId), gameId, slot, Number(stake)
+  );
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+app.get('/api/v1/casino/bet/:betId', partnerApi.requireCasinoApi, async (req, res) => {
+  const result = await casinoIntegration.getBetResult(req.partnerApiKey, req.params.betId);
+  res.status(result.success ? 200 : 404).json(result);
+});
+
+app.post('/api/v1/casino/bet/:betId/cashout', partnerApi.requireCasinoApi, async (req, res) => {
+  const result = await casinoIntegration.cashOut(req.partnerApiKey, req.params.betId);
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+app.get('/api/v1/casino/history', partnerApi.requireCasinoApi, async (req, res) => {
+  if (!req.query.playerId) return res.status(400).json({ success: false, message: 'playerId is required' });
+  const result = casinoIntegration.getHistory(
+    req.partnerApiKey, String(req.query.playerId), Math.min(Number(req.query.limit || 50), 100)
+  );
+  res.json({ success: true, data: result });
+});
+
+// Game API — separate credentials for game-provider integrations.
+// It exposes JuanAI's currently available game catalogue and a stable
+// provider-facing view without granting access to Casino API credentials.
+app.get('/api/v1/games/catalog', partnerApi.requireGameApi, (req, res) => {
+  res.json({
+    success: true,
+    data: casinoIntegration.listGames(),
+    walletModel: 'operator_wallet',
+    note: 'Player funds remain on the betting-site/operator wallet.'
+  });
+});
+
+app.get('/api/v1/games/:gameId', partnerApi.requireGameApi, (req, res) => {
+  const game = casinoIntegration.getGame(req.params.gameId);
+  if (!game) return res.status(404).json({ success: false, message: 'Game not found' });
+  res.json({ success: true, data: game });
+});
 
 // ── CASINO API PRO (external game provider) ─────────────────────────────
 // This is deliberately separate from casino.js / the existing Aviator and

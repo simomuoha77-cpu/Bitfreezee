@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JuanAI Casino API</title><style>body{font-family:system-ui;margin:0;background:#0b1020;color:#eef2ff}main{max-width:980px;margin:auto;padding:28px}pre{background:#151c32;padding:16px;border-radius:10px;overflow:auto}code{color:#c7d2fe}.card{background:#11182b;padding:18px;border-radius:12px;margin:16px 0}h1{color:#fff}h2{margin-top:28px}</style></head>
+<body><main>
+<h1>JuanAI Casino API</h1>
+<p>For betting sites integrating JuanAI casino games. Each betting site receives a dedicated <code>jcas_...</code> API key and secret.</p>
+<div class="card"><b>Wallet model</b><p>JuanAI does not hold the player's authoritative balance. The betting site's wallet remains the source of truth. JuanAI calls the operator wallet for balance, debit, credit and refund/rollback.</p></div>
+<h2>Authentication</h2>
+<p>Send these headers on every request:</p>
+<pre>X-JuanAI-Casino-Key: jcas_...
+X-JuanAI-Timestamp: 1760000000
+X-JuanAI-Signature: HMAC_SHA256(secret, timestamp + "." + rawBody)</pre>
+<p>For GET requests the raw body is empty. Reject timestamps older than 5 minutes.</p>
+<h2>Endpoints</h2>
+<pre>GET  /api/v1/casino/games
+GET  /api/v1/casino/balance?playerId=PLAYER_ID
+POST /api/v1/casino/session
+POST /api/v1/casino/bet
+GET  /api/v1/casino/bet/:betId
+POST /api/v1/casino/bet/:betId/cashout
+GET  /api/v1/casino/history?playerId=PLAYER_ID&amp;limit=50</pre>
+<h2>Create session</h2>
+<pre>POST /api/v1/casino/session
+{"playerId":"player-123","username":"demo"}</pre>
+<p>The response includes a signed JuanAI user token and the current balance read from the betting site's wallet.</p>
+<h2>Place bet</h2>
+<pre>POST /api/v1/casino/bet
+{"gameId":"aviator","playerId":"player-123","slot":1,"stake":100}</pre>
+<p>JuanAI first requests a real debit from the betting site's wallet. A game bet is not accepted when that debit is rejected.</p>
+<h2>Win and cashout</h2>
+<p>When a bet wins, JuanAI requests a credit from the same betting-site wallet. If the bet cannot be placed after a successful debit, JuanAI requests a refund. Transaction references are used for idempotency by the wallet integration.</p>
+<h2>Credential separation</h2>
+<p><code>jcas_...</code> credentials work only with Casino API routes. They cannot authenticate Game API routes or the legacy <code>jsk_...</code> API.</p>
+</main></body></html>
