@@ -616,22 +616,49 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
       <div style="max-width:700px;margin:0 auto">
         <div style="font-weight:800;font-size:18px;margin-bottom:6px">🔑 API Key Management</div>
         <div style="font-size:12px;color:var(--info);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:12px 14px;margin-bottom:20px;line-height:1.6">
-          <b>ℹ️ Requires the JuanAi backend server to be running</b> (<code>node server.js</code> — see README). Keys generated here are stored and checked by that real server, so external servers like BetaKE can call <code>GET /api/fixtures?key=...</code> over normal HTTP. If the backend isn't running, this panel will say so instead of silently failing. Odds shown are still AI-generated predictions, not real bookmaker prices — don't present them to end users as live market odds.
+          <b>ℹ️ Partner credentials are managed by the JuanAI backend</b> (<code>node server.js</code> — see README). Casino operators and game providers receive separate API keys and HMAC secret keys. The secret is shown only when it is created and must be kept on the partner's server. Legacy <code>jsk_...</code> keys remain available below for older integrations.
         </div>
 
-        <!-- Generate Key -->
+        <!-- Partner API Credentials -->
         <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
-          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-plus" style="color:var(--acc)"></i> Generate New API Key</div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-key" style="color:var(--acc)"></i> Partner API Credentials</div>
+          <div style="font-size:11px;color:var(--t2);line-height:1.65;margin-bottom:14px">
+            Create separate credentials for casino operators and game providers. The <b>API key</b> identifies the integration; the <b>secret key</b> signs requests and must stay on the partner's server.
+            <b>Secret keys are shown only when a new credential is generated.</b>
+          </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <input type="text" id="apiKeyName" placeholder="Key name (e.g. BettingSite, App1)" style="flex:1;padding:10px 13px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:9px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;outline:none;min-width:180px">
-            <button onclick="generateApiKey()" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap"><i class="fa-solid fa-key"></i> Generate Key</button>
+            <input type="text" id="partnerApiName" placeholder="Integration name (e.g. SafariBet)" style="flex:1;padding:10px 13px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:9px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;outline:none;min-width:180px">
+            <button onclick="generatePartnerCredential('casino')" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap">🎰 Generate Casino API</button>
+            <button onclick="generatePartnerCredential('game')" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap">🎮 Generate Game API</button>
           </div>
         </div>
 
-        <!-- API Keys List -->
+        <!-- Newly generated secret -->
+        <div id="newPartnerSecret" style="display:none;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:14px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--ok);margin-bottom:7px">✅ New credential created — save the secret now</div>
+          <div id="newPartnerSecretText" style="font-size:11px;color:var(--t2);line-height:1.55;margin-bottom:8px"></div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap">
+            <button id="copyNewPartnerKeyBtn" style="background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:7px;padding:7px 10px;font-size:10px;font-weight:700;cursor:pointer">Copy API Key</button>
+            <button id="copyNewPartnerSecretBtn" style="background:var(--ok);color:#06130d;border:none;border-radius:7px;padding:7px 10px;font-size:10px;font-weight:800;cursor:pointer">Copy Secret Key</button>
+            <button onclick="document.getElementById('newPartnerSecret').style.display='none'" style="background:transparent;color:var(--tm);border:1px solid var(--bdr);border-radius:7px;padding:7px 10px;font-size:10px;font-weight:700;cursor:pointer">Hide</button>
+          </div>
+        </div>
+
+        <!-- Partner Credentials List -->
         <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
-          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-list" style="color:var(--acc)"></i> Your API Keys</div>
-          <div id="apiKeysList"><div style="color:var(--tm);font-size:12px">Loading...</div></div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-list" style="color:var(--acc)"></i> Your Partner Credentials</div>
+          <div id="partnerCredentialsList"><div style="color:var(--tm);font-size:12px">Loading...</div></div>
+        </div>
+
+        <!-- Legacy API Keys -->
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:12px;font-weight:700;margin-bottom:7px">Legacy JuanAI API Keys</div>
+          <div style="font-size:10px;color:var(--tm);line-height:1.5;margin-bottom:10px">The existing <code>jsk_...</code> keys are kept for compatibility with older football/Aviator integrations. They are separate from Casino API and Game API credentials.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <input type="text" id="apiKeyName" placeholder="Legacy key name" style="flex:1;padding:9px 12px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:9px;color:var(--t1);font-family:'Inter',sans-serif;font-size:12px;outline:none;min-width:160px">
+            <button onclick="generateApiKey()" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:9px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif">Generate Legacy Key</button>
+          </div>
+          <div id="apiKeysList" style="margin-top:12px"><div style="color:var(--tm);font-size:11px">Loading...</div></div>
         </div>
 
         <!-- Partner API Documentation -->
@@ -2386,7 +2413,7 @@ function switchMainTab(t){
   [btnChat,btnFb,btnApi,btnCasino].forEach(function(b){if(b)b.classList.remove('active');});
   if(t==='chat'){if(chatWrap)chatWrap.style.display='flex';if(btnChat)btnChat.classList.add('active');}
   else if(t==='football'){if(fbPanel)fbPanel.style.display='flex';if(btnFb)btnFb.classList.add('active');loadFixtures();}
-  else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderApiKeys();}
+  else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderPartnerCredentials();renderApiKeys();}
   else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
 }
 
@@ -3066,6 +3093,91 @@ async function analyzeMatch(matchId, days){
 
 function analyzeAllMatches(){
   toast('The backend already analyzes every match automatically in the background — no need to trigger this manually. Use Refresh to pull the latest results.', 'info');
+}
+
+// ── SEPARATE PARTNER API CREDENTIALS ───────────────────────────────
+async function generatePartnerCredential(type){
+  var nameEl=document.getElementById('partnerApiName');
+  var name=(nameEl && nameEl.value.trim()) || '';
+  if(!name){ toast('Enter an integration name first','warning'); return; }
+  try{
+    var resp=await fetchInternal('/internal/partner-credentials',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type:type,name:name})
+    });
+    var data=await resp.json().catch(function(){return {};});
+    if(!resp.ok) throw new Error(data.error || 'Backend rejected credential creation');
+    nameEl.value='';
+    var box=document.getElementById('newPartnerSecret');
+    var text=document.getElementById('newPartnerSecretText');
+    var key=data.apiKey || '';
+    var secret=data.secret || '';
+    text.innerHTML='<b>'+esc(type==='casino'?'Casino API':'Game API')+'</b><br>API Key: <code>'+esc(key)+'</code><br>Secret Key: <code>'+esc(secret)+'</code><br><span style="color:var(--warn)">Save this secret now. It will not be returned when the credentials list is loaded later.</span>';
+    box.style.display='block';
+    document.getElementById('copyNewPartnerKeyBtn').onclick=function(){copyApiKey(key);};
+    document.getElementById('copyNewPartnerSecretBtn').onclick=function(){navigator.clipboard.writeText(secret);toast('Secret key copied','success');};
+    await renderPartnerCredentials();
+    toast((type==='casino'?'Casino':'Game')+' API credentials generated','success');
+  }catch(e){
+    toast(e.message==='Invalid admin secret — try again'?e.message:(e.message||'Could not create partner credentials'),'error');
+  }
+}
+
+async function getPartnerCredentials(){
+  try{
+    var resp=await fetchInternal('/internal/partner-credentials');
+    if(!resp.ok) throw new Error('bad response');
+    return await resp.json();
+  }catch(e){ return null; }
+}
+
+async function revokePartnerCredential(id){
+  if(!confirm('Revoke this partner API credential? Integrations using it will immediately lose access.')) return;
+  try{
+    var resp=await fetchInternal('/internal/partner-credentials/'+encodeURIComponent(id),{method:'DELETE'});
+    if(!resp.ok) throw new Error('Backend rejected revoke');
+    await renderPartnerCredentials();
+    toast('Partner credential revoked','info');
+  }catch(e){
+    toast(e.message==='Invalid admin secret — try again'?e.message:'Could not revoke partner credential','error');
+  }
+}
+
+function copyPartnerValue(value,label){
+  navigator.clipboard.writeText(value);
+  toast((label||'Value')+' copied to clipboard','success');
+}
+
+async function renderPartnerCredentials(){
+  var el=document.getElementById('partnerCredentialsList');
+  if(!el) return;
+  el.innerHTML='<div style="color:var(--tm);font-size:12px">Loading...</div>';
+  var rows=await getPartnerCredentials();
+  if(rows===null){
+    el.innerHTML='<div style="color:var(--err);font-size:11px">⚠️ Cannot reach JuanAI backend. Make sure server.js is running and ADMIN_SECRET is configured.</div>';
+    return;
+  }
+  if(!rows.length){
+    el.innerHTML='<div style="color:var(--tm);font-size:11px">No Casino API or Game API credentials yet. Generate one above.</div>';
+    return;
+  }
+  el.innerHTML=rows.map(function(k){
+    var isCasino=k.type==='casino';
+    var label=isCasino?'🎰 Casino API':'🎮 Game API';
+    var prefix=isCasino?'jcas_':'jgam_';
+    return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:12px;margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px">'
+      +'<div><div style="font-size:13px;font-weight:700">'+esc(k.name)+'</div><div style="font-size:10px;color:var(--acc);margin-top:2px">'+label+'</div></div>'
+      +'<button onclick="revokePartnerCredential(\''+String(k.id).replace(/'/g,"\\\\'")+'\')" style="background:rgba(255,79,107,.1);color:var(--err);border:1px solid rgba(255,79,107,.2);border-radius:6px;padding:4px 9px;font-size:10px;font-weight:700;cursor:pointer">Revoke</button>'
+      +'</div>'
+      +'<div style="font-size:10px;color:var(--tm);margin-bottom:4px">API Key</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:7px"><code style="flex:1;font-size:10px;color:var(--ok);background:var(--bg2);border-radius:6px;padding:7px 9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(k.apiKey||'')+'</code><button onclick="copyPartnerValue(\''+String(k.apiKey||'').replace(/'/g,"\\\\'")+'\',\\'API Key\\')" style="background:var(--acg);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:6px;padding:6px 8px;font-size:9px;font-weight:700;cursor:pointer">Copy</button></div>'
+      +'<div style="font-size:10px;color:var(--tm);margin-bottom:4px">Secret Key</div>'
+      +'<div style="font-size:10px;color:var(--warn);background:var(--bg2);border-radius:6px;padding:7px 9px">•••••••••••••••••••••••••••••••• <span style="color:var(--tm)">— shown only at creation</span></div>'
+      +'<div style="font-size:9px;color:var(--tm);margin-top:7px">Created: '+new Date(k.createdAt).toLocaleDateString()+' · '+(k.requests||0)+' requests'+(k.active===false?' · REVOKED':'')+'</div>'
+      +'</div>';
+  }).join('');
 }
 
 // ── API KEY MANAGEMENT — now backed by the real JuanAi backend server ─────────

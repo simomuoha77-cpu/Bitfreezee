@@ -32,6 +32,7 @@ const walletClient = require('./walletClient');
 const userToken = require('./userToken');
 const casinoApiPro = require('./casinoApiPro');
 const casinoApiProWallet = require('./casinoApiProWallet');
+const partnerApi = require('./partnerApi');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1099,6 +1100,72 @@ app.delete('/internal/apikeys/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to revoke API key: ' + e.message });
   }
 });
+
+
+// ── SEPARATE CASINO API / GAME API CREDENTIAL MANAGEMENT ──────────
+// These credentials are independent of legacy jsk_ API keys. A secret is
+// returned only at creation time because it is the HMAC credential used to
+// authenticate partner requests. The server keeps the secret for HMAC
+// verification; the list endpoint deliberately never returns it.
+app.post('/internal/partner-credentials', requireAdmin, async (req, res) => {
+  const { type, name } = req.body || {};
+  if (type !== 'casino' && type !== 'game') {
+    return res.status(400).json({ error: 'type must be casino or game' });
+  }
+  if (!String(name || '').trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  try {
+    const record = await db.addPartnerApiCredential(type, name);
+    res.json(record);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create partner credentials: ' + e.message });
+  }
+});
+
+app.get('/internal/partner-credentials', requireAdmin, async (req, res) => {
+  try {
+    res.json(await db.getPartnerApiCredentials());
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load partner credentials: ' + e.message });
+  }
+});
+
+app.delete('/internal/partner-credentials/:id', requireAdmin, async (req, res) => {
+  try {
+    await db.revokePartnerApiCredential(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to revoke partner credentials: ' + e.message });
+  }
+});
+
+// Partner-authenticated health/catalogue endpoints. These prove the two
+// credential types are actually enforced independently; Casino keys cannot
+// authenticate Game routes and vice versa. Full wallet/session contracts
+// remain documented under /docs/.
+app.get('/api/v1/casino/games', partnerApi.requireCasinoApi, async (req, res) => {
+  try {
+    const data = casinoApiPro.isConfigured()
+      ? await casinoApiPro.listGames()
+      : [];
+    res.json({ success: true, data, environment: casinoApiPro.environment(), partner: 'casino' });
+  } catch (e) {
+    res.status(e.statusCode || 502).json({ success: false, message: e.message });
+  }
+});
+
+app.get('/api/v1/game/catalogue', partnerApi.requireGameApi, async (req, res) => {
+  try {
+    const data = casinoApiPro.isConfigured()
+      ? await casinoApiPro.listGames()
+      : [];
+    res.json({ success: true, data, environment: casinoApiPro.environment(), partner: 'game' });
+  } catch (e) {
+    res.status(e.statusCode || 502).json({ success: false, message: e.message });
+  }
+});
+
 
 // ── WALLET INTEGRATION SETUP (called by JuanAi's admin UI) ──────────
 // Registers a partner's own wallet base URL + shared HMAC secret so

@@ -27,7 +27,7 @@ function createCredentials(type, name) {
     type,
     name: String(name || (casino ? 'Unnamed casino integration' : 'Unnamed game integration')).slice(0, 100),
     apiKey: randomToken(casino ? 'jcas_' : 'jgam_'),
-    secret: randomToken(casino ? 'jcs_' : 'jgs_', 32),
+    secret: randomToken(casino ? 'jcas_secret_' : 'jgam_secret_', 32),
     active: true,
     createdAt: new Date().toISOString(),
   };
@@ -76,6 +76,7 @@ async function authenticate(req, type) {
     return { ok: false, status: 401, message: 'Invalid request signature' };
   }
 
+  await db.recordPartnerApiRequest(key);
   return { ok: true, credential };
 }
 
