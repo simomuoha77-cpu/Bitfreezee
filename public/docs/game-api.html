@@ -1,19 +1,7 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>JuanAI Game API</title><style>body{font-family:system-ui;margin:0;background:#0b1020;color:#eef2ff}main{max-width:980px;margin:auto;padding:28px}pre{background:#151c32;padding:16px;border-radius:10px;overflow:auto}code{color:#c7d2fe}.card{background:#11182b;padding:18px;border-radius:12px;margin:16px 0}</style></head>
-<body><main>
-<h1>JuanAI Game API</h1>
-<p>Separate integration API for game providers/platforms. Game integrations receive <code>jgam_...</code> API keys and separate secrets.</p>
-<div class="card"><b>Important:</b> game credentials are separate from Casino API credentials. A <code>jgam_...</code> key cannot call Casino API endpoints.</div>
-<h2>Authentication</h2>
-<pre>X-JuanAI-Game-Key: jgam_...
-X-JuanAI-Timestamp: 1760000000
-X-JuanAI-Signature: HMAC_SHA256(secret, timestamp + "." + rawBody)</pre>
-<h2>Endpoints</h2>
-<pre>GET /api/v1/games/catalog
-GET /api/v1/games/:gameId</pre>
-<h2>Catalogue response</h2>
-<p>The catalogue contains only games currently registered by JuanAI's casino integration. Do not treat a game as live merely because a provider advertises it; JuanAI only lists registered active games.</p>
-<h2>Wallet boundary</h2>
-<p>JuanAI games do not create a second player wallet. For real-money casino play, the betting site's wallet is authoritative and the Casino API handles the debit/credit/refund transaction flow.</p>
-</main></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JuanAI Game API</title><style>body{font-family:Inter,system-ui,sans-serif;background:#0b0d14;color:#eef1f7;margin:0;padding:24px;line-height:1.6}main{max-width:980px;margin:auto}h1,h2{margin-top:28px}.card{background:#151824;border:1px solid #2a2f42;border-radius:14px;padding:18px;margin:14px 0}code,pre{background:#0f121b;border-radius:8px}code{padding:2px 5px}pre{padding:14px;overflow:auto;border:1px solid #252a3a}a{color:#8b7cff}.tag{display:inline-block;padding:4px 8px;border-radius:8px;background:#22283a;margin-right:6px;font-size:12px}</style></head><body><main><p><a href="/">← JuanAI</a></p><h1>🎮 JuanAI Game API</h1><p><span class="tag">Public documentation</span><span class="tag">No secret required to read</span></p><div class="card"><h2>Purpose</h2><p>For independent game providers connecting games to JuanAI casino operators. This API is separate from the Casino API.</p></div><div class="card"><h2>Credentials</h2><p>Game providers use their own credential pair:</p><pre>API key: jgam_...
+API secret: jgam_secret_...</pre><p>Never reuse Casino API credentials here.</p></div><div class="card"><h2>Core API</h2><pre>POST /api/v1/game/register
+GET  /api/v1/game/catalogue
+POST /api/v1/game/session
+POST /api/v1/game/callback/win
+POST /api/v1/game/callback/refund
+POST /api/v1/game/callback/rollback</pre></div><div class="card"><h2>Settlement</h2><p>Games identify the player, session, round and transaction. Wallet movement is idempotent and must use unique transaction IDs. Operators remain the wallet authority.</p></div><div class="card"><h2>Security</h2><p>Game API secrets are server-side only. Use HMAC signatures for callbacks and rotate/revoke credentials independently from Casino API credentials.</p></div></main></body></html>

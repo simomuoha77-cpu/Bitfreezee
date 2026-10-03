@@ -1,34 +1,8 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>JuanAI Casino API</title><style>body{font-family:system-ui;margin:0;background:#0b1020;color:#eef2ff}main{max-width:980px;margin:auto;padding:28px}pre{background:#151c32;padding:16px;border-radius:10px;overflow:auto}code{color:#c7d2fe}.card{background:#11182b;padding:18px;border-radius:12px;margin:16px 0}h1{color:#fff}h2{margin-top:28px}</style></head>
-<body><main>
-<h1>JuanAI Casino API</h1>
-<p>For betting sites integrating JuanAI casino games. Each betting site receives a dedicated <code>jcas_...</code> API key and secret.</p>
-<div class="card"><b>Wallet model</b><p>JuanAI does not hold the player's authoritative balance. The betting site's wallet remains the source of truth. JuanAI calls the operator wallet for balance, debit, credit and refund/rollback.</p></div>
-<h2>Authentication</h2>
-<p>Send these headers on every request:</p>
-<pre>X-JuanAI-Casino-Key: jcas_...
-X-JuanAI-Timestamp: 1760000000
-X-JuanAI-Signature: HMAC_SHA256(secret, timestamp + "." + rawBody)</pre>
-<p>For GET requests the raw body is empty. Reject timestamps older than 5 minutes.</p>
-<h2>Endpoints</h2>
-<pre>GET  /api/v1/casino/games
-GET  /api/v1/casino/balance?playerId=PLAYER_ID
-POST /api/v1/casino/session
-POST /api/v1/casino/bet
-GET  /api/v1/casino/bet/:betId
-POST /api/v1/casino/bet/:betId/cashout
-GET  /api/v1/casino/history?playerId=PLAYER_ID&amp;limit=50</pre>
-<h2>Create session</h2>
-<pre>POST /api/v1/casino/session
-{"playerId":"player-123","username":"demo"}</pre>
-<p>The response includes a signed JuanAI user token and the current balance read from the betting site's wallet.</p>
-<h2>Place bet</h2>
-<pre>POST /api/v1/casino/bet
-{"gameId":"aviator","playerId":"player-123","slot":1,"stake":100}</pre>
-<p>JuanAI first requests a real debit from the betting site's wallet. A game bet is not accepted when that debit is rejected.</p>
-<h2>Win and cashout</h2>
-<p>When a bet wins, JuanAI requests a credit from the same betting-site wallet. If the bet cannot be placed after a successful debit, JuanAI requests a refund. Transaction references are used for idempotency by the wallet integration.</p>
-<h2>Credential separation</h2>
-<p><code>jcas_...</code> credentials work only with Casino API routes. They cannot authenticate Game API routes or the legacy <code>jsk_...</code> API.</p>
-</main></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JuanAI Casino API</title><style>body{font-family:Inter,system-ui,sans-serif;background:#0b0d14;color:#eef1f7;margin:0;padding:24px;line-height:1.6}main{max-width:980px;margin:auto}h1,h2{margin-top:28px}.card{background:#151824;border:1px solid #2a2f42;border-radius:14px;padding:18px;margin:14px 0}code,pre{background:#0f121b;border-radius:8px}code{padding:2px 5px}pre{padding:14px;overflow:auto;border:1px solid #252a3a}a{color:#8b7cff}.tag{display:inline-block;padding:4px 8px;border-radius:8px;background:#22283a;margin-right:6px;font-size:12px}</style></head><body><main><p><a href="/">← JuanAI</a></p><h1>🎰 JuanAI Casino API</h1><p><span class="tag">Public documentation</span><span class="tag">No secret required to read</span></p><div class="card"><h2>Purpose</h2><p>For casino/betting operators connecting their own player wallet to JuanAI casino games. JuanAI is the integration layer; the operator remains the authority for player funds.</p></div><div class="card"><h2>Credentials</h2><p>Casino operators use a separate credential pair:</p><pre>API key: jcas_...
+API secret: jcas_secret_...</pre><p>These credentials are not the football <code>jsk_...</code> keys and are not Game API credentials.</p></div><div class="card"><h2>Wallet ownership</h2><p>The operator's wallet is authoritative. JuanAI must call the operator wallet for balance, debit, credit, refund and rollback. JuanAI does not become the player's balance ledger.</p></div><div class="card"><h2>Core API</h2><pre>POST /api/v1/casino/session
+GET  /api/v1/casino/games
+POST /api/v1/casino/wallet/balance
+POST /api/v1/casino/wallet/debit
+POST /api/v1/casino/wallet/credit
+POST /api/v1/casino/wallet/refund
+POST /api/v1/casino/wallet/rollback</pre></div><div class="card"><h2>Security</h2><p>Keep the secret server-side. Sign requests/callbacks with the configured HMAC secret. Use unique transaction IDs for idempotency. Never put the secret in browser JavaScript.</p></div><div class="card"><h2>Casino API Pro</h2><p>Casino API Pro is a separate provider integration inside JuanAI. Its credentials stay server-side. The provider session currency is controlled by <code>CASINO_API_PRO_CURRENCY</code>; this build defaults to <code>KES</code> and can automatically add that currency to the provider business account when permitted.</p></div></main></body></html>

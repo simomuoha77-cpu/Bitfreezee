@@ -128,6 +128,48 @@ async function apiRequest(method, path, body = null) {
   return response.body;
 }
 
+
+function extractAccountCurrencies(data) {
+  const candidates = [
+    data && data.currencies,
+    data && data.data && data.data.currencies,
+    data && data.games && data.games.currencies,
+    Array.isArray(data) && data.currencies,
+  ];
+  for (const value of candidates) {
+    if (Array.isArray(value)) {
+      return value.map(v => String(v).toUpperCase()).filter(Boolean);
+    }
+  }
+  return null;
+}
+
+async function ensureCurrency(currency) {
+  const wanted = String(currency || '').toUpperCase();
+  if (!wanted) throw new Error('currency is required');
+
+  const games = await apiRequest('GET', '/games');
+  const current = extractAccountCurrencies(games);
+  if (current && current.includes(wanted)) return current;
+
+  // The provider's PATCH replaces the whole list, so never guess an existing
+  // currency. If GET /games does not expose the list in this account/version,
+  // use an explicit env list supplied by the operator.
+  const configured = String(process.env.CASINO_API_PRO_ACCOUNT_CURRENCIES || '')
+    .split(',').map(v => v.trim().toUpperCase()).filter(Boolean);
+  const base = current || configured;
+  if (!base.length) {
+    const e = new Error('KES is not enabled on Casino API Pro. Set CASINO_API_PRO_ACCOUNT_CURRENCIES to the full currency list for the account (for example KES,USD), then restart JuanAI.');
+    e.code = 'CURRENCY_CONFIGURATION_REQUIRED';
+    e.statusCode = 502;
+    throw e;
+  }
+
+  const merged = Array.from(new Set([...base, wanted]));
+  await apiRequest('PATCH', '/business', { currencies: merged });
+  return merged;
+}
+
 async function listGames() {
   return apiRequest('GET', '/games');
 }
@@ -137,10 +179,15 @@ async function createSession({ gameId, playerId, currency, ttlSeconds, playerNam
   if (!playerId) throw new Error('playerId is required');
   if (!currency) throw new Error('currency is required');
 
+  const sessionCurrency = String(currency).toUpperCase();
+  if (String(process.env.CASINO_API_PRO_AUTO_ENABLE_CURRENCY || 'true').toLowerCase() === 'true') {
+    await ensureCurrency(sessionCurrency);
+  }
+
   const body = {
     game_id: String(gameId),
     player_id: String(playerId),
-    currency: String(currency).toUpperCase(),
+    currency: sessionCurrency,
   };
   if (ttlSeconds != null) body.ttl_seconds = Number(ttlSeconds);
   if (playerName) body.player_name = String(playerName).slice(0, 40);
@@ -163,6 +210,7 @@ module.exports = {
   environment,
   getAccessToken,
   listGames,
+  ensureCurrency,
   createSession,
   getSession,
   closeSession,

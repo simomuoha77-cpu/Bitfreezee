@@ -634,75 +634,15 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
           <div id="apiKeysList"><div style="color:var(--tm);font-size:12px">Loading...</div></div>
         </div>
 
-        <!-- API Docs -->
+        <!-- Partner API Documentation -->
         <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
-          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-book" style="color:var(--acc)"></i> API Documentation</div>
-          <div style="font-size:12px;color:var(--t2);line-height:1.8;margin-bottom:12px">
-            This calls JuanAi's real backend server (<code>server.js</code>) over plain HTTP — works from any server, including BetaKE's, since it's a normal network request instead of browser-only <code>localStorage</code>.
+          <div style="font-size:13px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-book" style="color:var(--acc)"></i> JuanAI Partner API Documentation</div>
+          <div style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:14px">JuanAI now has two separate partner APIs. Casino operators use <b>Casino API</b> credentials; game providers use <b>Game API</b> credentials. Their keys and secrets are separate. Player money stays in the operator's wallet.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+            <a href="/docs/casino-api.html" target="_blank" rel="noopener" style="display:block;text-decoration:none;background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:16px;color:var(--t1)"><div style="font-weight:800;font-size:14px;margin-bottom:6px">🎰 Casino API</div><div style="font-size:11px;color:var(--t2);line-height:1.6">For casino/betting operators. Separate <code>jcas_</code> API key and secret, wallet integration, sessions, balance/debit/credit/refund/rollback.</div><div style="margin-top:10px;color:var(--acc);font-size:12px;font-weight:700">Open Casino API docs →</div></a>
+            <a href="/docs/game-api.html" target="_blank" rel="noopener" style="display:block;text-decoration:none;background:var(--bg3);border:1px solid var(--bdr);border-radius:12px;padding:16px;color:var(--t1)"><div style="font-weight:800;font-size:14px;margin-bottom:6px">🎮 Game API</div><div style="font-size:11px;color:var(--t2);line-height:1.6">For game providers. Separate <code>jgam_</code> API key and secret, game registration, callbacks, launch and settlement contracts.</div><div style="margin-top:10px;color:var(--acc);font-size:12px;font-weight:700">Open Game API docs →</div></a>
           </div>
-          <div style="background:var(--bg3);border-radius:10px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#c9d1d9;line-height:1.8;overflow-x:auto">
-// From BetaKE's Node.js backend (or any server):<br>
-const API_KEY = 'jsk_xxxxxxxxxxxxxxxx';<br>
-const JUANAI_URL = 'https://your-juanai-domain.com'; // or http://localhost:3000 for local dev<br><br>
-async function getJuanAiFixtures(days) {<br>
-&nbsp;&nbsp;const resp = await fetch(`${JUANAI_URL}/api/fixtures?key=${API_KEY}&amp;days=${days}`);<br>
-&nbsp;&nbsp;if (!resp.ok) throw new Error('JuanAi API error: ' + resp.status);<br>
-&nbsp;&nbsp;const data = await resp.json();<br>
-&nbsp;&nbsp;return data.matches || [];<br>
-}<br><br>
-// Each match has:<br>
-// match.homeTeam, match.awayTeam<br>
-// match.utcDate, match.status — one of SCHEDULED, IN_PLAY, PAUSED,<br>
-//   FINISHED, or AWAITING_RESULT (match should be over by now, but no<br>
-//   confirmed final score has arrived yet — do NOT treat this the same as<br>
-//   FINISHED for settlement purposes; match.score will be null while in<br>
-//   this state, precisely so it can't be mistaken for a real result)<br>
-// match.minute — current match minute if IN_PLAY (null otherwise)<br>
-// match.minuteIsEstimated — true if match.minute is an ESTIMATE (odds-api.io<br>
-//   sourced matches don't have a real match clock, only kickoff time — see<br>
-//   note below). false/absent means it's a real minute from football-data.org.<br>
-//   Show a "~" prefix or similar when true, so users know it's approximate.<br>
-// match.competition<br>
-// match.score.fullTime.home, match.score.fullTime.away — final/current score<br>
-// match.score.halfTime.home, match.score.halfTime.away — half-time score,<br>
-//   when available. Present for football-data.org matches once the match<br>
-//   reaches half-time (null before then). For odds-api.io matches this is<br>
-//   populated on a best-effort basis and may be null more often — always<br>
-//   check for null before using it to settle a First Half market.<br>
-// match.aiOdds.homeWin, match.aiOdds.draw, match.aiOdds.awayWin<br>
-// match.aiOdds.over25, match.aiOdds.under25<br>
-// match.aiOdds.btts, match.aiOdds.bttsNo<br>
-// match.aiOdds.dc_home_draw, match.aiOdds.dc_home_away, match.aiOdds.dc_draw_away<br>
-// match.aiOdds.handicap — { line, home, away, isRealMarketOdds } or absent.<br>
-//   ONLY ever present when a real bookmaker (odds-api.io) actually priced a<br>
-//   handicap/spread line for this match — there is no AI-estimated fallback<br>
-//   for this field. Absent/undefined means no real handicap is available<br>
-//   for this match right now; don't assume one exists.<br>
-// match.aiPrediction, match.aiConfidence<br>
-// match.aiAnalysis, match.aiXG, match.aiValueBet<br>
-// match.aiOdds.isRealMarketOdds — true = real bookmaker price (safe for<br>
-//   real-money bets), false/absent = AI estimate (NOT safe for real-money<br>
-//   bets). Pass &realOddsOnly=1 on the fetch URL to have this filtered<br>
-//   server-side automatically.<br><br>
-// ⚠️ match.aiOdds are AI-generated predictions, not real bookmaker odds,<br>
-// UNLESS aiOdds.isRealMarketOdds is true. Label accordingly if shown to end users.
-          </div>
-        </div>
-
-        <!-- Integration Example -->
-        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px">
-          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-code" style="color:var(--acc)"></i> Full Usage Example</div>
-          <div style="background:var(--bg3);border-radius:10px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#c9d1d9;line-height:1.8;overflow-x:auto">
-// In BetaKE's Express route, e.g. GET /games/today:<br>
-app.get('/games/today', async (req, res) => {<br>
-&nbsp;&nbsp;try {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;const games = await getJuanAiFixtures(0);<br>
-&nbsp;&nbsp;&nbsp;&nbsp;res.json({ games });<br>
-&nbsp;&nbsp;} catch (e) {<br>
-&nbsp;&nbsp;&nbsp;&nbsp;res.status(502).json({ error: 'Could not reach JuanAi' });<br>
-&nbsp;&nbsp;}<br>
-});
-          </div>
+          <div style="margin-top:12px;font-size:11px;color:var(--tm)">Documentation is public and does not require a JuanAI API key or Casino API Pro secret.</div>
         </div>
       </div>
     </div>
@@ -2595,7 +2535,7 @@ async function launchCasinoApiProGame(gameId){
       throw new Error(result.message || ('HTTP '+resp.status));
     }
 
-    var launchUrl=result.url || result.launchUrl || result.gameUrl;
+    var launchUrl=result.url || result.launchUrl || result.gameUrl || (result.session && (result.session.launch_url || result.session.launchUrl || result.session.gameUrl));
     if(!launchUrl)throw new Error('Casino API Pro returned no launch URL');
 
     window.open(launchUrl,'_blank','noopener');
