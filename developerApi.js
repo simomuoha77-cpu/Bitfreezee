@@ -88,11 +88,49 @@ router.get('/football/competitions', requireDeveloperApi('football'), async (req
 });
 
 // ── Casino Developer API ──────────────────────────────────────────────
-// This is deliberately JuanAi's own casino layer: Aviator + JetX and the
-// partner wallet flow. AS Tech catalogue/demo endpoints remain separate and
-// are not used by SafariBet's JuanAi casino integration.
+// Casino catalogue exposed to partners. JuanAi-owned Aviator/JetX are
+// real-money capable through the partner wallet flow. AS Tech catalogue
+// games are also exposed here exactly as JuanAi exposes them in its Casino
+// page, but their current public integration mode is DEMO only.
+// SafariBet must receive the complete JuanAi catalogue, not a hard-coded
+// Aviator/JetX-only list.
 router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
-  try { return res.json({ success: true, data: casinoIntegration.listGames() }); }
+  try {
+    const ownGames = casinoIntegration.listGames().map(g => ({
+      ...g,
+      source: 'juanai',
+      launchMode: 'real-money',
+    }));
+    let asTechGames = [];
+    try {
+      const catalogue = await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
+      asTechGames = (catalogue?.games || []).map(g => ({
+        id: String(g.id),
+        gameId: String(g.id),
+        name: String(g.name || g.title || g.id),
+        title: String(g.title || g.name || g.id),
+        category: String(g.category || 'casino'),
+        thumbnail: g.image || null,
+        image: g.image || null,
+        gameUrl: null,
+        status: 'active',
+        rtp: null,
+        providerCode: g.providerCode || null,
+        source: 'as-tech',
+        launchMode: 'demo',
+      }));
+    } catch (e) {
+      console.warn('[developer-api] AS Tech catalogue unavailable:', e.message);
+    }
+    const seen = new Set();
+    const data = [...ownGames, ...asTechGames].filter(g => {
+      const id = String(g.id || g.gameId);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    return res.json({ success: true, count: data.length, data, sources: { juanai: ownGames.length, asTech: asTechGames.length } });
+  }
   catch (e) { console.error('[developer-api] casino games:', e.message); return error(res, 500, 'INTERNAL_ERROR', 'Unable to load JuanAi casino games.'); }
 });
 
