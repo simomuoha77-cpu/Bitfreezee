@@ -33,43 +33,19 @@ function fnUrl(id) {
   return `${BASE_URL}${SERVER_FN_BASE}${id}`;
 }
 
-function toSerovalJson(value, refs = new Map(), next = { id: 0 }) {
-  // Minimal Seroval cross-JSON encoder for the plain JSON values used by
-  // these public AS Tech server functions. This is the wire format expected
-  // by TanStack Start's /_serverFn RPC endpoint; sending {data: ...} directly
-  // produces "Seroval Error (step: 3)".
-  if (value === null) return { t: 0 };
-  if (typeof value === 'string') return { t: 1, s: value };
-  if (typeof value === 'boolean') return { t: 2, b: value };
-  if (typeof value === 'number') return Number.isInteger(value)
-    ? { t: 3, n: value }
-    : { t: 4, n: value };
-  if (Array.isArray(value)) {
-    const i = next.id++;
-    return { t: 9, i, p: { v: value.map(v => toSerovalJson(v, refs, next)), o: 0 } };
-  }
-  if (typeof value === 'object') {
-    const i = next.id++;
-    const keys = Object.keys(value);
-    return {
-      t: 10,
-      i,
-      p: {
-        k: keys,
-        v: keys.map(k => toSerovalJson(value[k], refs, next)),
-        o: 0,
-      },
-    };
-  }
-  return { t: 0 };
+let serovalModulePromise = null;
+
+async function getSeroval() {
+  if (!serovalModulePromise) serovalModulePromise = import('seroval');
+  return serovalModulePromise;
 }
 
-function makeServerFnPayload(data) {
-  return JSON.stringify({
-    t: toSerovalJson({ data }),
-    f: 63,
-    m: [],
-  });
+async function makeServerFnPayload(data) {
+  // Use the real Seroval implementation used by TanStack Start instead of
+  // approximating its wire format. TanStack Start deserializes POST server
+  // function bodies with seroval.fromJSON().
+  const { toCrossJSON } = await getSeroval();
+  return JSON.stringify(toCrossJSON({ data }));
 }
 
 function findFirstUrl(value, seen = new Set()) {
@@ -95,42 +71,23 @@ function findFirstUrl(value, seen = new Set()) {
   return null;
 }
 
-function decodeServerFnResult(value) {
+async function decodeServerFnResult(value) {
   if (!value || typeof value !== 'object') return value;
-  // AS Tech/TanStack normally returns a Seroval cross-JSON value. Decode the
-  // common primitive/object/array nodes. If a future response shape changes,
-  // preserve the raw object so the caller can still inspect it.
-  const refs = new Map();
-  const decode = node => {
-    if (!node || typeof node !== 'object') return node;
-    if (node.t === 0) return null;
-    if (node.t === 1) return node.s;
-    if (node.t === 2) return node.b;
-    if (node.t === 3 || node.t === 4) return node.n;
-    if (node.t === 9 && node.p?.v) {
-      const arr = [];
-      if (Number.isInteger(node.i)) refs.set(node.i, arr);
-      for (const v of node.p.v) arr.push(decode(v));
-      return arr;
+  try {
+    const { fromJSON } = await getSeroval();
+    if (value.t !== undefined && value.f !== undefined) {
+      return fromJSON(value);
     }
-    if (node.t === 10 && node.p?.k && node.p?.v) {
-      const obj = {};
-      if (Number.isInteger(node.i)) refs.set(node.i, obj);
-      node.p.k.forEach((k, idx) => { obj[k] = decode(node.p.v[idx]); });
-      return obj;
-    }
-    return node;
-  };
-  if (value.t !== undefined && value.f !== undefined && value.t && typeof value.t === 'object') {
-    return decode(value.t);
+  } catch (_) {
+    // Preserve the raw response if it is not a Seroval JSON envelope.
   }
   return value;
 }
 
-function requestJson(method, id, payload) {
+async function requestJson(method, id, payload) {
+  const body = method === 'POST' ? await makeServerFnPayload(payload) : '';
   return new Promise((resolve, reject) => {
     const url = new URL(fnUrl(id));
-    const body = method === 'POST' ? makeServerFnPayload(payload) : '';
     // AS Tech uses TanStack Start server functions. These are same-origin RPC
     // requests and use Seroval serialization on the wire.
     let refererPath = '/providers';
@@ -175,7 +132,7 @@ function requestJson(method, id, payload) {
           err.providerBody = parsed || raw;
           return reject(err);
         }
-        resolve(decodeServerFnResult(parsed));
+        decodeServerFnResult(parsed).then(resolve, reject);
       });
     });
     req.on('timeout', () => req.destroy(new Error('AS Tech request timed out')));

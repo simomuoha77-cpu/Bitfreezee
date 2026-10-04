@@ -11,6 +11,7 @@
     "cors": "^2.8.5",
     "compression": "^1.7.4",
     "dotenv": "^16.4.5",
-    "mongodb": "^6.9.0"
+    "mongodb": "^6.9.0",
+    "seroval": "^1.6.4"
   }
 }
