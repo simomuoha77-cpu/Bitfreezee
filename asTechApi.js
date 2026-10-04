@@ -44,8 +44,11 @@ async function makeServerFnPayload(data) {
   // Use the real Seroval implementation used by TanStack Start instead of
   // approximating its wire format. TanStack Start deserializes POST server
   // function bodies with seroval.fromJSON().
-  const { toCrossJSON } = await getSeroval();
-  return JSON.stringify(toCrossJSON({ data }));
+  const { toJSON } = await getSeroval();
+  // TanStack Start's client POST transport uses seroval.toJSON({ data }).
+  // Do NOT use toCrossJSON here: the Start server calls fromJSON() and rejects
+  // the cross-JSON shape with `Seroval Error (step: 3)`.
+  return JSON.stringify(toJSON({ data }));
 }
 
 function findFirstUrl(value, seen = new Set()) {
