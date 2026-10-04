@@ -333,6 +333,32 @@ async function listProviderGames(providerCode, { search = '', page = 1, force = 
       pageSize: Number(raw?.pageSize ?? games.length) || games.length,
       source: 'as-tech-public',
     };
+
+    // A successful HTTP 200 from the AS Tech RPC can still contain an empty
+    // catalogue when its internal server-function response changes shape.
+    // Do not let that blank the JuanAi lobby. For the public Spribe catalogue,
+    // fall back to the public provider page / verified catalogue snapshot.
+    if (!games.length && page === 1 && !search) {
+      if (providerCode.toLowerCase() === 'spribe') {
+        try {
+          const pageValue = parseProviderPageHtml(
+            await requestText(`/providers/${encodeURIComponent(providerCode)}`),
+            providerCode,
+          );
+          if (pageValue.games.length) value = pageValue;
+        } catch (_) {}
+        if (!value.games.length) {
+          value = {
+            provider: { code: 'spribe', name: 'Spribe', category: 'other' },
+            games: SPRIBE_FALLBACK_GAMES,
+            total: SPRIBE_FALLBACK_GAMES.length,
+            page: 1,
+            pageSize: SPRIBE_FALLBACK_GAMES.length,
+            source: 'as-tech-public-fallback',
+          };
+        }
+      }
+    }
   } catch (err) {
     if (page !== 1 || search) throw err;
     value = parseProviderPageHtml(await requestText(`/providers/${encodeURIComponent(providerCode)}`), providerCode);

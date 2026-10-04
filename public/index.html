@@ -2529,6 +2529,12 @@ async function loadAsTechGames(force){
     var j=await r.json();
     if(!r.ok||!j.success)throw new Error(j.message||('HTTP '+r.status));
     var games=(j.data&&j.data.games)||[];
+    // The backend is expected to provide the AS Tech public catalogue. If an
+    // older deployment/cache returns an empty 200, force one fresh request
+    // before declaring the lobby empty.
+    if(!games.length && !force && !search){
+      return loadAsTechGames(true);
+    }
     grid.innerHTML='';
     games.forEach(function(g){
       var card=document.createElement('div');
