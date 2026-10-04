@@ -33,15 +33,106 @@ function fnUrl(id) {
   return `${BASE_URL}${SERVER_FN_BASE}${id}`;
 }
 
+function toSerovalJson(value, refs = new Map(), next = { id: 0 }) {
+  // Minimal Seroval cross-JSON encoder for the plain JSON values used by
+  // these public AS Tech server functions. This is the wire format expected
+  // by TanStack Start's /_serverFn RPC endpoint; sending {data: ...} directly
+  // produces "Seroval Error (step: 3)".
+  if (value === null) return { t: 0 };
+  if (typeof value === 'string') return { t: 1, s: value };
+  if (typeof value === 'boolean') return { t: 2, b: value };
+  if (typeof value === 'number') return Number.isInteger(value)
+    ? { t: 3, n: value }
+    : { t: 4, n: value };
+  if (Array.isArray(value)) {
+    const i = next.id++;
+    return { t: 9, i, p: { v: value.map(v => toSerovalJson(v, refs, next)), o: 0 } };
+  }
+  if (typeof value === 'object') {
+    const i = next.id++;
+    const keys = Object.keys(value);
+    return {
+      t: 10,
+      i,
+      p: {
+        k: keys,
+        v: keys.map(k => toSerovalJson(value[k], refs, next)),
+        o: 0,
+      },
+    };
+  }
+  return { t: 0 };
+}
+
+function makeServerFnPayload(data) {
+  return JSON.stringify({
+    t: toSerovalJson({ data }),
+    f: 63,
+    m: [],
+  });
+}
+
+function findFirstUrl(value, seen = new Set()) {
+  if (typeof value === 'string') {
+    return /^https?:\/\//i.test(value) ? value : null;
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const hit = findFirstUrl(item, seen);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (/^(url|launchUrl|gameUrl|href)$/i.test(key) && typeof item === 'string' && /^https?:\/\//i.test(item)) {
+      return item;
+    }
+    const hit = findFirstUrl(item, seen);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function decodeServerFnResult(value) {
+  if (!value || typeof value !== 'object') return value;
+  // AS Tech/TanStack normally returns a Seroval cross-JSON value. Decode the
+  // common primitive/object/array nodes. If a future response shape changes,
+  // preserve the raw object so the caller can still inspect it.
+  const refs = new Map();
+  const decode = node => {
+    if (!node || typeof node !== 'object') return node;
+    if (node.t === 0) return null;
+    if (node.t === 1) return node.s;
+    if (node.t === 2) return node.b;
+    if (node.t === 3 || node.t === 4) return node.n;
+    if (node.t === 9 && node.p?.v) {
+      const arr = [];
+      if (Number.isInteger(node.i)) refs.set(node.i, arr);
+      for (const v of node.p.v) arr.push(decode(v));
+      return arr;
+    }
+    if (node.t === 10 && node.p?.k && node.p?.v) {
+      const obj = {};
+      if (Number.isInteger(node.i)) refs.set(node.i, obj);
+      node.p.k.forEach((k, idx) => { obj[k] = decode(node.p.v[idx]); });
+      return obj;
+    }
+    return node;
+  };
+  if (value.t !== undefined && value.f !== undefined && value.t && typeof value.t === 'object') {
+    return decode(value.t);
+  }
+  return value;
+}
+
 function requestJson(method, id, payload) {
   return new Promise((resolve, reject) => {
     const url = new URL(fnUrl(id));
-    const body = method === 'POST' ? JSON.stringify(payload === undefined ? {} : { data: payload }) : '';
-    // AS Tech's TanStack Start server functions are same-origin RPCs.
-    // Their CSRF middleware validates Origin/Referer (and browser fetch
-    // metadata), so reproduce the normal same-origin request metadata.
-    // This is not an authentication bypass; it is the same request context
-    // used by AS Tech's own public provider page.
+    const body = method === 'POST' ? makeServerFnPayload(payload) : '';
+    // AS Tech uses TanStack Start server functions. These are same-origin RPC
+    // requests and use Seroval serialization on the wire.
     let refererPath = '/providers';
     if (method === 'POST' && id === GAMES_FN && payload?.providerCode) {
       refererPath = `/providers/${encodeURIComponent(String(payload.providerCode))}`;
@@ -50,7 +141,7 @@ function requestJson(method, id, payload) {
       refererPath = `/providers/${encodeURIComponent(providerCode || 'spribe')}`;
     }
     const headers = {
-      Accept: 'application/x-tss-framed, application/x-ndjson, application/json',
+      Accept: 'application/json, application/x-ndjson, application/x-tss-framed, text/plain, */*',
       'x-tsr-serverFn': 'true',
       Origin: BASE_URL,
       Referer: `${BASE_URL}${refererPath}`,
@@ -84,7 +175,7 @@ function requestJson(method, id, payload) {
           err.providerBody = parsed || raw;
           return reject(err);
         }
-        resolve(parsed);
+        resolve(decodeServerFnResult(parsed));
       });
     });
     req.on('timeout', () => req.destroy(new Error('AS Tech request timed out')));
@@ -93,7 +184,6 @@ function requestJson(method, id, payload) {
     req.end();
   });
 }
-
 function unwrap(value) {
   if (!value || typeof value !== 'object') return value;
   if (value.data !== undefined) return value.data;
