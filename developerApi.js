@@ -1,11 +1,12 @@
 // JuanAi Developer API: product-scoped Football/Casino credentials.
-// This layer is additive: existing /api/* routes and legacy API keys remain
-// untouched for backward compatibility.
-const crypto = require('crypto');
+// Existing Football routes are unchanged. Casino routes below expose only
+// JuanAi's own Aviator/JetX real-money partner layer and never AS Tech secrets.
 const express = require('express');
 const db = require('./db');
 const scheduler = require('./scheduler');
 const asTechApi = require('./asTechApi');
+const casino = require('./casino');
+const casinoIntegration = require('./casinoIntegration');
 
 const router = express.Router();
 const WINDOW_MS = Number(process.env.DEVELOPER_API_RATE_WINDOW_MS || 60_000);
@@ -49,6 +50,7 @@ function requireDeveloperApi(product) {
         return error(res, 401, 'INVALID_API_CREDENTIALS', 'The API credentials are invalid.');
       }
       req.developerCredential = credential;
+      req.developerSecret = secret;
       return rateLimit(req, res, next);
     } catch (e) {
       console.error('[developer-api] auth failed:', e.message);
@@ -57,7 +59,7 @@ function requireDeveloperApi(product) {
   };
 }
 
-// Football API: exposes JuanAi-normalized fixture data, not upstream provider credentials.
+// Football API — unchanged.
 router.get('/football/fixtures', requireDeveloperApi('football'), async (req, res) => {
   try {
     const days = String(req.query.days ?? '0');
@@ -85,29 +87,99 @@ router.get('/football/competitions', requireDeveloperApi('football'), async (req
   }
 });
 
-// Casino API: these call the existing AS Tech integration; no provider credentials are exposed.
+// ── Casino Developer API ──────────────────────────────────────────────
+// This is deliberately JuanAi's own casino layer: Aviator + JetX and the
+// partner wallet flow. AS Tech catalogue/demo endpoints remain separate and
+// are not used by SafariBet's JuanAi casino integration.
+router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
+  try { return res.json({ success: true, data: casinoIntegration.listGames() }); }
+  catch (e) { console.error('[developer-api] casino games:', e.message); return error(res, 500, 'INTERNAL_ERROR', 'Unable to load JuanAi casino games.'); }
+});
+
+router.get('/casino/state/:gameId', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const gameId = String(req.params.gameId || '').toLowerCase();
+    if (!casinoIntegration.getGame(gameId)) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Casino game not found.');
+    const state = casino.getPublicState(gameId, req.developerCredential.apiKey, null);
+    delete state.balance;
+    delete state.bets;
+    return res.json({ success: true, gameId, data: state });
+  } catch (e) { return error(res, 500, 'INTERNAL_ERROR', 'Unable to load casino game state.'); }
+});
+
+router.get('/casino/players/:gameId', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const gameId = String(req.params.gameId || '').toLowerCase();
+    if (!casinoIntegration.getGame(gameId)) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Casino game not found.');
+    return res.json({ success: true, data: casino.getPlayersView(gameId) });
+  } catch (e) { return error(res, 500, 'INTERNAL_ERROR', 'Unable to load casino players.'); }
+});
+
+router.post('/casino/wallet/register', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const baseUrl = String(req.body?.baseUrl || '').trim().replace(/\/+$/, '');
+    if (!/^https:\/\//i.test(baseUrl)) return error(res, 400, 'INVALID_REQUEST', 'Wallet baseUrl must use HTTPS.');
+    // The Developer API secret is also used as the HMAC secret for the
+    // server-to-server wallet channel. It never leaves the JuanAi backend.
+    await casinoIntegration.registerWallet(req.developerCredential.apiKey, baseUrl, req.developerSecret);
+    return res.json({ success: true, registered: true, baseUrl });
+  } catch (e) { console.error('[developer-api] wallet register:', e.message); return error(res, 500, 'INTERNAL_ERROR', 'Unable to register the casino wallet.'); }
+});
+
+router.get('/casino/balance', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return error(res, 400, 'MISSING_PARAMETER', 'userId is required.');
+    const data = await casinoIntegration.getBalance(req.developerCredential.apiKey, userId);
+    return res.status(data?.success === false ? 502 : 200).json(data);
+  } catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load the player balance.'); }
+});
+
+router.post('/casino/bet', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || '').trim();
+    const gameId = String(req.body?.gameId || '').toLowerCase();
+    const slot = Number(req.body?.slot);
+    const stake = Number(req.body?.stake);
+    if (!userId || !gameId) return error(res, 400, 'MISSING_PARAMETER', 'userId and gameId are required.');
+    if (![1, 2].includes(slot)) return error(res, 400, 'INVALID_REQUEST', 'slot must be 1 or 2.');
+    if (!Number.isFinite(stake) || stake < 1 || stake > 50000) return error(res, 400, 'INVALID_REQUEST', 'stake must be between KES 1 and KES 50,000.');
+    const result = await casinoIntegration.placeBet(req.developerCredential.apiKey, userId, gameId, slot, stake);
+    return res.status(result?.success ? 200 : 400).json(result);
+  } catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to place the casino bet.'); }
+});
+
+router.get('/casino/bet/:betId', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const result = await casinoIntegration.getBetResult(req.developerCredential.apiKey, req.params.betId);
+    if (!result?.success) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Bet not found.');
+    const userId = String(req.query.userId || '').trim();
+    if (userId && String(result.userId) !== userId) return error(res, 403, 'INSUFFICIENT_SCOPE', 'This bet does not belong to the specified user.');
+    return res.json(result);
+  } catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load the casino bet.'); }
+});
+
+router.post('/casino/bet/:betId/cashout', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || '').trim();
+    const existing = await casinoIntegration.getBetResult(req.developerCredential.apiKey, req.params.betId);
+    if (!existing?.success) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Bet not found.');
+    if (!userId || String(existing.userId) !== userId) return error(res, 403, 'INSUFFICIENT_SCOPE', 'This bet does not belong to the specified user.');
+    const result = await casinoIntegration.cashOut(req.developerCredential.apiKey, req.params.betId);
+    return res.status(result?.success ? 200 : 400).json(result);
+  } catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to cash out the casino bet.'); }
+});
+
+// Existing AS Tech Developer API endpoints remain available for other clients;
+// SafariBet's JuanAi casino adapter does not use them.
 router.get('/casino/providers', requireDeveloperApi('casino'), async (req, res) => {
   try { return res.json({ success: true, data: await asTechApi.listProviders({ force: req.query.refresh === '1' }) }); }
   catch (e) { console.error('[developer-api] casino providers:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino providers.'); }
 });
-
-router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
-  try {
-    const providerCode = String(req.query.providerCode || '').trim();
-    const search = String(req.query.search || '');
-    const page = Number(req.query.page || 1);
-    const data = providerCode
-      ? await asTechApi.listProviderGames(providerCode, { search, page, force: req.query.refresh === '1' })
-      : await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
-    return res.json({ success: true, data });
-  } catch (e) { console.error('[developer-api] casino games:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino games.'); }
-});
-
 router.get('/casino/all-games', requireDeveloperApi('casino'), async (req, res) => {
   try { return res.json({ success: true, data: await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true }) }); }
-  catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino catalogue.'); }
+  catch (e) { console.error('[developer-api] casino all-games:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino catalogue.'); }
 });
-
 router.post('/casino/demo-launch', requireDeveloperApi('casino'), async (req, res) => {
   try {
     if (!req.body?.gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
@@ -116,9 +188,6 @@ router.post('/casino/demo-launch', requireDeveloperApi('casino'), async (req, re
   } catch (e) { console.error('[developer-api] demo launch:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to launch the casino demo.'); }
 });
 
-// Explicitly do not fake production wallet endpoints. The existing wallet bridge remains
-// the source of truth for current integrations; these routes can be added when production
-// provider callbacks are actually implemented and tested.
 router.all('/casino/wallet/:operation', requireDeveloperApi('casino'), (req, res) => {
   return error(res, 501, 'NOT_IMPLEMENTED', `Production wallet operation '${req.params.operation}' is not implemented in this build.`);
 });
