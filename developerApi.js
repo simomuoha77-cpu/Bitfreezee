@@ -7,6 +7,7 @@ const scheduler = require('./scheduler');
 const asTechApi = require('./asTechApi');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
+const userToken = require('./userToken');
 
 const router = express.Router();
 const WINDOW_MS = Number(process.env.DEVELOPER_API_RATE_WINDOW_MS || 60_000);
@@ -230,25 +231,48 @@ router.get('/casino/all-games', requireDeveloperApi('casino'), async (req, res) 
 router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) => {
   try {
     const gameId = String(req.body?.gameId || '').trim();
+    const userId = String(req.body?.userId || '').trim();
+    const username = String(req.body?.username || userId).trim();
     if (!gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
 
+    // JuanAi-owned games are the real-money games. Return the ACTUAL JuanAi
+    // game page instead of asking the partner to recreate Aviator/JetX.
+    // The developer API key is safe to expose to the game page; the secret
+    // never leaves this server. A signed user token binds the launch to the
+    // authenticated SafariBet user.
+    const own = casinoIntegration.getGame(gameId.toLowerCase());
+    if (own) {
+      if (!userId) return error(res, 400, 'MISSING_PARAMETER', 'userId is required for a real-money launch.');
+      if (!userToken.isConfigured()) return error(res, 503, 'NOT_CONFIGURED', 'JuanAi user-token signing is not configured.');
+      const utoken = userToken.sign(userId);
+      const host = String(process.env.JUANAI_PUBLIC_URL || '').replace(/\/+$/, '') || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
+      const path = String(own.gameUrl || `/casino/${gameId.toLowerCase()}.html`);
+      const sep = path.includes('?') ? '&' : '?';
+      const launchUrl = `${host}${path}${sep}key=${encodeURIComponent(req.developerCredential.apiKey)}&utoken=${encodeURIComponent(utoken)}`;
+      return res.json({
+        success: true,
+        mode: 'real-money',
+        realMoney: true,
+        game: {
+          id: own.id, name: own.name, category: own.category, providerCode: 'juanai',
+          image: own.thumbnail || null
+        },
+        launchUrl,
+        data: { launchUrl, sessionType: 'signed-user-token' }
+      });
+    }
+
+    // AS Tech games remain available through the JuanAi catalogue, but the
+    // public AS Tech integration is demo-only. Never label that as real money.
     const catalogue = await asTechApi.listAllGames({ force: false, allPages: true });
     const game = (catalogue.games || []).find(g => String(g.id) === gameId);
     if (!game) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Casino game is not available in the JuanAI catalogue.');
-
     const data = await asTechApi.launchDemo(gameId);
+    const launchUrl = data?.launchUrl || data?.url || data?.gameUrl || data?.data?.launchUrl || data?.data?.url || null;
     return res.json({
-      success: true,
-      mode: 'demo',
-      realMoney: false,
-      game: {
-        id: String(game.id),
-        name: game.title || game.name || game.id,
-        providerCode: game.providerCode || null,
-        category: game.category || 'casino',
-        image: game.image || null,
-      },
-      data,
+      success: true, mode: 'demo', realMoney: false,
+      game: { id: String(game.id), name: game.title || game.name || game.id, providerCode: game.providerCode || null, category: game.category || 'casino', image: game.image || null },
+      launchUrl, data
     });
   } catch (e) {
     console.error('[developer-api] casino launch:', e.message);
