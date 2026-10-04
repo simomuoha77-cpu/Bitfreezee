@@ -279,6 +279,9 @@ function normalizeGame(g, providerCode) {
     image: g.image ? String(g.image) : (g.thumbnail ? String(g.thumbnail) : null),
     source: 'as-tech',
     launchMode: 'demo',
+    realMoney: false,
+    demoLaunch: true,
+    launchEndpoint: '/api/developer/casino/launch',
     raw: g,
   };
 }

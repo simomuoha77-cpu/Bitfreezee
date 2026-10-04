@@ -118,8 +118,10 @@ router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
         rtp: null,
         providerCode: g.providerCode || null,
         source: 'as-tech',
-        launchMode: 'provider',
+        launchMode: 'demo',
         realMoney: false,
+        demoLaunch: true,
+        launchEndpoint: '/api/developer/casino/launch',
       }));
     } catch (e) {
       console.warn('[developer-api] AS Tech catalogue unavailable:', e.message);
@@ -220,16 +222,55 @@ router.get('/casino/all-games', requireDeveloperApi('casino'), async (req, res) 
   try { return res.json({ success: true, data: await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true }) }); }
   catch (e) { console.error('[developer-api] casino all-games:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino catalogue.'); }
 });
+// Universal launch endpoint for every game in the JuanAI Casino catalogue.
+// AS Tech's public integration currently provides a demo launch URL; this
+// endpoint deliberately does not pretend that a public demo is a real-money
+// provider session. SafariBet only needs the JuanAI credential pair and never
+// talks to AS Tech directly.
+router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) => {
+  try {
+    const gameId = String(req.body?.gameId || '').trim();
+    if (!gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
+
+    const catalogue = await asTechApi.listAllGames({ force: false, allPages: true });
+    const game = (catalogue.games || []).find(g => String(g.id) === gameId);
+    if (!game) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Casino game is not available in the JuanAI catalogue.');
+
+    const data = await asTechApi.launchDemo(gameId);
+    return res.json({
+      success: true,
+      mode: 'demo',
+      realMoney: false,
+      game: {
+        id: String(game.id),
+        name: game.title || game.name || game.id,
+        providerCode: game.providerCode || null,
+        category: game.category || 'casino',
+        image: game.image || null,
+      },
+      data,
+    });
+  } catch (e) {
+    console.error('[developer-api] casino launch:', e.message);
+    return error(res, 502, 'UPSTREAM_ERROR', 'Unable to launch the casino game.');
+  }
+});
+
+// Backward-compatible alias.
 router.post('/casino/demo-launch', requireDeveloperApi('casino'), async (req, res) => {
   try {
     if (!req.body?.gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
     const data = await asTechApi.launchDemo(req.body.gameId);
-    return res.json({ success: true, data, mode: 'demo' });
+    return res.json({ success: true, data, mode: 'demo', realMoney: false });
   } catch (e) { console.error('[developer-api] demo launch:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to launch the casino demo.'); }
 });
 
+// Do not expose a fake production wallet. A real-money AS Tech wallet bridge
+// requires the authorized provider contract/callback specification and must
+// be implemented against those signed callbacks. Returning 501 makes this
+// boundary explicit instead of silently accepting money operations.
 router.all('/casino/wallet/:operation', requireDeveloperApi('casino'), (req, res) => {
-  return error(res, 501, 'NOT_IMPLEMENTED', `Production wallet operation '${req.params.operation}' is not implemented in this build.`);
+  return error(res, 501, 'PROVIDER_WALLET_NOT_CONFIGURED', `Production wallet operation '${req.params.operation}' requires an authorized upstream casino wallet integration.`);
 });
 
 module.exports = { router, requireDeveloperApi };
