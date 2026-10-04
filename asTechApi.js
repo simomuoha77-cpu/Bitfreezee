@@ -37,10 +37,27 @@ function requestJson(method, id, payload) {
   return new Promise((resolve, reject) => {
     const url = new URL(fnUrl(id));
     const body = method === 'POST' ? JSON.stringify(payload === undefined ? {} : { data: payload }) : '';
+    // AS Tech's TanStack Start server functions are same-origin RPCs.
+    // Their CSRF middleware validates Origin/Referer (and browser fetch
+    // metadata), so reproduce the normal same-origin request metadata.
+    // This is not an authentication bypass; it is the same request context
+    // used by AS Tech's own public provider page.
+    let refererPath = '/providers';
+    if (method === 'POST' && id === GAMES_FN && payload?.providerCode) {
+      refererPath = `/providers/${encodeURIComponent(String(payload.providerCode))}`;
+    } else if (method === 'POST' && id === DEMO_LAUNCH_FN && payload?.gameId) {
+      const providerCode = String(payload.gameId).split(':')[0];
+      refererPath = `/providers/${encodeURIComponent(providerCode || 'spribe')}`;
+    }
     const headers = {
       Accept: 'application/x-tss-framed, application/x-ndjson, application/json',
       'x-tsr-serverFn': 'true',
-      'User-Agent': 'JuanAi-AS-Tech-Catalogue/1.0',
+      Origin: BASE_URL,
+      Referer: `${BASE_URL}${refererPath}`,
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Dest': 'empty',
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36',
     };
     if (body) {
       headers['Content-Type'] = 'application/json';
