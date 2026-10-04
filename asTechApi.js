@@ -412,8 +412,28 @@ async function listAllGames({ force = false, allPages = true } = {}) {
 
 async function launchDemo(gameId) {
   if (!gameId) throw new Error('gameId is required');
-  const raw = unwrap(await requestJson('POST', DEMO_LAUNCH_FN, { gameId: String(gameId) }));
-  return { ...raw, gameId: String(gameId), source: 'as-tech-public-demo' };
+
+  // The AS Tech server function can return the launch object nested inside
+  // its Seroval result envelope. Do not assume `url` is already top-level.
+  // The public AS Tech frontend consumes the function result as an object
+  // containing a URL, so normalize that URL for JuanAi's API response.
+  const decoded = await requestJson('POST', DEMO_LAUNCH_FN, { gameId: String(gameId) });
+  const raw = unwrap(decoded);
+  const url = findFirstUrl(raw) || findFirstUrl(decoded);
+
+  if (!url) {
+    const err = new Error('AS Tech returned no demo URL');
+    err.debugKeys = raw && typeof raw === 'object' ? Object.keys(raw).slice(0, 30) : [];
+    throw err;
+  }
+
+  return {
+    ...(raw && typeof raw === 'object' ? raw : {}),
+    url,
+    gameUrl: url,
+    gameId: String(gameId),
+    source: 'as-tech-public-demo',
+  };
 }
 
 module.exports = {
