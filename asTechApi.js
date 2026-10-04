@@ -24,6 +24,29 @@ const TIMEOUT_MS = Number(process.env.AS_TECH_TIMEOUT_MS || 15000);
 const CACHE_MS = Number(process.env.AS_TECH_CACHE_MS || 300000);
 const MAX_PAGE = Number(process.env.AS_TECH_MAX_PAGE || 1000);
 
+// Stable public fallback catalogue. These are the games currently rendered
+// on AS Tech's public Spribe page. It prevents the JuanAi lobby from going
+// blank if AS Tech changes its public RPC/SSR transport. It is catalogue data
+// only; launching still goes through AS Tech's public demo function.
+const SPRIBE_FALLBACK_GAMES = [
+  ['spribe:904','Goal','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/904/public'],
+  ['spribe:894','Keno','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/894/public'],
+  ['spribe:826','Hotline','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/826/public'],
+  ['spribe:775','Hi Lo','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/775/public'],
+  ['spribe:737','Aviator','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/737/public'],
+  ['spribe:723','Mini Roulette','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/723/public'],
+  ['spribe:635','Dice','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/635/public'],
+  ['spribe:5808','Trader','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/5808/public'],
+  ['spribe:551','Keno 80','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/551/public'],
+  ['spribe:478','Plinko','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/478/public'],
+  ['spribe:426','Mines','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/426/public'],
+  ['spribe:1019','Balloon','other','https://imagedelivery.net/nVyft9zNw2I0pNVtrnC1zA/1019/public'],
+  ['spribe:21205','Crystal Fall','slots',null],
+  ['spribe:1001213','Gates of Egypt','slots',null],
+  ['spribe:1001212','Neo Vegas','slots',null],
+  ['spribe:1001214','Pilot Chicken','slots',null],
+].map(([id,title,category,image]) => normalizeGame({id,title,category,image}, 'spribe'));
+
 const cache = {
   providers: { at: 0, value: null },
   games: new Map(),
@@ -274,6 +297,13 @@ async function listProviders({ force = false } = {}) {
     // catalogue. Use that as a non-authenticated fallback if the RPC layer
     // is unavailable to a server-to-server caller.
     value = await listProvidersFromHtml();
+    if (!value.providers.length) {
+      value = {
+        providers: [{ code: 'spribe', name: 'Spribe', category: 'other', gameCount: SPRIBE_FALLBACK_GAMES.length }],
+        total: 1,
+        source: 'as-tech-public-fallback',
+      };
+    }
   }
   cache.providers = { at: Date.now(), value };
   return value;
@@ -306,6 +336,18 @@ async function listProviderGames(providerCode, { search = '', page = 1, force = 
   } catch (err) {
     if (page !== 1 || search) throw err;
     value = parseProviderPageHtml(await requestText(`/providers/${encodeURIComponent(providerCode)}`), providerCode);
+    // If the SSR markup changed, keep the JuanAi lobby populated from the
+    // last verified public Spribe catalogue rather than showing zero games.
+    if (!value.games.length && providerCode.toLowerCase() === 'spribe') {
+      value = {
+        provider: { code: 'spribe', name: 'Spribe', category: 'other' },
+        games: SPRIBE_FALLBACK_GAMES,
+        total: SPRIBE_FALLBACK_GAMES.length,
+        page: 1,
+        pageSize: SPRIBE_FALLBACK_GAMES.length,
+        source: 'as-tech-public-fallback',
+      };
+    }
   }
   cache.games.set(key, { at: Date.now(), value });
   return value;
