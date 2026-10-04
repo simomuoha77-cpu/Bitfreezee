@@ -28,24 +28,16 @@ const sofaBetsData = require('./sofaBetsData');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
+const asTechApi = require('./asTechApi');
 const walletClient = require('./walletClient');
 const userToken = require('./userToken');
-const casinoApiPro = require('./casinoApiPro');
-const casinoApiProWallet = require('./casinoApiProWallet');
-const partnerApi = require('./partnerApi');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({
-  limit: '5mb',
-  // Casino API Pro HMAC wallet callbacks sign the exact raw JSON bytes.
-  // Keep a copy so verification is possible without changing the existing
-  // JSON parsing behavior used by the rest of JuanAi.
-  verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); }
-}));
+app.use(express.json({ limit: '5mb' }));
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -114,114 +106,6 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
-
-
-// ── CASINO API PRO (external game provider) ─────────────────────────────
-// This is deliberately separate from casino.js / the existing Aviator and
-// JetX pages. Those games are NOT modified by this integration.
-//
-// JuanAi keeps Casino API Pro credentials server-side. SafariBet calls the
-// session endpoint with its normal JuanAi API key and a signed user token;
-// JuanAi then asks Casino API Pro for a short-lived launch URL.
-//
-// Required env:
-//   CASINO_API_PRO_KEY=ck_test_... or ck_live_...
-//   CASINO_API_PRO_SECRET=cs_test_... or cs_live_...
-//   JUANAI_USER_TOKEN_SECRET=...
-//
-// For real-money wallet callbacks from Casino API Pro:
-//   CASINO_API_PRO_PARTNER_API_KEY=<SafariBet's JuanAi jsk_ key>
-//   CASINO_API_PRO_WALLET_HMAC_SECRET=<same secret configured in CAPRO>
-//   CASINO_API_PRO_WALLET_AUTH=HMAC_SIGNATURE
-//
-// The selected partner wallet must already be registered with /internal/wallet.
-// Casino API Pro then calls JuanAi, and JuanAi forwards balance/debit/credit/
-// refund/rollback to SafariBet's wallet. Casino API Pro never gets to see or
-// hold the player's SafariBet balance itself.
-
-app.get('/api/casino-api-pro/games', async (req, res) => {
-  try {
-    if (!casinoApiPro.isConfigured()) {
-      return res.status(503).json({
-        success: false,
-        message: 'Casino API Pro credentials are not configured on JuanAi'
-      });
-    }
-    const data = await casinoApiPro.listGames();
-    res.json({ success: true, data, environment: casinoApiPro.environment() });
-  } catch (e) {
-    res.status(e.statusCode || 502).json({
-      success: false,
-      message: e.message
-    });
-  }
-});
-
-// POST /api/casino-api-pro/session
-// Body: { utoken, gameId, currency?, playerName?, ttlSeconds? }
-// The utoken is the same signed user identity used by the existing casino
-// integration. The provider player_id is NEVER accepted directly from the
-// browser, preventing one user from launching another user's wallet.
-app.post('/api/casino-api-pro/session', requireApiKey, async (req, res) => {
-  try {
-    if (!casinoApiPro.isConfigured()) {
-      return res.status(503).json({
-        success: false,
-        message: 'Casino API Pro credentials are not configured on JuanAi'
-      });
-    }
-
-    const token = req.body?.utoken;
-    const verifiedUserId = userToken.verify(token);
-
-    // Casino API Pro sandbox sessions can be opened directly from JuanAi's
-    // own dashboard. No real-money wallet is used in this fallback. Live
-    // sessions still require the partner's signed user token.
-    let userId = verifiedUserId;
-    if (!userId && casinoApiPro.environment() === 'sandbox') {
-      userId = 'juanai-sandbox-player';
-    }
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Missing or invalid utoken'
-      });
-    }
-
-    const { gameId, currency, playerName, ttlSeconds } = req.body || {};
-    if (!gameId) {
-      return res.status(400).json({ success: false, message: 'gameId is required' });
-    }
-
-    const session = await casinoApiPro.createSession({
-      gameId,
-      playerId: String(userId),
-      currency: String(currency || process.env.CASINO_API_PRO_CURRENCY || 'KES').toUpperCase(),
-      playerName,
-      ttlSeconds
-    });
-
-    res.json({
-      success: true,
-      environment: casinoApiPro.environment(),
-      session
-    });
-  } catch (e) {
-    res.status(e.statusCode || 502).json({
-      success: false,
-      message: e.message
-    });
-  }
-});
-
-// Provider wallet callbacks. These are NOT public player endpoints.
-// Configure Casino API Pro's Developer → Wallet base URL to this server and
-// use HMAC_SIGNATURE authentication in production.
-app.post('/wallet/balance', casinoApiProWallet.authMiddleware, casinoApiProWallet.balance);
-app.post('/wallet/debit', casinoApiProWallet.authMiddleware, casinoApiProWallet.debit);
-app.post('/wallet/credit', casinoApiProWallet.authMiddleware, casinoApiProWallet.credit);
-app.post('/wallet/refund', casinoApiProWallet.authMiddleware, casinoApiProWallet.refund);
-app.post('/wallet/rollback', casinoApiProWallet.authMiddleware, casinoApiProWallet.rollback);
 
 // ── PUBLIC-FACING API (what BetaKE calls) ──────────────────────────
 
@@ -670,10 +554,83 @@ app.post('/api/jetx/cashout', requireApiKey, (req, res) => {
 // from a browser would expose the API key and the partner's internal
 // userId values to anyone who opens devtools.
 
+// ── AS TECH PUBLIC CATALOGUE FEED ─────────────────────────────────────
+// This is catalogue/demo data exposed by AS Tech's public website. It does
+// not use partner API keys or secrets. SafariBet talks only to JuanAi.
+// Real-money AS Tech session/wallet APIs remain a separate authorized flow.
+app.get('/api/casino/as-tech/providers', requireApiKey, async (req, res) => {
+  try {
+    const data = await asTechApi.listProviders({ force: req.query.refresh === '1' });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[AS_TECH_PUBLIC] providers:', err.message);
+    res.status(err.statusCode === 404 ? 502 : 502).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/casino/as-tech/games?key=jsk_xxx&providerCode=spribe&page=1
+// providerCode is optional. Without it, the endpoint can return the full
+// public catalogue (cached). For a lobby, requesting one provider at a time
+// is recommended; /all-games is available for a deliberate full sync.
+app.get('/api/casino/as-tech/games', requireApiKey, async (req, res) => {
+  try {
+    const providerCode = String(req.query.providerCode || '').trim();
+    const search = String(req.query.search || '');
+    const page = Number(req.query.page || 1);
+    const data = providerCode
+      ? await asTechApi.listProviderGames(providerCode, { search, page, force: req.query.refresh === '1' })
+      : await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[AS_TECH_PUBLIC] games:', err.message);
+    res.status(502).json({ success: false, message: err.message });
+  }
+});
+
+// Explicit full-catalogue sync endpoint. This can take longer because AS
+// Tech paginates provider catalogues. Results are cached by the adapter.
+app.get('/api/casino/as-tech/all-games', requireApiKey, async (req, res) => {
+  try {
+    const data = await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[AS_TECH_PUBLIC] all-games:', err.message);
+    res.status(502).json({ success: false, message: err.message });
+  }
+});
+
+// Public zero-balance demo launch exposed by the AS Tech provider pages.
+// This is NOT the real-money session/open endpoint.
+app.post('/api/casino/as-tech/demo-launch', requireApiKey, async (req, res) => {
+  try {
+    const data = await asTechApi.launchDemo(req.body?.gameId);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[AS_TECH_PUBLIC] demo-launch:', err.message);
+    res.status(502).json({ success: false, message: err.message });
+  }
+});
+
 // GET /api/casino/games?key=jsk_xxx
 // Returns the catalog of games available to embed. See casinoIntegration
 // .js's GAMES list — only lists games that are actually live and working.
-app.get('/api/casino/games', requireApiKey, (req, res) => {
+app.get('/api/casino/games', requireApiKey, async (req, res) => {
+  if (String(req.query.source || '').toLowerCase() === 'as-tech') {
+    try {
+      const providerCode = String(req.query.providerCode || '').trim();
+      const data = providerCode
+        ? await asTechApi.listProviderGames(providerCode, {
+            search: String(req.query.search || ''),
+            page: Number(req.query.page || 1),
+            force: req.query.refresh === '1',
+          })
+        : await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
+      return res.json({ success: true, data });
+    } catch (err) {
+      console.error('[AS_TECH_PUBLIC] /api/casino/games:', err.message);
+      return res.status(502).json({ success: false, message: err.message });
+    }
+  }
   res.json({ success: true, data: casinoIntegration.listGames() });
 });
 
@@ -1100,72 +1057,6 @@ app.delete('/internal/apikeys/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to revoke API key: ' + e.message });
   }
 });
-
-
-// ── SEPARATE CASINO API / GAME API CREDENTIAL MANAGEMENT ──────────
-// These credentials are independent of legacy jsk_ API keys. A secret is
-// returned only at creation time because it is the HMAC credential used to
-// authenticate partner requests. The server keeps the secret for HMAC
-// verification; the list endpoint deliberately never returns it.
-app.post('/internal/partner-credentials', requireAdmin, async (req, res) => {
-  const { type, name } = req.body || {};
-  if (type !== 'casino' && type !== 'game') {
-    return res.status(400).json({ error: 'type must be casino or game' });
-  }
-  if (!String(name || '').trim()) {
-    return res.status(400).json({ error: 'name is required' });
-  }
-  try {
-    const record = await db.addPartnerApiCredential(type, name);
-    res.json(record);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to create partner credentials: ' + e.message });
-  }
-});
-
-app.get('/internal/partner-credentials', requireAdmin, async (req, res) => {
-  try {
-    res.json(await db.getPartnerApiCredentials());
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to load partner credentials: ' + e.message });
-  }
-});
-
-app.delete('/internal/partner-credentials/:id', requireAdmin, async (req, res) => {
-  try {
-    await db.revokePartnerApiCredential(req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to revoke partner credentials: ' + e.message });
-  }
-});
-
-// Partner-authenticated health/catalogue endpoints. These prove the two
-// credential types are actually enforced independently; Casino keys cannot
-// authenticate Game routes and vice versa. Full wallet/session contracts
-// remain documented under /docs/.
-app.get('/api/v1/casino/games', partnerApi.requireCasinoApi, async (req, res) => {
-  try {
-    const data = casinoApiPro.isConfigured()
-      ? await casinoApiPro.listGames()
-      : [];
-    res.json({ success: true, data, environment: casinoApiPro.environment(), partner: 'casino' });
-  } catch (e) {
-    res.status(e.statusCode || 502).json({ success: false, message: e.message });
-  }
-});
-
-app.get('/api/v1/game/catalogue', partnerApi.requireGameApi, async (req, res) => {
-  try {
-    const data = casinoApiPro.isConfigured()
-      ? await casinoApiPro.listGames()
-      : [];
-    res.json({ success: true, data, environment: casinoApiPro.environment(), partner: 'game' });
-  } catch (e) {
-    res.status(e.statusCode || 502).json({ success: false, message: e.message });
-  }
-});
-
 
 // ── WALLET INTEGRATION SETUP (called by JuanAi's admin UI) ──────────
 // Registers a partner's own wallet base URL + shared HMAC secret so

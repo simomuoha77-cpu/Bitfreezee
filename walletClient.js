@@ -197,27 +197,4 @@ async function getBalance(apiKey, userId) {
   return callPartnerWalletGet(apiKey, `/api/casino/wallet/balance?userId=${encodeURIComponent(userId)}`);
 }
 
-async function refund(apiKey, userId, amount, roundId, gameId, referenceTransactionId) {
-  return callPartnerWallet(apiKey, '/api/casino/wallet/refund', {
-    userId, amount, roundId, gameId, referenceTransactionId
-  });
-}
-
-async function rollback(apiKey, userId, amount, roundId, gameId, referenceTransactionId) {
-  return callPartnerWallet(apiKey, '/api/casino/wallet/rollback', {
-    userId, amount, roundId, gameId, referenceTransactionId
-  });
-}
-
-module.exports = {
-  registerPartnerWallet,
-  getPartnerWallet,
-  getPartnerWalletSync,
-  loadWalletsFromDb,
-  debit,
-  credit,
-  getBalance,
-  refund,
-  rollback,
-  sign
-};
+module.exports = { registerPartnerWallet, getPartnerWallet, getPartnerWalletSync, loadWalletsFromDb, debit, credit, getBalance, sign };

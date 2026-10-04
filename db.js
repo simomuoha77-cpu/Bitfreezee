@@ -18,7 +18,6 @@
 // concurrent writes clobbering each other's unrelated changes.
 
 const { MongoClient } = require('mongodb');
-const crypto = require('crypto');
 const footballData = require('./footballData');
 const realOdds = require('./realOdds');
 
@@ -26,7 +25,6 @@ const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
 const FIXTURES_COLLECTION = 'fixtures';
 const KEYS_COLLECTION = 'apikeys';
-const PARTNER_CREDENTIALS_COLLECTION = 'partnerapicredentials'; // separate Casino API (jcas_) and Game API (jgam_) credentials
 const WALLETS_COLLECTION = 'partnerwallets'; // partner API key -> wallet base URL + HMAC secret, for real-money casino integration (see walletClient.js)
 const SETTINGS_COLLECTION = 'settings'; // generic key-value store — added specifically to persist per-key API usage tracking (odds-api.io daily/hourly call counts) across restarts. Without this, every restart reset the app's OWN idea of "how much of each key's daily budget is used" back to zero, while the real usage tracked on the provider's end did NOT reset — so a day with many restarts (e.g. redeploys) let the app confidently keep using keys it THOUGHT had room, until the real provider-side count caught up and every key hit its actual daily wall at the same moment. This was directly observed in production: 11 separate odds-api.io keys all showing "480/480 used, blocked" simultaneously on a day with unusually many restarts.
 
@@ -35,7 +33,6 @@ let mongoReady = false;
 let mongoConnectAttempted = false;
 let fixturesCollection = null;
 let apiKeysCollection = null;
-let partnerCredentialsCollection = null;
 let walletsCollection = null;
 let settingsCollection = null;
 
@@ -46,7 +43,6 @@ let settingsCollection = null;
 // only a "don't crash" safety net, not a real substitute for Mongo.
 let fixturesFallback = {}; // keyed by `${days}` -> { matches: [...], fetchedAt, updatedAt }
 let apiKeysFallback = [];
-let partnerCredentialsFallback = [];
 let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
 let settingsFallback = {}; // keyed by setting name -> value (JSON-serializable)
 let usingFallback = false;
@@ -68,7 +64,6 @@ async function connectMongo() {
     const db = client.db(DB_NAME);
     fixturesCollection = db.collection(FIXTURES_COLLECTION);
     apiKeysCollection = db.collection(KEYS_COLLECTION);
-    partnerCredentialsCollection = db.collection(PARTNER_CREDENTIALS_COLLECTION);
     walletsCollection = db.collection(WALLETS_COLLECTION);
     settingsCollection = db.collection(SETTINGS_COLLECTION);
     // This index is what actually enforces "no duplicate canonical
@@ -80,8 +75,6 @@ async function connectMongo() {
     await fixturesCollection.createIndex({ matchId: 1, days: 1 }, { unique: true });
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });
-    await partnerCredentialsCollection.createIndex({ apiKey: 1 }, { unique: true });
-    await partnerCredentialsCollection.createIndex({ type: 1, name: 1 });
     await walletsCollection.createIndex({ apiKey: 1 }, { unique: true });
     await settingsCollection.createIndex({ name: 1 }, { unique: true });
     mongoReady = true;
@@ -464,121 +457,6 @@ async function isValidApiKey(key) {
   }
 }
 
-
-// ── Separate Partner API credentials ───────────────────────────────
-// Casino API and Game API credentials are deliberately stored separately
-// from the legacy jsk_ football/casino keys. The secret is needed by the
-// HMAC verifier, so it must remain server-side; the admin UI receives it
-// only in the response that creates the credential.
-function generatePartnerCredential(type, name) {
-  const isCasino = type === 'casino';
-  if (!isCasino && type !== 'game') throw new Error('type must be casino or game');
-  const prefix = isCasino ? 'jcas_' : 'jgam_';
-  const secretPrefix = isCasino ? 'jcas_secret_' : 'jgam_secret_';
-  return {
-    id: crypto.randomUUID(),
-    type,
-    name: String(name || (isCasino ? 'Unnamed casino integration' : 'Unnamed game integration')).slice(0, 100),
-    apiKey: prefix + crypto.randomBytes(24).toString('base64url'),
-    secret: secretPrefix + crypto.randomBytes(32).toString('base64url'),
-    createdAt: new Date().toISOString(),
-    requests: 0,
-    active: true
-  };
-}
-
-function partnerCredentialPublic(record) {
-  if (!record) return null;
-  const out = { ...record };
-  delete out.secret;
-  return out;
-}
-
-async function addPartnerApiCredential(type, name) {
-  await ensureMongo();
-  const record = generatePartnerCredential(type, name);
-  if (usingFallback) {
-    partnerCredentialsFallback.push(record);
-    return record;
-  }
-  try {
-    await partnerCredentialsCollection.insertOne(record);
-    return record;
-  } catch (e) {
-    console.error('[db] addPartnerApiCredential failed, falling back to in-memory: ' + e.message);
-    partnerCredentialsFallback.push(record);
-    return record;
-  }
-}
-
-async function getPartnerApiCredentials(type) {
-  await ensureMongo();
-  const filter = type === 'casino' || type === 'game' ? { type } : {};
-  try {
-    const rows = usingFallback
-      ? partnerCredentialsFallback.filter(c => !filter.type || c.type === filter.type)
-      : await partnerCredentialsCollection.find(filter).sort({ createdAt: -1 }).toArray();
-    return rows.map(partnerCredentialPublic);
-  } catch (e) {
-    console.error('[db] getPartnerApiCredentials failed: ' + e.message);
-    return partnerCredentialsFallback.filter(c => !filter.type || c.type === filter.type).map(partnerCredentialPublic);
-  }
-}
-
-async function getPartnerApiCredential(apiKey, type) {
-  if (!apiKey) return null;
-  await ensureMongo();
-  const filter = { apiKey, active: true };
-  if (type === 'casino' || type === 'game') filter.type = type;
-  try {
-    const row = usingFallback
-      ? partnerCredentialsFallback.find(c => c.apiKey === apiKey && c.active && (!filter.type || c.type === filter.type))
-      : await partnerCredentialsCollection.findOne(filter);
-    return row || null;
-  } catch (e) {
-    console.error('[db] getPartnerApiCredential failed: ' + e.message);
-    return partnerCredentialsFallback.find(c => c.apiKey === apiKey && c.active && (!filter.type || c.type === filter.type)) || null;
-  }
-}
-
-async function recordPartnerApiRequest(apiKey) {
-  if (!apiKey) return;
-  await ensureMongo();
-  try {
-    if (usingFallback) {
-      const row = partnerCredentialsFallback.find(c => c.apiKey === apiKey);
-      if (row) {
-        row.requests = (row.requests || 0) + 1;
-        row.lastUsedAt = new Date().toISOString();
-      }
-      return;
-    }
-    await partnerCredentialsCollection.updateOne(
-      { apiKey, active: true },
-      { $inc: { requests: 1 }, $set: { lastUsedAt: new Date().toISOString() } }
-    );
-  } catch (e) {
-    console.error('[db] recordPartnerApiRequest failed: ' + e.message);
-  }
-}
-
-async function revokePartnerApiCredential(id) {
-  await ensureMongo();
-  if (usingFallback) {
-    const row = partnerCredentialsFallback.find(c => c.id === String(id) || c.id === id);
-    if (row) row.active = false;
-    return;
-  }
-  try {
-    await partnerCredentialsCollection.updateOne(
-      { id: String(id) },
-      { $set: { active: false, revokedAt: new Date().toISOString() } }
-    );
-  } catch (e) {
-    console.error('[db] revokePartnerApiCredential failed: ' + e.message);
-  }
-}
-
 async function revokeApiKey(id) {
   await ensureMongo();
   if (usingFallback) {
@@ -843,11 +721,6 @@ module.exports = {
   addApiKey,
   isValidApiKey,
   revokeApiKey,
-  addPartnerApiCredential,
-  getPartnerApiCredentials,
-  getPartnerApiCredential,
-  recordPartnerApiRequest,
-  revokePartnerApiCredential,
   saveWallet,
   getWallet,
   getAllWallets,
