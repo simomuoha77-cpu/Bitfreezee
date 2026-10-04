@@ -100,6 +100,7 @@ router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
       ...g,
       source: 'juanai',
       launchMode: 'real-money',
+      realMoney: true,
     }));
     let asTechGames = [];
     try {
