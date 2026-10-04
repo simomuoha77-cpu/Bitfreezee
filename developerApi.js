@@ -10,7 +10,7 @@ const casinoIntegration = require('./casinoIntegration');
 
 const router = express.Router();
 const WINDOW_MS = Number(process.env.DEVELOPER_API_RATE_WINDOW_MS || 60_000);
-const DEFAULT_LIMIT = Number(process.env.DEVELOPER_API_RATE_LIMIT || 120);
+const DEFAULT_LIMIT = Number(process.env.DEVELOPER_API_RATE_LIMIT || 300);
 const rate = new Map();
 
 function error(res, status, code, message) {
@@ -117,7 +117,8 @@ router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
         rtp: null,
         providerCode: g.providerCode || null,
         source: 'as-tech',
-        launchMode: 'demo',
+        launchMode: 'provider',
+        realMoney: false,
       }));
     } catch (e) {
       console.warn('[developer-api] AS Tech catalogue unavailable:', e.message);
@@ -141,7 +142,7 @@ router.get('/casino/state/:gameId', requireDeveloperApi('casino'), async (req, r
     const state = casino.getPublicState(gameId, req.developerCredential.apiKey, null);
     delete state.balance;
     delete state.bets;
-    return res.json({ success: true, gameId, data: state });
+    return res.json({ success: true, gameId, data: state, ...state });
   } catch (e) { return error(res, 500, 'INTERNAL_ERROR', 'Unable to load casino game state.'); }
 });
 
