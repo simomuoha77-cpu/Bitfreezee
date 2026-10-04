@@ -18,6 +18,7 @@
 // concurrent writes clobbering each other's unrelated changes.
 
 const { MongoClient } = require('mongodb');
+const crypto = require('crypto');
 const footballData = require('./footballData');
 const realOdds = require('./realOdds');
 
@@ -25,6 +26,7 @@ const MONGO_URI = process.env.MONGO_URI || '';
 const DB_NAME = 'juanai';
 const FIXTURES_COLLECTION = 'fixtures';
 const KEYS_COLLECTION = 'apikeys';
+const DEVELOPER_CREDENTIALS_COLLECTION = 'developer_credentials';
 const WALLETS_COLLECTION = 'partnerwallets'; // partner API key -> wallet base URL + HMAC secret, for real-money casino integration (see walletClient.js)
 const SETTINGS_COLLECTION = 'settings'; // generic key-value store — added specifically to persist per-key API usage tracking (odds-api.io daily/hourly call counts) across restarts. Without this, every restart reset the app's OWN idea of "how much of each key's daily budget is used" back to zero, while the real usage tracked on the provider's end did NOT reset — so a day with many restarts (e.g. redeploys) let the app confidently keep using keys it THOUGHT had room, until the real provider-side count caught up and every key hit its actual daily wall at the same moment. This was directly observed in production: 11 separate odds-api.io keys all showing "480/480 used, blocked" simultaneously on a day with unusually many restarts.
 
@@ -33,6 +35,7 @@ let mongoReady = false;
 let mongoConnectAttempted = false;
 let fixturesCollection = null;
 let apiKeysCollection = null;
+let developerCredentialsCollection = null;
 let walletsCollection = null;
 let settingsCollection = null;
 
@@ -43,6 +46,7 @@ let settingsCollection = null;
 // only a "don't crash" safety net, not a real substitute for Mongo.
 let fixturesFallback = {}; // keyed by `${days}` -> { matches: [...], fetchedAt, updatedAt }
 let apiKeysFallback = [];
+let developerCredentialsFallback = [];
 let walletsFallback = []; // { apiKey, baseUrl, secret, updatedAt }
 let settingsFallback = {}; // keyed by setting name -> value (JSON-serializable)
 let usingFallback = false;
@@ -64,6 +68,7 @@ async function connectMongo() {
     const db = client.db(DB_NAME);
     fixturesCollection = db.collection(FIXTURES_COLLECTION);
     apiKeysCollection = db.collection(KEYS_COLLECTION);
+    developerCredentialsCollection = db.collection(DEVELOPER_CREDENTIALS_COLLECTION);
     walletsCollection = db.collection(WALLETS_COLLECTION);
     settingsCollection = db.collection(SETTINGS_COLLECTION);
     // This index is what actually enforces "no duplicate canonical
@@ -75,6 +80,8 @@ async function connectMongo() {
     await fixturesCollection.createIndex({ matchId: 1, days: 1 }, { unique: true });
     await fixturesCollection.createIndex({ days: 1 }); // for fetching a whole day-bucket efficiently
     await apiKeysCollection.createIndex({ key: 1 }, { unique: true });
+    await developerCredentialsCollection.createIndex({ apiKey: 1 }, { unique: true });
+    await developerCredentialsCollection.createIndex({ product: 1, status: 1 });
     await walletsCollection.createIndex({ apiKey: 1 }, { unique: true });
     await settingsCollection.createIndex({ name: 1 }, { unique: true });
     mongoReady = true;
@@ -392,45 +399,46 @@ async function pruneMatchesNotIn(days, sport, keepIds) {
 // ── API key storage (uses the SAME MongoDB connection as fixtures above) ──
 
 function generateApiKey() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let key = 'jsk_';
-  for (let i = 0; i < 32; i++) key += chars[Math.floor(Math.random() * chars.length)];
-  return key;
+  return 'jsk_' + crypto.randomBytes(24).toString('base64url');
+}
+
+function generateDeveloperCredential(product, name) {
+  const apiKey = 'jsk_' + product + '_' + crypto.randomBytes(18).toString('base64url');
+  const secret = 'jss_' + product + '_' + crypto.randomBytes(32).toString('base64url');
+  const salt = crypto.randomBytes(16);
+  const secretHash = crypto.scryptSync(secret, salt, 64).toString('hex');
+  return {
+    id: crypto.randomBytes(12).toString('hex'),
+    ownerId: process.env.DEVELOPER_API_OWNER_ID || 'admin',
+    name: name || (product === 'football' ? 'Football API' : 'Casino API'),
+    product,
+    apiKey,
+    secretHash,
+    secretSalt: salt.toString('hex'),
+    status: 'active',
+    scopes: [product],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lastUsedAt: null,
+    revokedAt: null,
+    requestCount: 0,
+    _initialSecret: secret
+  };
 }
 
 async function getApiKeys() {
   await ensureMongo();
   if (usingFallback) return apiKeysFallback;
-  try {
-    return await apiKeysCollection.find({}).sort({ createdAt: -1 }).toArray();
-  } catch (e) {
-    console.error('[db] getApiKeys failed, falling back to in-memory: ' + e.message);
-    return apiKeysFallback;
-  }
+  try { return await apiKeysCollection.find({}).sort({ createdAt: -1 }).toArray(); }
+  catch (e) { console.error('[db] getApiKeys failed, falling back to in-memory: ' + e.message); return apiKeysFallback; }
 }
 
 async function addApiKey(name) {
   await ensureMongo();
-  const record = {
-    id: Date.now(),
-    name: name || 'Unnamed key',
-    key: generateApiKey(),
-    createdAt: new Date().toISOString(),
-    requests: 0,
-    active: true
-  };
-  if (usingFallback) {
-    apiKeysFallback.push(record);
-    return record;
-  }
-  try {
-    await apiKeysCollection.insertOne(record);
-    return record;
-  } catch (e) {
-    console.error('[db] addApiKey failed, falling back to in-memory: ' + e.message);
-    apiKeysFallback.push(record);
-    return record;
-  }
+  const record = { id: Date.now(), name: name || 'Unnamed key', key: generateApiKey(), createdAt: new Date().toISOString(), requests: 0, active: true };
+  if (usingFallback) { apiKeysFallback.push(record); return record; }
+  try { await apiKeysCollection.insertOne(record); return record; }
+  catch (e) { console.error('[db] addApiKey failed, falling back to in-memory: ' + e.message); apiKeysFallback.push(record); return record; }
 }
 
 async function isValidApiKey(key) {
@@ -446,28 +454,116 @@ async function isValidApiKey(key) {
   try {
     const found = await apiKeysCollection.findOne({ key, active: true });
     if (!found) return false;
-    await apiKeysCollection.updateOne(
-      { key },
-      { $inc: { requests: 1 }, $set: { lastUsedAt: new Date().toISOString() } }
-    );
+    await apiKeysCollection.updateOne({ key }, { $inc: { requests: 1 }, $set: { lastUsedAt: new Date().toISOString() } });
     return true;
-  } catch (e) {
-    console.error('[db] isValidApiKey failed: ' + e.message);
-    return false;
-  }
+  } catch (e) { console.error('[db] isValidApiKey failed: ' + e.message); return false; }
 }
 
 async function revokeApiKey(id) {
   await ensureMongo();
-  if (usingFallback) {
-    apiKeysFallback = apiKeysFallback.filter(k => k.id !== Number(id));
-    return;
+  if (usingFallback) { apiKeysFallback = apiKeysFallback.filter(k => k.id !== Number(id)); return; }
+  try { await apiKeysCollection.deleteOne({ id: Number(id) }); }
+  catch (e) { console.error('[db] revokeApiKey failed: ' + e.message); }
+}
+
+function publicDeveloperCredential(record) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    ownerId: record.ownerId || 'admin',
+    name: record.name,
+    product: record.product,
+    apiKey: record.apiKey,
+    status: record.status,
+    scopes: record.scopes || [record.product],
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastUsedAt: record.lastUsedAt || null,
+    revokedAt: record.revokedAt || null,
+    requestCount: record.requestCount || 0
+  };
+}
+
+async function getDeveloperCredentials() {
+  await ensureMongo();
+  let rows;
+  if (usingFallback) rows = developerCredentialsFallback;
+  else {
+    try { rows = await developerCredentialsCollection.find({}).sort({ createdAt: -1 }).toArray(); }
+    catch (e) { console.error('[db] getDeveloperCredentials failed:', e.message); rows = developerCredentialsFallback; }
   }
+  return rows.map(publicDeveloperCredential);
+}
+
+async function getDeveloperCredentialByKey(apiKey) {
+  if (!apiKey) return null;
+  await ensureMongo();
+  if (usingFallback) return developerCredentialsFallback.find(x => x.apiKey === apiKey) || null;
+  try { return await developerCredentialsCollection.findOne({ apiKey }); }
+  catch (e) { console.error('[db] getDeveloperCredentialByKey failed:', e.message); return null; }
+}
+
+async function createDeveloperCredential(product, name) {
+  if (!['football', 'casino'].includes(product)) throw new Error('product must be football or casino');
+  await ensureMongo();
+  const record = generateDeveloperCredential(product, name);
+  const secret = record._initialSecret;
+  delete record._initialSecret;
+  if (usingFallback) developerCredentialsFallback.push(record);
+  else {
+    try { await developerCredentialsCollection.insertOne(record); }
+    catch (e) { console.error('[db] createDeveloperCredential failed:', e.message); throw e; }
+  }
+  return { credential: publicDeveloperCredential(record), secret };
+}
+
+async function verifyDeveloperCredential(apiKey, secret, product) {
+  const record = await getDeveloperCredentialByKey(apiKey);
+  if (!record || record.status !== 'active' || record.product !== product) return null;
   try {
-    await apiKeysCollection.deleteOne({ id: Number(id) });
-  } catch (e) {
-    console.error('[db] revokeApiKey failed: ' + e.message);
+    const salt = Buffer.from(record.secretSalt, 'hex');
+    const supplied = crypto.scryptSync(String(secret), salt, 64);
+    const stored = Buffer.from(record.secretHash, 'hex');
+    if (supplied.length !== stored.length || !crypto.timingSafeEqual(supplied, stored)) return null;
+  } catch (_) { return null; }
+  const now = new Date().toISOString();
+  record.lastUsedAt = now;
+  record.requestCount = (record.requestCount || 0) + 1;
+  if (usingFallback) return { ...publicDeveloperCredential(record), apiKey: record.apiKey };
+  try { await developerCredentialsCollection.updateOne({ apiKey }, { $set: { lastUsedAt: now }, $inc: { requestCount: 1 } }); }
+  catch (e) { console.warn('[db] developer usage update failed:', e.message); }
+  return { ...publicDeveloperCredential(record), apiKey: record.apiKey };
+}
+
+async function revokeDeveloperCredential(id) {
+  await ensureMongo();
+  const now = new Date().toISOString();
+  if (usingFallback) {
+    const row = developerCredentialsFallback.find(x => String(x.id) === String(id));
+    if (row) { row.status = 'revoked'; row.revokedAt = now; row.updatedAt = now; }
+    return !!row;
   }
+  const result = await developerCredentialsCollection.updateOne({ id: String(id) }, { $set: { status: 'revoked', revokedAt: now, updatedAt: now } });
+  return result.modifiedCount > 0;
+}
+
+async function rotateDeveloperCredential(id) {
+  await ensureMongo();
+  let old;
+  if (usingFallback) old = developerCredentialsFallback.find(x => String(x.id) === String(id));
+  else old = await developerCredentialsCollection.findOne({ id: String(id) });
+  if (!old || old.status !== 'active') throw new Error('Credential not found or already revoked');
+  const fresh = generateDeveloperCredential(old.product, old.name);
+  const secret = fresh._initialSecret;
+  delete fresh._initialSecret;
+  const now = new Date().toISOString();
+  old.status = 'revoked'; old.revokedAt = now; old.updatedAt = now;
+  if (usingFallback) developerCredentialsFallback.push(fresh);
+  else {
+    await developerCredentialsCollection.updateOne({ id: old.id }, { $set: { status: 'revoked', revokedAt: now, updatedAt: now } });
+    await developerCredentialsCollection.insertOne(fresh);
+  }
+  return { credential: publicDeveloperCredential(fresh), secret };
 }
 
 // ── Partner wallet config storage ──────────────────────────────────
@@ -721,6 +817,12 @@ module.exports = {
   addApiKey,
   isValidApiKey,
   revokeApiKey,
+  getDeveloperCredentials,
+  getDeveloperCredentialByKey,
+  createDeveloperCredential,
+  verifyDeveloperCredential,
+  revokeDeveloperCredential,
+  rotateDeveloperCredential,
   saveWallet,
   getWallet,
   getAllWallets,

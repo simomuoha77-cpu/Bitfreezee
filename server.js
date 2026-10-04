@@ -31,6 +31,7 @@ const casinoIntegration = require('./casinoIntegration');
 const asTechApi = require('./asTechApi');
 const walletClient = require('./walletClient');
 const userToken = require('./userToken');
+const developerApi = require('./developerApi');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -106,6 +107,11 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+// ── DEVELOPER API ─────────────────────────────────────────────────────
+// Product-scoped external API. This is additive and does not replace the
+// legacy /api/* routes or their existing jsk_ API-key authentication.
+app.use('/api/developer', developerApi.router);
 
 // ── PUBLIC-FACING API (what BetaKE calls) ──────────────────────────
 
@@ -1023,6 +1029,46 @@ app.get('/internal/clear-fixtures', requireAdmin, async (req, res) => {
   await db.saveFixtures(0, [], 'basketball');
   await db.saveFixtures(1, [], 'basketball');
   res.json({ ok: true, message: 'Fixtures cleared for days=0 and days=1 (football + basketball). Scheduler will repopulate with real data on its next cycle (or restart the server to force it immediately).' });
+});
+
+// ── DEVELOPER CREDENTIAL MANAGEMENT ───────────────────────────────
+// Separate Football/Casino credentials. Secrets are returned only at
+// creation/rotation and are never included in list responses.
+app.post('/internal/developer/credentials', requireAdmin, async (req, res) => {
+  const { product, name } = req.body || {};
+  if (!['football', 'casino'].includes(product)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_REQUEST', message: 'product must be football or casino' } });
+  }
+  try {
+    const result = await db.createDeveloperCredential(product, name);
+    res.status(201).json({ success: true, credential: result.credential, secret: result.secret, warning: 'Store this secret securely. It will not be shown again.' });
+  } catch (e) {
+    console.error('[developer credentials] create:', e.message);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create developer credential.' } });
+  }
+});
+
+app.get('/internal/developer/credentials', requireAdmin, async (req, res) => {
+  try { res.json({ success: true, credentials: await db.getDeveloperCredentials() }); }
+  catch (e) { res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load developer credentials.' } }); }
+});
+
+app.post('/internal/developer/credentials/:id/revoke', requireAdmin, async (req, res) => {
+  try {
+    const ok = await db.revokeDeveloperCredential(req.params.id);
+    if (!ok) return res.status(404).json({ success: false, error: { code: 'RESOURCE_NOT_FOUND', message: 'Credential not found.' } });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to revoke credential.' } }); }
+});
+
+app.post('/internal/developer/credentials/:id/rotate', requireAdmin, async (req, res) => {
+  try {
+    const result = await db.rotateDeveloperCredential(req.params.id);
+    res.json({ success: true, credential: result.credential, secret: result.secret, warning: 'Store this secret securely. It will not be shown again.' });
+  } catch (e) {
+    const status = /not found|revoked/i.test(e.message) ? 404 : 500;
+    res.status(status).json({ success: false, error: { code: status === 404 ? 'RESOURCE_NOT_FOUND' : 'INTERNAL_ERROR', message: status === 404 ? e.message : 'Failed to rotate credential.' } });
+  }
 });
 
 // ── API KEY MANAGEMENT (called by JuanAi's admin UI) ───────────────

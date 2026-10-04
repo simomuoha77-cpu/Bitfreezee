@@ -614,7 +614,28 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
     <!-- 🔑 API KEYS PANEL -->
     <div id="apiKeysPanel" style="display:none;flex:1;overflow-y:auto;background:var(--bg);padding:20px">
       <div style="max-width:700px;margin:0 auto">
-        <div style="font-weight:800;font-size:18px;margin-bottom:6px">🔑 API Key Management</div>
+        <div style="font-weight:800;font-size:18px;margin-bottom:6px">🔑 Developer API</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:16px">Create separate server-to-server credentials for Football API and Casino API. A credential for one product cannot access the other. Secrets are shown only once and must never be placed in frontend JavaScript.</div>
+
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="fa-solid fa-shield-halved" style="color:var(--acc)"></i> Create API Credentials</div>
+          <input type="text" id="developerApiName" placeholder="Application name (e.g. SafariBet)" style="width:100%;box-sizing:border-box;margin-bottom:12px;padding:10px 13px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:9px;color:var(--t1);font-size:13px;outline:none">
+          <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12px;margin-bottom:14px">
+            <label><input type="checkbox" id="devProductFootball" checked> Football API</label>
+            <label><input type="checkbox" id="devProductCasino"> Casino API</label>
+          </div>
+          <button onclick="createDeveloperCredentials()" style="background:var(--grad);color:#fff;border:none;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer"><i class="fa-solid fa-key"></i> Generate Credentials</button>
+          <div id="developerSecretNotice" style="display:none;margin-top:12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:9px;padding:12px;font-size:11px;line-height:1.6"></div>
+        </div>
+
+        <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px"><i class="fa-solid fa-code" style="color:var(--acc)"></i> Developer Credentials</div>
+          <div id="developerCredentialsList"><div style="color:var(--tm);font-size:12px">Loading...</div></div>
+          <div style="margin-top:12px;font-size:11px"><a href="/docs/" target="_blank" style="color:var(--acc)">Open Developer API Documentation →</a></div>
+        </div>
+
+        <div style="font-weight:800;font-size:15px;margin:20px 0 8px">Legacy API Keys</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:12px">Existing legacy keys remain for backward compatibility. Do not use them for new Football/Casino integrations; create product-scoped Developer API credentials above.</div>
         <div style="font-size:12px;color:var(--info);background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.3);border-radius:10px;padding:12px 14px;margin-bottom:20px;line-height:1.6">
           <b>ℹ️ Requires the JuanAi backend server to be running</b> (<code>node server.js</code> — see README). Keys generated here are stored and checked by that real server, so external servers like BetaKE can call <code>GET /api/fixtures?key=...</code> over normal HTTP. If the backend isn't running, this panel will say so instead of silently failing. Odds shown are still AI-generated predictions, not real bookmaker prices — don't present them to end users as live market odds.
         </div>
@@ -2465,7 +2486,7 @@ function switchMainTab(t){
   [btnChat,btnFb,btnApi,btnCasino].forEach(function(b){if(b)b.classList.remove('active');});
   if(t==='chat'){if(chatWrap)chatWrap.style.display='flex';if(btnChat)btnChat.classList.add('active');}
   else if(t==='football'){if(fbPanel)fbPanel.style.display='flex';if(btnFb)btnFb.classList.add('active');loadFixtures();}
-  else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderApiKeys();}
+  else if(t==='apikeys'){if(apiPanel)apiPanel.style.display='flex';if(btnApi)btnApi.classList.add('active');renderDeveloperCredentials();renderApiKeys();}
   else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
 }
 
@@ -3100,6 +3121,77 @@ function analyzeAllMatches(){
 }
 
 // ── API KEY MANAGEMENT — now backed by the real JuanAi backend server ─────────
+async function createDeveloperCredentials(){
+  var name = (document.getElementById('developerApiName').value || '').trim();
+  var football = document.getElementById('devProductFootball').checked;
+  var casino = document.getElementById('devProductCasino').checked;
+  if(!football && !casino){ toast('Select Football API, Casino API, or both','warning'); return; }
+  if(!name) name = 'Developer Application';
+  var created = [];
+  try{
+    if(football){
+      var rf = await fetchInternal('/internal/developer/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,product:'football'})});
+      if(!rf.ok) throw new Error('Football credential creation failed');
+      created.push(await rf.json());
+    }
+    if(casino){
+      var rc = await fetchInternal('/internal/developer/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,product:'casino'})});
+      if(!rc.ok) throw new Error('Casino credential creation failed');
+      created.push(await rc.json());
+    }
+    document.getElementById('developerApiName').value='';
+    var notice=document.getElementById('developerSecretNotice');
+    notice.style.display='block';
+    notice.innerHTML='<b>⚠️ Save these secrets now — they will not be shown again.</b><br><br>'+created.map(function(x){return '<b>'+esc(x.credential.product.toUpperCase())+' API</b><br>Key: <code>'+esc(x.credential.apiKey)+'</code><br>Secret: <code>'+esc(x.secret)+'</code>';}).join('<hr style="border:none;border-top:1px solid var(--bdr);margin:10px 0">');
+    await renderDeveloperCredentials();
+    toast('Developer credentials created','success');
+  }catch(e){ toast(e.message || 'Could not create developer credentials','error'); }
+}
+
+async function getDeveloperCredentials(){
+  var r=await fetchInternal('/internal/developer/credentials');
+  if(!r.ok) throw new Error('Could not load developer credentials');
+  var d=await r.json(); return d.credentials||[];
+}
+
+function copyDeveloperSecretOnce(secret){ navigator.clipboard.writeText(secret); toast('Secret copied — store it securely','success'); }
+
+async function revokeDeveloperCredential(id){
+  if(!confirm('Revoke this API credential? Applications using it will immediately lose access.')) return;
+  var r=await fetchInternal('/internal/developer/credentials/'+encodeURIComponent(id)+'/revoke',{method:'POST'});
+  if(!r.ok) throw new Error('Could not revoke credential');
+  await renderDeveloperCredentials(); toast('Credential revoked','info');
+}
+
+async function rotateDeveloperCredential(id){
+  if(!confirm('Rotate this API credential? The old credential will be revoked immediately.')) return;
+  var r=await fetchInternal('/internal/developer/credentials/'+encodeURIComponent(id)+'/rotate',{method:'POST'});
+  if(!r.ok) throw new Error('Could not rotate credential');
+  var d=await r.json();
+  var notice=document.getElementById('developerSecretNotice'); notice.style.display='block';
+  notice.innerHTML='<b>⚠️ New '+esc(d.credential.product.toUpperCase())+' secret — save it now.</b><br><br>Key: <code>'+esc(d.credential.apiKey)+'</code><br>Secret: <code>'+esc(d.secret)+'</code>';
+  await renderDeveloperCredentials(); toast('Credential rotated','success');
+}
+
+async function renderDeveloperCredentials(){
+  var el=document.getElementById('developerCredentialsList'); if(!el) return;
+  try{
+    var rows=await getDeveloperCredentials();
+    if(!rows.length){ el.innerHTML='<div style="color:var(--tm);font-size:12px">No Developer API credentials yet.</div>'; return; }
+    el.innerHTML=rows.map(function(k){
+      var active=k.status==='active';
+      return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:13px;margin-bottom:9px">'
+        +'<div style="display:flex;justify-content:space-between;gap:10px;align-items:center">'
+        +'<div><b>'+esc(k.name)+'</b> <span style="font-size:10px;padding:3px 7px;border-radius:7px;background:'+(k.product==='football'?'rgba(34,197,94,.12)':'rgba(99,102,241,.12)')+';color:var(--acc)">'+esc(k.product.toUpperCase())+'</span></div>'
+        +'<span style="font-size:10px;color:'+(active?'var(--ok)':'var(--err)')+'">'+esc(k.status)+'</span></div>'
+        +'<div style="font-family:monospace;font-size:11px;margin-top:8px;word-break:break-all">'+esc(k.apiKey)+'</div>'
+        +'<div style="font-size:10px;color:var(--tm);margin-top:7px">Created: '+fmtTime(k.createdAt)+' · Last used: '+(k.lastUsedAt?fmtTime(k.lastUsedAt):'Never')+' · Requests: '+(k.requestCount||0)+'</div>'
+        +(active?'<div style="margin-top:9px;display:flex;gap:7px"><button onclick="rotateDeveloperCredential(\''+esc(k.id)+'\')" style="background:var(--acg);color:var(--acc);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:10px;font-weight:700">Rotate</button><button onclick="revokeDeveloperCredential(\''+esc(k.id)+'\')" style="background:rgba(255,79,107,.1);color:var(--err);border:1px solid rgba(255,79,107,.2);border-radius:6px;padding:5px 9px;font-size:10px;font-weight:700">Revoke</button></div>':'')
+        +'</div>';
+    }).join('');
+  }catch(e){ el.innerHTML='<div style="color:var(--err);font-size:12px">'+esc(e.message)+'</div>'; }
+}
+
 async function generateApiKey(){
   var name = document.getElementById('apiKeyName').value.trim();
   if(!name){ toast('Enter a key name first','warning'); return; }

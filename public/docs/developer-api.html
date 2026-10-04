@@ -1,0 +1,22 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JuanAI Developer API — Getting Started</title><style>body{font-family:Inter,system-ui,sans-serif;background:#0b0d14;color:#eef1f7;margin:0;padding:24px;line-height:1.6}main{max-width:980px;margin:auto}h1,h2{margin-top:28px}.card{background:#151824;border:1px solid #2a2f42;border-radius:14px;padding:18px;margin:14px 0}code,pre{background:#0f121b;border-radius:8px}code{padding:2px 5px}pre{padding:14px;overflow:auto;border:1px solid #252a3a}a{color:#8b7cff}.tag{display:inline-block;padding:4px 8px;border-radius:8px;background:#22283a;margin-right:6px;font-size:12px}</style></head><body><main><p><a href="/docs/">← Developer API</a></p><h1>JuanAI Developer API</h1><p><span class="tag">Football</span><span class="tag">Casino</span><span class="tag">Server-to-server</span></p><div class="card"><h2>1. Create credentials</h2><p>In JuanAi Admin → Developer API, select Football API, Casino API, or both. If both are selected, JuanAi creates two independent credentials. A Football credential cannot access Casino endpoints and vice versa.</p><p>The secret is displayed only when the credential is created or rotated. Store it securely on your backend.</p></div><div class="card"><h2>2. Authentication</h2><pre>X-JuanAI-Key: jsk_football_...
+X-JuanAI-Secret: jss_football_...</pre><p>Credentials must stay server-side. Do not put them in browser JavaScript, localStorage, mobile-app public bundles, logs or Git.</p></div><div class="card"><h2>3. Product isolation</h2><pre>Football key → /api/developer/football/*  ✓
+Football key → /api/developer/casino/*    ✗ 403
+Casino key   → /api/developer/casino/*    ✓
+Casino key   → /api/developer/football/*  ✗ 403</pre></div><div class="card"><h2>4. Errors</h2><pre>{
+  "success": false,
+  "error": {
+    "code": "INVALID_API_CREDENTIALS",
+    "message": "The API credentials are invalid."
+  }
+}</pre><p>Common codes: INVALID_API_CREDENTIALS, API_KEY_REVOKED, INSUFFICIENT_SCOPE, INVALID_REQUEST, MISSING_PARAMETER, RESOURCE_NOT_FOUND, UPSTREAM_ERROR, RATE_LIMITED, INTERNAL_ERROR.</p></div><div class="card"><h2>5. Rate limiting</h2><p>The Developer API is rate limited per credential. The default implementation allows 120 requests per 60-second window. Configure <code>DEVELOPER_API_RATE_LIMIT</code> and <code>DEVELOPER_API_RATE_WINDOW_MS</code> on the server if different limits are required.</p></div><div class="card"><h2>6. cURL</h2><pre>curl "https://YOUR-JUANAI-DOMAIN/api/developer/football/fixtures?days=0" \
+  -H "X-JuanAI-Key: YOUR_FOOTBALL_KEY" \
+  -H "X-JuanAI-Secret: YOUR_FOOTBALL_SECRET"</pre></div><div class="card"><h2>7. Node.js</h2><pre>const response = await fetch(
+  'https://YOUR-JUANAI-DOMAIN/api/developer/football/fixtures?days=0',
+  {
+    headers: {
+      'X-JuanAI-Key': process.env.JUANAI_FOOTBALL_KEY,
+      'X-JuanAI-Secret': process.env.JUANAI_FOOTBALL_SECRET
+    }
+  }
+);
+const data = await response.json();</pre></div><div class="card"><h2>8. Real-money wallet status</h2><p>The existing JuanAi wallet bridge remains the source of truth for current integrations. The new Developer API does not create fake balance/bet/win endpoints. Production wallet operations are explicitly marked pending until a real provider callback/transaction implementation is present and tested.</p></div></main></body></html>

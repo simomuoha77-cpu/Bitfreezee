@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JuanAI Football API</title><style>body{font-family:Inter,system-ui,sans-serif;background:#0b0d14;color:#eef1f7;margin:0;padding:24px;line-height:1.6}main{max-width:980px;margin:auto}h1,h2{margin-top:28px}.card{background:#151824;border:1px solid #2a2f42;border-radius:14px;padding:18px;margin:14px 0}code,pre{background:#0f121b;border-radius:8px}pre{padding:14px;overflow:auto;border:1px solid #252a3a}a{color:#8b7cff}</style></head><body><main><p><a href="/docs/">← Developer API</a></p><h1>Football API</h1><div class="card"><h2>GET /api/developer/football/fixtures</h2><p>Returns JuanAi-normalized fixture data. The upstream football provider architecture remains internal.</p><pre>GET /api/developer/football/fixtures?days=0&sport=football
+
+Headers:
+X-JuanAI-Key: YOUR_FOOTBALL_KEY
+X-JuanAI-Secret: YOUR_FOOTBALL_SECRET</pre><p>Parameters: <code>days</code> (default 0), <code>sport</code> (football, basketball, tennis, hockey, cricket, volleyball, rugby, handball), <code>includeFinished=1</code> to include finished matches.</p></div><div class="card"><h2>GET /api/developer/football/competitions</h2><pre>GET /api/developer/football/competitions
+X-JuanAI-Key: YOUR_FOOTBALL_KEY
+X-JuanAI-Secret: YOUR_FOOTBALL_SECRET</pre><p>Returns the competitions available through JuanAi's existing football data layer.</p></div><div class="card"><h2>Response</h2><pre>{
+  "success": true,
+  "sport": "football",
+  "days": 0,
+  "fetchedAt": "...",
+  "matches": []
+}</pre></div><div class="card"><h2>Important</h2><p>Do not use Football credentials against Casino endpoints. Do not expose upstream provider keys, URLs, MongoDB credentials or AI-provider credentials to external developers.</p></div></main></body></html>
