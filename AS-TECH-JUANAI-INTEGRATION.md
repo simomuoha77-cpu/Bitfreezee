@@ -1,13 +1,13 @@
-# AS Tech public catalogue feed -> JuanAi -> SafariBet
+# AS Tech backend feed -> JuanAi -> SafariBet
 
-This integration does **not** use AS Tech partner API credentials.
+This integration is specifically for the situation where JuanAI does **not** have AS Tech partner API credentials. It uses the same public TanStack Start server-function mechanism already used by the AS Tech provider site for catalogue data.
 
-JuanAi reads the catalogue/demo data exposed by AS Tech's public provider site through its public TanStack Start server functions. SafariBet never connects to AS Tech directly.
+JuanAI reads the complete dynamically available AS Tech catalogue through AS Tech's existing TanStack Start server-function/backend feed. SafariBet never connects to AS Tech directly; it consumes JuanAI.
 
 ## Architecture
 
 ```text
-AS Tech public catalogue
+AS Tech existing backend/server-function catalogue feed
         |
         v
      JuanAi
@@ -24,7 +24,7 @@ POST f07c6f8a5a9fb9b1114ce81637d1c2d65e808d67e9b4b5dcefca426d32f51ed6
 POST 4ab17f09ba48ede6e014c5e622114a0b00c72cab6878df37e1fdf2fd33551fca
 ```
 
-The games function receives:
+The catalogue games function receives:
 
 ```json
 {
@@ -78,8 +78,10 @@ GET /api/casino/games?source=as-tech
 GET /api/casino/games?source=as-tech&providerCode=spribe
 ```
 
-## Important real-money boundary
+## Launch and real-money boundary
 
-AS Tech's public site advertises zero-balance demo launches, but its production integration requires partner credentials, HMAC signing and wallet callbacks. This adapter does **not** turn the public demo into a real-money integration.
+The existing AS Tech backend function discovered in this project provides the public launch flow. The current function is documented by the adapter as a **demo/public launch**, so JuanAI must not label it as a production real-money session.
 
-For real-money AS Tech games, obtain authorized sandbox/production credentials from AS Tech and implement their documented `/api/public/v1/session/open` and seamless-wallet callback contract separately.
+The catalogue itself is dynamic and includes all providers/games returned by the AS Tech backend feed; it is not restricted to Aviator or JetX.
+
+If AS Tech's backend later exposes an authorized production session through this same mechanism, that exact mechanism can be added without inventing an API key/secret. Until then, JuanAI must fail honestly rather than pretending a demo URL is a real-money wallet session.

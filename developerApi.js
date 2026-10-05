@@ -1,6 +1,8 @@
 // JuanAi Developer API: product-scoped Football/Casino credentials.
-// Existing Football routes are unchanged. Casino routes below expose only
-// JuanAi's own Aviator/JetX real-money partner layer and never AS Tech secrets.
+// Existing Football routes are unchanged. Casino routes preserve JuanAi's
+// legacy games while using AS Tech's existing public backend/server-function
+// system as the upstream catalogue source. No AS Tech partner key/secret is
+// required for this catalogue feed.
 const express = require('express');
 const db = require('./db');
 const scheduler = require('./scheduler');
@@ -88,12 +90,11 @@ router.get('/football/competitions', requireDeveloperApi('football'), async (req
 });
 
 // ── Casino Developer API ──────────────────────────────────────────────
-// Casino catalogue exposed to partners. JuanAi-owned Aviator/JetX are
-// real-money capable through the partner wallet flow. AS Tech catalogue
-// games are also exposed here exactly as JuanAi exposes them in its Casino
-// page, but their current public integration mode is DEMO only.
-// SafariBet must receive the complete JuanAi catalogue, not a hard-coded
-// Aviator/JetX-only list.
+// Casino catalogue exposed to partners. The complete AS Tech catalogue is
+// fetched dynamically through AS Tech's existing public backend/server-function
+// feed. JuanAi's legacy Aviator/JetX routes remain available for compatibility.
+// IMPORTANT: the public AS Tech launch function is a public/demo mechanism;
+// it must never be described as an AS Tech production real-money session.
 router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
   try {
     const ownGames = casinoIntegration.listGames().map(g => ({
@@ -240,7 +241,7 @@ router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) =>
     const launchUrl = data?.gameUrl || data?.url || data?.launchUrl || data?.game_url || null;
     return res.json({
       success: true,
-      mode: 'demo',
+      mode: 'as-tech-public',
       realMoney: false,
       launchUrl,
       gameUrl: launchUrl,
@@ -264,7 +265,7 @@ router.post('/casino/demo-launch', requireDeveloperApi('casino'), async (req, re
   try {
     if (!req.body?.gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
     const data = await asTechApi.launchDemo(req.body.gameId);
-    return res.json({ success: true, data, mode: 'demo', realMoney: false });
+    return res.json({ success: true, data, mode: 'as-tech-public', realMoney: false });
   } catch (e) { console.error('[developer-api] demo launch:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to launch the casino demo.'); }
 });
 
