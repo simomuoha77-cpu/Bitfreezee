@@ -294,7 +294,25 @@ async function listProviders({ force = false } = {}) {
   try {
     const raw = unwrap(await requestJson('GET', PROVIDERS_FN));
     const list = asArray(raw, ['providers', 'items', 'results']).map(normalizeProvider).filter(Boolean);
-    value = { providers: list, total: list.length, source: 'as-tech-public' };
+
+    // The public RPC can occasionally return a partial provider list even
+    // though the AS Tech /providers page contains the full catalogue. Merge
+    // the public HTML provider list when it has more entries. This prevents
+    // JuanAI from silently exposing only a tiny subset (or only its own
+    // Aviator/JetX games) when the upstream RPC shape changes.
+    try {
+      const htmlValue = await listProvidersFromHtml();
+      if (htmlValue.providers.length > list.length) {
+        const merged = new Map(list.map(p => [p.code, p]));
+        for (const p of htmlValue.providers) if (!merged.has(p.code)) merged.set(p.code, p);
+        const mergedList = [...merged.values()];
+        value = { providers: mergedList, total: mergedList.length, source: 'as-tech-public+html' };
+      } else {
+        value = { providers: list, total: list.length, source: 'as-tech-public' };
+      }
+    } catch (_) {
+      value = { providers: list, total: list.length, source: 'as-tech-public' };
+    }
   } catch (err) {
     // The provider pages themselves are public and contain the same SSR
     // catalogue. Use that as a non-authenticated fallback if the RPC layer
@@ -400,17 +418,39 @@ async function listAllGames({ force = false, allPages = true } = {}) {
   const providers = await listProviders({ force });
   const results = [];
   // Keep concurrency modest so a full catalogue sync does not hammer the
-  // public site. Each provider's own pagination is still sequential.
+  // public site. IMPORTANT: one broken provider must never erase every other
+  // provider from JuanAI. Older code used Promise.all() without per-provider
+  // error isolation, so one upstream 4xx/5xx caused /casino/games to throw and
+  // the Developer API returned only JuanAI's own Aviator/JetX games.
+  const failures = [];
   for (let i = 0; i < providers.providers.length; i += 4) {
     const batch = providers.providers.slice(i, i + 4);
-    const rows = await Promise.all(batch.map(p => allPages
-      ? listAllProviderGames(p.code, { force })
-      : listProviderGames(p.code, { force })));
-    for (const row of rows) results.push(...row.games);
+    const rows = await Promise.all(batch.map(async p => {
+      try {
+        return await (allPages
+          ? listAllProviderGames(p.code, { force })
+          : listProviderGames(p.code, { force }));
+      } catch (err) {
+        failures.push({ providerCode: p.code, message: err?.message || 'provider catalogue failed' });
+        return null;
+      }
+    }));
+    for (const row of rows) if (row?.games?.length) results.push(...row.games);
   }
+
+  // Always retain the verified public Spribe catalogue as a safety net.
+  // This is catalogue-only and launches still go through AS Tech's public
+  // demo server function.
+  if (!results.some(g => g.providerCode === 'spribe')) results.push(...SPRIBE_FALLBACK_GAMES);
   const seen = new Set();
   const games = results.filter(g => !seen.has(g.id) && seen.add(g.id));
-  return { providers: providers.providers, games, total: games.length, source: 'as-tech-public' };
+  return {
+    providers: providers.providers,
+    games,
+    total: games.length,
+    failedProviders: failures.length,
+    source: failures.length ? 'as-tech-public-partial' : 'as-tech-public',
+  };
 }
 
 async function launchDemo(gameId) {

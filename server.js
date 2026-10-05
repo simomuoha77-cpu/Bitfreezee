@@ -64,16 +64,7 @@ async function requireApiKey(req, res, next) {
     return next();
   }
   const key = extractApiKey(req);
-  let valid = await db.isValidApiKey(key);
-  // Developer Casino credentials are intentionally usable as the public
-  // partner API key for the launched JuanAi game page. The secret remains
-  // server-side and is NEVER accepted or exposed by this browser route.
-  if (!valid) {
-    try {
-      const dev = await db.getDeveloperCredentialByKey(key);
-      valid = !!(dev && dev.status === 'active' && dev.product === 'casino');
-    } catch (_) { valid = false; }
-  }
+  const valid = await db.isValidApiKey(key);
   if (!valid) {
     return res.status(401).json({ error: 'Invalid or missing API key' });
   }
