@@ -1,14 +1,12 @@
 // JuanAi Developer API: product-scoped Football/Casino credentials.
-// Existing Football routes are unchanged. Casino routes preserve JuanAi's
-// legacy games while using AS Tech's existing public backend/server-function
-// system as the upstream catalogue source. No AS Tech partner key/secret is
-// required for this catalogue feed.
+// Existing Football routes are unchanged. Casino routes below expose only
+// JuanAi's own Aviator/JetX real-money partner layer.
 const express = require('express');
 const db = require('./db');
 const scheduler = require('./scheduler');
-const asTechApi = require('./asTechApi');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
+const userToken = require('./userToken');
 
 const router = express.Router();
 const WINDOW_MS = Number(process.env.DEVELOPER_API_RATE_WINDOW_MS || 60_000);
@@ -90,53 +88,39 @@ router.get('/football/competitions', requireDeveloperApi('football'), async (req
 });
 
 // ── Casino Developer API ──────────────────────────────────────────────
-// Casino catalogue exposed to partners. The complete AS Tech catalogue is
-// fetched dynamically through AS Tech's existing public backend/server-function
-// feed. JuanAi's legacy Aviator/JetX routes remain available for compatibility.
-// IMPORTANT: the public AS Tech launch function is a public/demo mechanism;
-// it must never be described as an AS Tech production real-money session.
+// JuanAi's own real-money casino catalogue. The only games exposed are
+// the server-authoritative Aviator and JetX engines in casinoIntegration.js.
+// No external casino provider is required for this catalogue or launch.
 router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
   try {
-    const ownGames = casinoIntegration.listGames().map(g => ({
-      ...g,
-      source: 'juanai',
-      launchMode: 'real-money',
-      realMoney: true,
-    }));
-    let asTechGames = [];
-    try {
-      const catalogue = await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
-      asTechGames = (catalogue?.games || []).map(g => ({
-        id: String(g.id),
-        gameId: String(g.id),
-        name: String(g.name || g.title || g.id),
-        title: String(g.title || g.name || g.id),
-        category: String(g.category || 'casino'),
-        thumbnail: g.image || null,
-        image: g.image || null,
-        gameUrl: null,
-        status: 'active',
-        rtp: null,
-        providerCode: g.providerCode || null,
-        source: 'as-tech',
-        launchMode: 'demo',
-        realMoney: false,
-        demoLaunch: true,
-        launchEndpoint: '/api/developer/casino/launch',
-      }));
-    } catch (e) {
-      console.warn('[developer-api] AS Tech catalogue unavailable:', e.message);
+    const ownGames = casinoIntegration.listGames();
+    const data = [];
+    for (const g of ownGames) {
+      const image = await db.getSetting(`casino_game_image_${g.id}`);
+      data.push({
+        id: g.id,
+        gameId: g.id,
+        name: g.name,
+        title: g.name,
+        category: g.category,
+        thumbnail: image || g.thumbnail || null,
+        image: image || g.thumbnail || null,
+        gameUrl: g.gameUrl || null,
+        status: g.status || 'active',
+        rtp: g.rtp == null ? null : g.rtp,
+        providerCode: 'juanai',
+        source: 'juanai',
+        launchMode: 'real-money',
+        realMoney: true,
+        demoLaunch: false,
+        launchEndpoint: '/api/developer/casino/launch'
+      });
     }
-    const seen = new Set();
-    const data = [...ownGames, ...asTechGames].filter(g => {
-      const id = String(g.id || g.gameId);
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-    return res.json({ success: true, count: data.length, data, sources: { juanai: ownGames.length, asTech: asTechGames.length } });
+    return res.json({ success: true, count: data.length, data, sources: { juanai: data.length } });
+  } catch (e) {
+    console.error('[developer-api] casino games:', e.message);
+    return error(res, 500, 'INTERNAL_ERROR', 'Unable to load JuanAi casino games.');
   }
-  catch (e) { console.error('[developer-api] casino games:', e.message); return error(res, 500, 'INTERNAL_ERROR', 'Unable to load JuanAi casino games.'); }
 });
 
 router.get('/casino/state/:gameId', requireDeveloperApi('casino'), async (req, res) => {
@@ -213,46 +197,49 @@ router.post('/casino/bet/:betId/cashout', requireDeveloperApi('casino'), async (
   } catch (e) { return error(res, 502, 'UPSTREAM_ERROR', 'Unable to cash out the casino bet.'); }
 });
 
-// Existing AS Tech Developer API endpoints remain available for other clients;
-// SafariBet's JuanAi casino adapter does not use them.
-router.get('/casino/providers', requireDeveloperApi('casino'), async (req, res) => {
-  try { return res.json({ success: true, data: await asTechApi.listProviders({ force: req.query.refresh === '1' }) }); }
-  catch (e) { console.error('[developer-api] casino providers:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino providers.'); }
-});
-router.get('/casino/all-games', requireDeveloperApi('casino'), async (req, res) => {
-  try { return res.json({ success: true, data: await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true }) }); }
-  catch (e) { console.error('[developer-api] casino all-games:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to load casino catalogue.'); }
-});
-// Universal launch endpoint for every game in the JuanAI Casino catalogue.
-// AS Tech's public integration currently provides a demo launch URL; this
-// endpoint deliberately does not pretend that a public demo is a real-money
-// provider session. SafariBet only needs the JuanAI credential pair and never
-// talks to AS Tech directly.
+// Production casino launch. The caller is authenticated by the JuanAI
+// Developer API credential and supplies the already-authenticated SafariBet
+// userId. JuanAI signs a short-lived user token for its own Aviator/JetX
+// engine and returns the real-money game URL. No external provider is used.
 router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) => {
   try {
-    const gameId = String(req.body?.gameId || '').trim();
+    const gameId = String(req.body?.gameId || '').trim().toLowerCase();
+    const userId = String(req.body?.userId || '').trim();
+    const username = String(req.body?.username || userId).trim();
     if (!gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
-
-    const catalogue = await asTechApi.listAllGames({ force: false, allPages: true });
-    const game = (catalogue.games || []).find(g => String(g.id) === gameId);
+    if (!userId) return error(res, 400, 'MISSING_PARAMETER', 'userId is required.');
+    const game = casinoIntegration.getGame(gameId);
     if (!game) return error(res, 404, 'RESOURCE_NOT_FOUND', 'Casino game is not available in the JuanAI catalogue.');
+    if (!userToken.isConfigured()) return error(res, 503, 'USER_TOKEN_NOT_CONFIGURED', 'JUANAI_USER_TOKEN_SECRET is not configured.');
 
-    const data = await asTechApi.launchDemo(gameId);
-    const launchUrl = data?.gameUrl || data?.url || data?.launchUrl || data?.game_url || null;
+    // Read the real partner balance before issuing a playable session.
+    // This does not create a JuanAI balance; SafariBet remains the source of truth.
+    const balance = await casinoIntegration.getBalance(req.developerCredential.apiKey, userId);
+    if (!balance?.success) return error(res, 502, 'WALLET_UNAVAILABLE', balance?.message || 'Unable to verify the player wallet.');
+
+    const utoken = userToken.sign(userId);
+    const separator = String(game.gameUrl || '').includes('?') ? '&' : '?';
+    const launchUrl = `${game.gameUrl}${separator}key=${encodeURIComponent(req.developerCredential.apiKey)}&utoken=${encodeURIComponent(utoken)}`;
+    const image = await db.getSetting(`casino_game_image_${gameId}`);
     return res.json({
       success: true,
-      mode: 'as-tech-public',
-      realMoney: false,
+      mode: 'real-money',
+      realMoney: true,
+      currency: 'KES',
+      gameId,
+      username,
+      balance: Number(balance.balance ?? balance.main ?? 0),
       launchUrl,
-      gameUrl: launchUrl,
       game: {
-        id: String(game.id),
-        name: game.title || game.name || game.id,
-        providerCode: game.providerCode || null,
-        category: game.category || 'casino',
-        image: game.image || null,
-      },
-      data,
+        id: game.id,
+        gameId: game.id,
+        name: game.name,
+        category: game.category,
+        thumbnail: image || game.thumbnail || null,
+        image: image || game.thumbnail || null,
+        launchMode: 'real-money',
+        realMoney: true
+      }
     });
   } catch (e) {
     console.error('[developer-api] casino launch:', e.message);
@@ -260,21 +247,15 @@ router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) =>
   }
 });
 
-// Backward-compatible alias.
-router.post('/casino/demo-launch', requireDeveloperApi('casino'), async (req, res) => {
+// Persistent casino artwork. Images are stored in MongoDB's settings
+// collection as data URLs so the dashboard upload survives restarts and
+// deployments. No external image URL is required.
+router.get('/casino/images', requireDeveloperApi('casino'), async (req, res) => {
   try {
-    if (!req.body?.gameId) return error(res, 400, 'MISSING_PARAMETER', 'gameId is required.');
-    const data = await asTechApi.launchDemo(req.body.gameId);
-    return res.json({ success: true, data, mode: 'as-tech-public', realMoney: false });
-  } catch (e) { console.error('[developer-api] demo launch:', e.message); return error(res, 502, 'UPSTREAM_ERROR', 'Unable to launch the casino demo.'); }
-});
-
-// Do not expose a fake production wallet. A real-money AS Tech wallet bridge
-// requires the authorized provider contract/callback specification and must
-// be implemented against those signed callbacks. Returning 501 makes this
-// boundary explicit instead of silently accepting money operations.
-router.all('/casino/wallet/:operation', requireDeveloperApi('casino'), (req, res) => {
-  return error(res, 501, 'PROVIDER_WALLET_NOT_CONFIGURED', `Production wallet operation '${req.params.operation}' requires an authorized upstream casino wallet integration.`);
+    const out = {};
+    for (const id of ['aviator', 'jetx']) out[id] = await db.getSetting(`casino_game_image_${id}`);
+    return res.json({ success: true, images: out });
+  } catch (e) { return error(res, 500, 'INTERNAL_ERROR', 'Unable to load casino images.'); }
 });
 
 module.exports = { router, requireDeveloperApi };

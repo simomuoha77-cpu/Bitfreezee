@@ -733,7 +733,26 @@ app.get('/games/today', async (req, res) => {<br>
       <div class="casino-hdr">
         <div class="ctitle">🎰 JuanAi Casino</div>
       </div>
-      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Free-play demo only — no real money, no withdrawals. Round outcomes are decided server-side.</div>
+      <div class="casino-note"><i class="fa-solid fa-circle-info"></i> Real-money Aviator and JetX. Your partner wallet remains the source of truth; rounds and outcomes are decided server-side.</div>
+      <div style="max-width:640px;margin:0 auto 16px;padding:14px;background:var(--bg2);border:1px solid var(--bdr);border-radius:14px">
+        <div style="font-size:13px;font-weight:800;margin-bottom:6px">🖼️ Casino Game Images</div>
+        <div style="font-size:11px;color:var(--t2);line-height:1.5;margin-bottom:12px">Admin uploads are stored in MongoDB and remain available after restarts and deployments.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <div style="font-size:11px;font-weight:700;margin-bottom:6px">Aviator</div>
+            <input id="casinoAviatorImage" type="file" accept="image/png,image/jpeg,image/webp" style="width:100%;font-size:11px">
+            <img id="casinoAviatorPreview" style="display:none;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;margin-top:8px">
+            <button onclick="uploadCasinoImage('aviator')" style="margin-top:8px;background:var(--grad);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer">Save Aviator Image</button>
+          </div>
+          <div>
+            <div style="font-size:11px;font-weight:700;margin-bottom:6px">JetX</div>
+            <input id="casinoJetxImage" type="file" accept="image/png,image/jpeg,image/webp" style="width:100%;font-size:11px">
+            <img id="casinoJetxPreview" style="display:none;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;margin-top:8px">
+            <button onclick="uploadCasinoImage('jetx')" style="margin-top:8px;background:var(--grad);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer">Save JetX Image</button>
+          </div>
+        </div>
+        <div id="casinoImageStatus" style="font-size:11px;color:var(--tm);margin-top:10px"></div>
+      </div>
       <div class="casino-grid">
 
         <!-- AVIATOR — real server-authoritative crash game, own page -->
@@ -754,24 +773,7 @@ app.get('/games/today', async (req, res) => {<br>
           <button class="crash-btn play" style="flex:0 0 auto;padding:14px 28px" onclick="launchJetX()">Play ⏯️</button>
         </div>
 
-        <!-- AS TECH PUBLIC CATALOGUE -->
-        <div class="cgame-card" style="grid-column:1/-1">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-            <div style="flex:1;min-width:220px">
-              <h3 style="margin-bottom:4px"><i class="fa-solid fa-layer-group" style="color:var(--cas-a)"></i> AS Tech Games</h3>
-              <div style="font-size:12px;color:var(--t2);line-height:1.5">Live public catalogue feed from AS Tech through JuanAi. Demo launch only.</div>
-            </div>
-            <button class="crash-btn play" style="padding:10px 16px" onclick="loadAsTechGames(true)">Refresh</button>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-            <select id="asTechProvider" onchange="loadAsTechGames(false)" style="flex:1;min-width:180px;padding:10px;border-radius:10px;background:var(--bg3);color:var(--t1);border:1px solid var(--bdr)">
-              <option value="spribe">Spribe</option>
-            </select>
-            <input id="asTechSearch" oninput="debouncedAsTechGames()" placeholder="Search AS Tech games…" style="flex:1;min-width:180px;padding:10px;border-radius:10px;background:var(--bg3);color:var(--t1);border:1px solid var(--bdr)">
-          </div>
-          <div id="asTechStatus" style="font-size:11px;color:var(--tm);margin-bottom:10px">Loading AS Tech catalogue…</div>
-          <div id="asTechGamesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px"></div>
-        </div>
+
 
       </div>
     </div>
@@ -2490,111 +2492,54 @@ function switchMainTab(t){
   else if(t==='casino'){if(casinoPanel)casinoPanel.style.display='flex';if(btnCasino)btnCasino.classList.add('active');initCasino();}
 }
 
-// ─── CASINO — FREE-PLAY DEMO GAMES ─────────────────────────────────────────
-// Both games are original, self-contained demo games — not clones of any
-// real-money product. No backend call, no real currency: balances are just
-// in-memory JS numbers that reset on page reload. If this is ever wired to
-// real money, the odds/RNG must come from a licensed game provider instead
-// of this code — Math.random-based RNG is fine ONLY because nothing real is
-// at stake here.
+// ─── CASINO — REAL-MONEY AVIATOR + JETX ─────────────────────────────
 var casinoInit=false;
 function initCasino(){
-  if(casinoInit)return;
+  if(casinoInit){ loadCasinoImages(); return; }
   casinoInit=true;
-  loadAsTechProviders();
-  loadAsTechGames(false);
+  loadCasinoImages();
 }
 
-var asTechSearchTimer=null;
-function debouncedAsTechGames(){
-  clearTimeout(asTechSearchTimer);
-  asTechSearchTimer=setTimeout(function(){loadAsTechGames(false)},300);
+function previewCasinoImage(inputId, previewId){
+  var input=document.getElementById(inputId), preview=document.getElementById(previewId);
+  if(!input||!preview||!input.files||!input.files[0]) return;
+  var file=input.files[0];
+  if(file.size>4*1024*1024){ toast('Image must be 4 MB or smaller','error'); input.value=''; return; }
+  var reader=new FileReader();
+  reader.onload=function(){ preview.src=reader.result; preview.style.display='block'; };
+  reader.readAsDataURL(file);
 }
-
-async function loadAsTechProviders(){
-  var select=document.getElementById('asTechProvider');
-  if(!select)return;
+function setupCasinoImageInputs(){
+  var a=document.getElementById('casinoAviatorImage'), j=document.getElementById('casinoJetxImage');
+  if(a&&!a.dataset.bound){a.dataset.bound='1';a.onchange=function(){previewCasinoImage('casinoAviatorImage','casinoAviatorPreview');};}
+  if(j&&!j.dataset.bound){j.dataset.bound='1';j.onchange=function(){previewCasinoImage('casinoJetxImage','casinoJetxPreview');};}
+}
+async function loadCasinoImages(){
+  setupCasinoImageInputs();
   try{
-    var r=await fetch(JUANAI_BACKEND_URL+'/api/casino/as-tech/providers');
+    var r=await fetchInternal('/internal/casino/images');
     if(!r.ok) throw new Error('HTTP '+r.status);
-    var j=await r.json();
-    var providers=(j.data&&j.data.providers)||[];
-    if(!providers.length)return;
-    var current=select.value||'spribe';
-    select.innerHTML='';
-    providers.forEach(function(p){
-      var o=document.createElement('option');
-      o.value=p.code;o.textContent=(p.name||p.code)+' ('+(p.gameCount||0)+')';
-      select.appendChild(o);
-    });
-    if(providers.some(function(p){return p.code===current})) select.value=current;
-    else select.value=providers[0].code;
-    loadAsTechGames(false);
-  }catch(e){
-    // Keep Spribe as the initial fallback because its public provider page is known.
-  }
+    var d=await r.json(), imgs=d.images||{};
+    if(imgs.aviator){var a=document.getElementById('casinoAviatorPreview');if(a){a.src=imgs.aviator;a.style.display='block';}}
+    if(imgs.jetx){var j=document.getElementById('casinoJetxPreview');if(j){j.src=imgs.jetx;j.style.display='block';}}
+  }catch(e){ var st=document.getElementById('casinoImageStatus');if(st)st.textContent='Admin login required to manage images.'; }
 }
-
-async function loadAsTechGames(force){
-  var grid=document.getElementById('asTechGamesGrid');
-  var status=document.getElementById('asTechStatus');
-  var provider=(document.getElementById('asTechProvider')||{}).value||'spribe';
-  var search=((document.getElementById('asTechSearch')||{}).value||'').trim();
-  if(!grid||!status)return;
-  status.textContent='Loading '+provider+' games…';
-  try{
-    var q='?providerCode='+encodeURIComponent(provider)+'&page=1';
-    if(search)q+='&search='+encodeURIComponent(search);
-    if(force)q+='&refresh=1';
-    var r=await fetch(JUANAI_BACKEND_URL+'/api/casino/as-tech/games'+q);
-    var j=await r.json();
-    if(!r.ok||!j.success)throw new Error(j.message||('HTTP '+r.status));
-    var games=(j.data&&j.data.games)||[];
-    // The backend is expected to provide the AS Tech public catalogue. If an
-    // older deployment/cache returns an empty 200, force one fresh request
-    // before declaring the lobby empty.
-    if(!games.length && !force && !search){
-      return loadAsTechGames(true);
-    }
-    grid.innerHTML='';
-    games.forEach(function(g){
-      var card=document.createElement('div');
-      card.className='cgame-card';
-      card.style.cssText='padding:10px;display:flex;flex-direction:column;gap:8px;min-height:190px';
-      var img=document.createElement('img');
-      img.src=g.image||'';img.alt=g.title||'Game';img.loading='lazy';
-      img.style.cssText='width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:9px;background:var(--bg3)';
-      img.onerror=function(){this.style.display='none'};
-      var title=document.createElement('div');title.textContent=g.title||g.name||g.id;title.style.cssText='font-weight:700;font-size:13px';
-      var meta=document.createElement('div');meta.textContent=(g.category||'casino')+' · AS Tech';meta.style.cssText='font-size:10px;color:var(--tm)';
-      var btn=document.createElement('button');btn.className='crash-btn play';btn.textContent='Demo ▶';btn.style.cssText='padding:9px 12px;width:100%';
-      btn.onclick=function(){launchAsTechDemo(g.id,g.title||g.name||g.id)};
-      card.appendChild(img);card.appendChild(title);card.appendChild(meta);card.appendChild(btn);grid.appendChild(card);
-    });
-    status.textContent=games.length+' game'+(games.length===1?'':'s')+' · '+(j.data&&j.data.total||games.length)+' available';
-    if(!games.length)status.textContent='No games returned for '+provider+'. Try Refresh.';
-  }catch(e){
-    status.textContent='AS Tech catalogue error: '+e.message;
-    grid.innerHTML='<div style="grid-column:1/-1;padding:14px;color:var(--tm)">Could not load AS Tech games. Check the JuanAi server logs.</div>';
-  }
-}
-
-function launchAsTechDemo(gameId,title){
-  var tab=window.open('','_blank');
-  if(tab)tab.document.write('<body style="background:#0b0f1a;color:#aaa;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading '+String(title||'game').replace(/[<>]/g,'')+'…</body>');
-  fetch(JUANAI_BACKEND_URL+'/api/casino/as-tech/demo-launch',{
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gameId:gameId})
-  }).then(async function(r){
-    var j=await r.json();
-    if(!r.ok||!j.success)throw new Error(j.message||('HTTP '+r.status));
-    var d=j.data||{};
-    var url=d.gameUrl||d.url||d.launchUrl||d.game_url;
-    if(!url)throw new Error('AS Tech returned no demo URL');
-    if(tab)tab.location.href=url;else window.open(url,'_blank');
-  }).catch(function(e){
-    if(tab)tab.close();
-    toast('Could not launch AS Tech demo: '+e.message,'error');
-  });
+async function uploadCasinoImage(gameId){
+  var input=document.getElementById(gameId==='aviator'?'casinoAviatorImage':'casinoJetxImage');
+  if(!input||!input.files||!input.files[0]){toast('Choose an image first','error');return;}
+  var file=input.files[0];
+  if(file.size>4*1024*1024){toast('Image must be 4 MB or smaller','error');return;}
+  var reader=new FileReader();
+  reader.onload=async function(){
+    try{
+      var r=await fetchInternal('/internal/casino/images/'+encodeURIComponent(gameId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:reader.result})});
+      var d=await r.json();
+      if(!r.ok||!d.success) throw new Error(d.message||('HTTP '+r.status));
+      toast(gameId==='aviator'?'Aviator image saved permanently':'JetX image saved permanently','success');
+      loadCasinoImages();
+    }catch(e){toast(e.message||'Could not save image','error');}
+  };
+  reader.readAsDataURL(file);
 }
 
 // ── Aviator — real server-authoritative crash game, own page ──

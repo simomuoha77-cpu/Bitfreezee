@@ -4,16 +4,16 @@ This build provides a server-to-server Developer API for SafariBet and other par
 
 ## Casino contract
 
-SafariBet uses **only the JuanAI Casino API key + secret**. It must not contain or call AS Tech credentials directly. JuanAI is the upstream adapter and catalogue gateway.
+SafariBet uses **only the JuanAI Casino API key + secret**. It must not contain or call JuanAi credentials directly. JuanAI is the upstream adapter and catalogue gateway.
 
-The Casino catalogue is not hard-coded to Aviator/JetX. `GET /api/developer/casino/games` returns JuanAI-owned games plus the complete AS Tech public catalogue discovered from AS Tech providers and pagination. Every AS Tech game has a stable `gameId`, provider, category, image, `source: as-tech`, and a JuanAI launch endpoint.
+The Casino catalogue is not hard-coded to Aviator/JetX. `GET /api/developer/casino/games` returns JuanAI-owned games plus the complete JuanAi public catalogue discovered from JuanAi providers and pagination. Every JuanAi game has a stable `gameId`, provider, category, image, `source: juanai`, and a JuanAI launch endpoint.
 
 ### Implemented Casino endpoints
 
-- `GET /api/developer/casino/providers` — all available AS Tech providers.
-- `GET /api/developer/casino/games` — combined JuanAI + AS Tech catalogue.
-- `GET /api/developer/casino/all-games` — AS Tech catalogue only.
-- `POST /api/developer/casino/launch` — universal AS Tech game launch through JuanAI.
+- `GET /api/developer/casino/providers` — all available JuanAi providers.
+- `GET /api/developer/casino/games` — combined JuanAI + JuanAi catalogue.
+- `GET /api/developer/casino/all-games` — JuanAi catalogue only.
+- `POST /api/developer/casino/launch` — universal JuanAi game launch through JuanAI.
 - `POST /api/developer/casino/demo-launch` — backward-compatible alias for launch.
 - `GET /api/developer/casino/state/:gameId` — JuanAI-owned game state.
 - `GET /api/developer/casino/players/:gameId` — JuanAI-owned game players.
@@ -23,11 +23,11 @@ The Casino catalogue is not hard-coded to Aviator/JetX. `GET /api/developer/casi
 - `POST /api/developer/casino/bet/:betId/cashout` — cashout where supported.
 - `POST /api/developer/casino/wallet/register` — registers the partner wallet callback base URL.
 
-## AS Tech boundary
+## JuanAi boundary
 
-The current AS Tech adapter uses the public AS Tech catalogue/server-function transport and public demo launch. Therefore AS Tech games are returned with `launchMode: demo` and `realMoney: false`. This is deliberate: the code must never invent or fake an AS Tech production wallet/session API.
+The current JuanAi adapter uses the public JuanAi catalogue/server-function transport and public demo launch. Therefore JuanAi games are returned with `launchMode: demo` and `realMoney: false`. This is deliberate: the code must never invent or fake an JuanAi production wallet/session API.
 
-A production real-money AS Tech integration requires authorized AS Tech partner credentials and the provider's production session/wallet/callback contract. Once those are supplied, the same JuanAI Developer API can be extended behind `/casino/launch` without changing SafariBet's key/secret model.
+A production real-money JuanAi integration requires authorized JuanAi partner credentials and the provider's production session/wallet/callback contract. Once those are supplied, the same JuanAI Developer API can be extended behind `/casino/launch` without changing SafariBet's key/secret model.
 
 ## Authentication
 

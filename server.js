@@ -28,7 +28,6 @@ const sofaBetsData = require('./sofaBetsData');
 const scheduler = require('./scheduler');
 const casino = require('./casino');
 const casinoIntegration = require('./casinoIntegration');
-const asTechApi = require('./asTechApi');
 const walletClient = require('./walletClient');
 const userToken = require('./userToken');
 const developerApi = require('./developerApi');
@@ -560,84 +559,19 @@ app.post('/api/jetx/cashout', requireApiKey, (req, res) => {
 // from a browser would expose the API key and the partner's internal
 // userId values to anyone who opens devtools.
 
-// ── AS TECH PUBLIC CATALOGUE FEED ─────────────────────────────────────
-// This is catalogue/demo data exposed by AS Tech's public website. It does
-// not use partner API keys or secrets. SafariBet talks only to JuanAi.
-// Real-money AS Tech session/wallet APIs remain a separate authorized flow.
-app.get('/api/casino/as-tech/providers', requireApiKey, async (req, res) => {
-  try {
-    const data = await asTechApi.listProviders({ force: req.query.refresh === '1' });
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[AS_TECH_PUBLIC] providers:', err.message);
-    res.status(err.statusCode === 404 ? 502 : 502).json({ success: false, message: err.message });
-  }
-});
-
-// GET /api/casino/as-tech/games?key=jsk_xxx&providerCode=spribe&page=1
-// providerCode is optional. Without it, the endpoint can return the full
-// public catalogue (cached). For a lobby, requesting one provider at a time
-// is recommended; /all-games is available for a deliberate full sync.
-app.get('/api/casino/as-tech/games', requireApiKey, async (req, res) => {
-  try {
-    const providerCode = String(req.query.providerCode || '').trim();
-    const search = String(req.query.search || '');
-    const page = Number(req.query.page || 1);
-    const data = providerCode
-      ? await asTechApi.listProviderGames(providerCode, { search, page, force: req.query.refresh === '1' })
-      : await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[AS_TECH_PUBLIC] games:', err.message);
-    res.status(502).json({ success: false, message: err.message });
-  }
-});
-
-// Explicit full-catalogue sync endpoint. This can take longer because AS
-// Tech paginates provider catalogues. Results are cached by the adapter.
-app.get('/api/casino/as-tech/all-games', requireApiKey, async (req, res) => {
-  try {
-    const data = await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[AS_TECH_PUBLIC] all-games:', err.message);
-    res.status(502).json({ success: false, message: err.message });
-  }
-});
-
-// Public zero-balance demo launch exposed by the AS Tech provider pages.
-// This is NOT the real-money session/open endpoint.
-app.post('/api/casino/as-tech/demo-launch', requireApiKey, async (req, res) => {
-  try {
-    const data = await asTechApi.launchDemo(req.body?.gameId);
-    res.json({ success: true, data });
-  } catch (err) {
-    console.error('[AS_TECH_PUBLIC] demo-launch:', err.message);
-    res.status(502).json({ success: false, message: err.message });
-  }
-});
-
+// ── CASINO CATALOGUE ─────────────────────────────────────────────────
 // GET /api/casino/games?key=jsk_xxx
 // Returns the catalog of games available to embed. See casinoIntegration
 // .js's GAMES list — only lists games that are actually live and working.
 app.get('/api/casino/games', requireApiKey, async (req, res) => {
-  if (String(req.query.source || '').toLowerCase() === 'as-tech') {
+  const games = casinoIntegration.listGames();
+  for (const g of games) {
     try {
-      const providerCode = String(req.query.providerCode || '').trim();
-      const data = providerCode
-        ? await asTechApi.listProviderGames(providerCode, {
-            search: String(req.query.search || ''),
-            page: Number(req.query.page || 1),
-            force: req.query.refresh === '1',
-          })
-        : await asTechApi.listAllGames({ force: req.query.refresh === '1', allPages: true });
-      return res.json({ success: true, data });
-    } catch (err) {
-      console.error('[AS_TECH_PUBLIC] /api/casino/games:', err.message);
-      return res.status(502).json({ success: false, message: err.message });
-    }
+      const image = await db.getSetting(`casino_game_image_${g.id}`);
+      if (image) g.thumbnail = image;
+    } catch (_) {}
   }
-  res.json({ success: true, data: casinoIntegration.listGames() });
+  res.json({ success: true, data: games });
 });
 
 // POST /api/casino/bet   body: { gameId, userId, slot, stake }
@@ -1068,6 +1002,40 @@ app.post('/internal/developer/credentials/:id/rotate', requireAdmin, async (req,
   } catch (e) {
     const status = /not found|revoked/i.test(e.message) ? 404 : 500;
     res.status(status).json({ success: false, error: { code: status === 404 ? 'RESOURCE_NOT_FOUND' : 'INTERNAL_ERROR', message: status === 404 ? e.message : 'Failed to rotate credential.' } });
+  }
+});
+
+// ── CASINO ARTWORK MANAGEMENT ────────────────────────────────────────
+// Admin-only persistent artwork for JuanAi's two real-money games.
+// Images are stored in MongoDB settings as data URLs. The upload is rejected
+// unless MongoDB is actually available, so artwork is never silently kept
+// only in volatile memory.
+app.get('/internal/casino/images', requireAdmin, async (req, res) => {
+  try {
+    const images = {};
+    for (const id of ['aviator', 'jetx']) images[id] = await db.getSetting(`casino_game_image_${id}`);
+    res.json({ success: true, images });
+  } catch (e) { res.status(500).json({ success: false, message: 'Failed to load casino artwork.' }); }
+});
+
+app.post('/internal/casino/images/:gameId', requireAdmin, async (req, res) => {
+  const gameId = String(req.params.gameId || '').toLowerCase();
+  if (!['aviator', 'jetx'].includes(gameId)) return res.status(400).json({ success: false, message: 'Only aviator and jetx are supported.' });
+  const image = String(req.body?.image || '').trim();
+  if (!/^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i.test(image)) {
+    return res.status(400).json({ success: false, message: 'Upload a PNG, JPG/JPEG, or WebP image.' });
+  }
+  const comma = image.indexOf(',');
+  const bytes = Buffer.byteLength(image.slice(comma + 1), 'base64');
+  if (!bytes || bytes > 4 * 1024 * 1024) return res.status(413).json({ success: false, message: 'Image must be between 1 byte and 4 MB.' });
+  try {
+    const status = await db.getMongoStatus();
+    if (!status?.connected) return res.status(503).json({ success: false, message: 'MongoDB is not connected. Artwork was not saved.' });
+    await db.setSetting(`casino_game_image_${gameId}`, image);
+    res.json({ success: true, gameId, saved: true, bytes });
+  } catch (e) {
+    console.error('[casino artwork] save:', e.message);
+    res.status(500).json({ success: false, message: 'Failed to save casino artwork.' });
   }
 });
 
