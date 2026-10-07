@@ -252,6 +252,8 @@ router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) =>
 // deployments. No external image URL is required.
 router.get('/casino/images', requireDeveloperApi('casino'), async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
     const out = {};
     for (const id of ['aviator', 'jetx']) out[id] = await db.getSetting(`casino_game_image_${id}`);
     return res.json({ success: true, images: out });

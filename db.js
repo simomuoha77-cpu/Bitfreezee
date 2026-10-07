@@ -798,9 +798,11 @@ async function setSetting(name, value) {
   settingsFallback[name] = value; // always keep the in-memory copy current too, so a mid-request Mongo hiccup doesn't lose the value for the rest of this process's lifetime
   if (usingFallback) return;
   try {
-    await settingsCollection.updateOne({ name }, { $set: { name, value, updatedAt: new Date() } }, { upsert: true });
+    const result = await settingsCollection.updateOne({ name }, { $set: { name, value, updatedAt: new Date() } }, { upsert: true });
+    if (!result?.acknowledged) throw new Error('MongoDB did not acknowledge the settings write');
   } catch (e) {
-    console.error('[db] setSetting(' + name + ') failed, kept in-memory only for now: ' + e.message);
+    console.error('[db] setSetting(' + name + ') failed: ' + e.message);
+    throw e;
   }
 }
 

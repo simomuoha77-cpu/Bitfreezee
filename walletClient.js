@@ -93,7 +93,7 @@ function sign(secret, method, path, timestamp, bodyJson) {
 // Small dependency-free HTTPS/HTTP JSON request helper (avoids adding a
 // new package dependency just for this). Has a hard timeout — a wallet
 // call must never hang a bet/cashout request indefinitely.
-function requestJson(method, urlStr, headers, bodyObj, timeoutMs = 5000) {
+function requestJson(method, urlStr, headers, bodyObj, timeoutMs = Number(process.env.JUANAI_WALLET_TIMEOUT_MS || 15000)) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(urlStr); } catch (e) { return reject(new Error('Invalid wallet URL: ' + urlStr)); }
@@ -118,7 +118,7 @@ function requestJson(method, urlStr, headers, bodyObj, timeoutMs = 5000) {
         resolve({ statusCode: res.statusCode, body: json, raw: data });
       });
     });
-    req.on('timeout', () => { req.destroy(new Error('Wallet request timed out')); });
+    req.on('timeout', () => { req.destroy(new Error(`Wallet request timed out after ${timeoutMs}ms`)); });
     req.on('error', reject);
     if (bodyJson) req.write(bodyJson);
     req.end();

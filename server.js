@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '8mb' }));
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -1032,7 +1032,9 @@ app.post('/internal/casino/images/:gameId', requireAdmin, async (req, res) => {
     const status = await db.getMongoStatus();
     if (!status?.connected) return res.status(503).json({ success: false, message: 'MongoDB is not connected. Artwork was not saved.' });
     await db.setSetting(`casino_game_image_${gameId}`, image);
-    res.json({ success: true, gameId, saved: true, bytes });
+    const saved = await db.getSetting(`casino_game_image_${gameId}`);
+    if (saved !== image) throw new Error('Artwork write verification failed');
+    res.json({ success: true, gameId, saved: true, synced: true, bytes });
   } catch (e) {
     console.error('[casino artwork] save:', e.message);
     res.status(500).json({ success: false, message: 'Failed to save casino artwork.' });
