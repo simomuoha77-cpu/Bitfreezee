@@ -166,6 +166,7 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:'Inter',sans-serif;
 .crash-bet-input{width:90px;padding:10px;background:var(--bg3);border:1.5px solid var(--bdr);border-radius:10px;color:var(--t1);font-family:'Inter',sans-serif;font-size:13px;font-weight:700;outline:none;text-align:center}
 .crash-bet-input:focus{border-color:var(--cas-a)}
 .crash-btn{flex:1;padding:12px;border:none;border-radius:10px;font-family:'Inter',sans-serif;font-size:13px;font-weight:800;cursor:pointer;transition:var(--tr);letter-spacing:.2px}
+.cgame-art{width:100%;max-width:340px;aspect-ratio:16/9;object-fit:cover;border-radius:12px;margin-bottom:10px;border:1px solid var(--bdl)}
 .crash-btn.play{background:var(--cas-grad);color:#1a0f2e}
 .crash-btn.play:hover{filter:brightness(1.08);transform:translateY(-1px)}
 .crash-btn.cashout{background:var(--ok);color:#04261c}
@@ -758,6 +759,7 @@ app.get('/games/today', async (req, res) => {<br>
         <!-- AVIATOR — real server-authoritative crash game, own page -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
+            <img class="cgame-art" data-game="aviator" alt="Aviator" style="display:none" onload="this.style.display='block'" onerror="this.style.display='none'">
             <h3 style="margin-bottom:6px"><i class="fa-solid fa-meteor" style="color:var(--cas-a)"></i> Aviator</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Full crash game with round history, live bet feed, and sound. Runs server-side — the round outcome is decided on JuanAi's server, not in your browser, so it can't be read or edited from the page.</div>
           </div>
@@ -767,6 +769,7 @@ app.get('/games/today', async (req, res) => {<br>
         <!-- JETX — same engine as Aviator, own independent round -->
         <div class="cgame-card" style="grid-column:1/-1;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
+            <img class="cgame-art" data-game="jetx" alt="JetX" style="display:none" onload="this.style.display='block'" onerror="this.style.display='none'">
             <h3 style="margin-bottom:6px"><i class="fa-solid fa-rocket" style="color:var(--cas-a)"></i> JetX</h3>
             <div style="font-size:12px;color:var(--t2);line-height:1.6">Same server-authoritative crash engine as Aviator, its own independent round and crash points — never synced with Aviator's round.</div>
           </div>
@@ -2509,6 +2512,13 @@ function previewCasinoImage(inputId, previewId){
   reader.onload=function(){ preview.src=reader.result; preview.style.display='block'; };
   reader.readAsDataURL(file);
 }
+function loadCasinoCardArt(){
+  document.querySelectorAll('img.cgame-art[data-game]').forEach(function(img){
+    img.src='/api/casino/games/'+img.getAttribute('data-game')+'/image?t='+Math.floor(Date.now()/60000);
+  });
+}
+document.addEventListener('DOMContentLoaded', loadCasinoCardArt);
+setTimeout(loadCasinoCardArt, 1500);
 function setupCasinoImageInputs(){
   var a=document.getElementById('casinoAviatorImage'), j=document.getElementById('casinoJetxImage');
   if(a&&!a.dataset.bound){a.dataset.bound='1';a.onchange=function(){previewCasinoImage('casinoAviatorImage','casinoAviatorPreview');};}
@@ -2536,7 +2546,7 @@ async function uploadCasinoImage(gameId){
       var d=await r.json();
       if(!r.ok||!d.success) throw new Error(d.message||('HTTP '+r.status));
       toast(gameId==='aviator'?'Aviator image saved permanently':'JetX image saved permanently','success');
-      loadCasinoImages();
+      loadCasinoImages(); loadCasinoCardArt();
     }catch(e){toast(e.message||'Could not save image','error');}
   };
   reader.readAsDataURL(file);

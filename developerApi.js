@@ -13,6 +13,18 @@ const WINDOW_MS = Number(process.env.DEVELOPER_API_RATE_WINDOW_MS || 60_000);
 const DEFAULT_LIMIT = Number(process.env.DEVELOPER_API_RATE_LIMIT || 300);
 const rate = new Map();
 
+// Public, cacheable URL of the artwork uploaded in the JuanAi dashboard (served by
+// /api/casino/games/:id/image). Partners get a short link instead of a multi-MB data URL.
+function originOf(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+function imageUrl(req, gameId, image) {
+  if (!image) return null;
+  return `${originOf(req)}/api/casino/games/${encodeURIComponent(gameId)}/image?v=${String(image).length}`;
+}
+
 function error(res, status, code, message) {
   return res.status(status).json({ success: false, error: { code, message } });
 }
@@ -96,7 +108,7 @@ router.get('/casino/games', requireDeveloperApi('casino'), async (req, res) => {
     const ownGames = casinoIntegration.listGames();
     const data = [];
     for (const g of ownGames) {
-      const image = await db.getSetting(`casino_game_image_${g.id}`);
+      const image = imageUrl(req, g.id, await db.getSetting(`casino_game_image_${g.id}`));
       data.push({
         id: g.id,
         gameId: g.id,
@@ -220,7 +232,7 @@ router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) =>
     const utoken = userToken.sign(userId);
     const separator = String(game.gameUrl || '').includes('?') ? '&' : '?';
     const launchUrl = `${game.gameUrl}${separator}key=${encodeURIComponent(req.developerCredential.apiKey)}&utoken=${encodeURIComponent(utoken)}`;
-    const image = await db.getSetting(`casino_game_image_${gameId}`);
+    const image = imageUrl(req, gameId, await db.getSetting(`casino_game_image_${gameId}`));
     return res.json({
       success: true,
       mode: 'real-money',
@@ -252,8 +264,9 @@ router.post('/casino/launch', requireDeveloperApi('casino'), async (req, res) =>
 // deployments. No external image URL is required.
 router.get('/casino/images', requireDeveloperApi('casino'), async (req, res) => {
   try {
+    // Returns short public image URLs (not base64 data URLs) so partners can use them in <img src>.
     const out = {};
-    for (const id of ['aviator', 'jetx']) out[id] = await db.getSetting(`casino_game_image_${id}`);
+    for (const id of ['aviator', 'jetx']) out[id] = imageUrl(req, id, await db.getSetting(`casino_game_image_${id}`));
     return res.json({ success: true, images: out });
   } catch (e) { return error(res, 500, 'INTERNAL_ERROR', 'Unable to load casino images.'); }
 });
