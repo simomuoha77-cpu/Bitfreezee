@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(compression()); // must come before routes/static so every response gets compressed, not just some
 app.use(cors());
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '8mb' })); // 8mb: a 4 MB casino image is ~5.4 MB once base64-encoded in JSON, which the old 5mb cap rejected
 
 // ── Auth middleware: checks the API key against real stored keys ──
 // Accepts the key from any of: ?key=jsk_xxx, x-api-key header,
@@ -564,14 +564,44 @@ app.post('/api/jetx/cashout', requireApiKey, (req, res) => {
 // Returns the catalog of games available to embed. See casinoIntegration
 // .js's GAMES list — only lists games that are actually live and working.
 app.get('/api/casino/games', requireApiKey, async (req, res) => {
-  const games = casinoIntegration.listGames();
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const origin = `${proto}://${req.headers['x-forwarded-host'] || req.get('host')}`;
+  const games = casinoIntegration.listGames().map(g => ({ ...g })); // copy: never mutate the shared catalog
   for (const g of games) {
+    // Always return an ABSOLUTE, publicly loadable image URL (plain <img src>
+    // can't send an API key, and a partner page on another domain can't use a
+    // relative path). The bytes are served by /api/casino/games/:id/image.
+    g.thumbnail = `${origin}${g.thumbnail}`;
     try {
       const image = await db.getSetting(`casino_game_image_${g.id}`);
-      if (image) g.thumbnail = image;
+      if (image) g.thumbnail = `${origin}/api/casino/games/${g.id}/image?v=${image.length}`;
     } catch (_) {}
+    g.image = g.thumbnail; // alias for partners that look for `image`
   }
   res.json({ success: true, data: games });
+});
+
+// GET /api/casino/games/:gameId/image — PUBLIC (no key): serves the artwork
+// uploaded in the JuanAi admin panel as a real image file, so partner sites
+// can use it directly in <img src="...">. Cached by the ?v= query string,
+// which changes whenever a new image is uploaded.
+app.get('/api/casino/games/:gameId/image', async (req, res) => {
+  const gameId = String(req.params.gameId || '').toLowerCase();
+  if (!['aviator', 'jetx'].includes(gameId)) return res.status(404).end();
+  try {
+    const image = await db.getSetting(`casino_game_image_${gameId}`);
+    const m = /^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i.exec(image || '');
+    if (!m) return res.status(404).end();
+    res.set({
+      'Content-Type': m[1].toLowerCase().replace('jpg', 'jpeg'),
+      'Cache-Control': 'public, max-age=86400',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.send(Buffer.from(m[2], 'base64'));
+  } catch (e) {
+    res.status(500).end();
+  }
 });
 
 // POST /api/casino/bet   body: { gameId, userId, slot, stake }
@@ -1032,9 +1062,7 @@ app.post('/internal/casino/images/:gameId', requireAdmin, async (req, res) => {
     const status = await db.getMongoStatus();
     if (!status?.connected) return res.status(503).json({ success: false, message: 'MongoDB is not connected. Artwork was not saved.' });
     await db.setSetting(`casino_game_image_${gameId}`, image);
-    const saved = await db.getSetting(`casino_game_image_${gameId}`);
-    if (saved !== image) throw new Error('Artwork write verification failed');
-    res.json({ success: true, gameId, saved: true, synced: true, bytes });
+    res.json({ success: true, gameId, saved: true, bytes });
   } catch (e) {
     console.error('[casino artwork] save:', e.message);
     res.status(500).json({ success: false, message: 'Failed to save casino artwork.' });

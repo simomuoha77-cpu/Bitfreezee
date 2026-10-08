@@ -108,45 +108,37 @@ async function placeBet(apiKey, userId, gameId, slot, stake) {
   if (game.status !== 'active') return { success: false, message: `Game '${gameId}' is not currently active` };
   if (!Number.isFinite(stake) || stake <= 0) return { success: false, message: 'Invalid stake amount' };
 
-  // A roundId is needed for the debit call's audit trail, but the actual
-  // round the bet lands in is only known once placeBetForSession succeeds
-  // below — casino.js's shared round could theoretically roll over between
-  // these two steps under extreme timing. We use a provisional reference
-  // (current round id at call time) for the debit call regardless; what
-  // matters for correctness is the wallet's own idempotency on
-  // (userId, provisionalRef), not which exact round it lands in.
-  const provisionalRef = 'debit_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
-
-  // STEP 1: confirm the debit BEFORE the bet is allowed to exist at all.
-  // If this fails (insufficient balance, wallet unreachable, etc.), no bet
-  // is ever recorded — nothing to roll back.
-  const debitResult = await wallet.debit(apiKey, userId, Number(stake), provisionalRef, gameId);
-  if (!debitResult.success) {
-    return { success: false, message: debitResult.message || 'Debit failed' };
-  }
-
-  // STEP 2: now that money has actually moved, try to place the bet in the
-  // shared round engine.
+  // RESERVE FIRST, THEN DEBIT (fixes "Bet could not be placed and automatic
+  // refund failed"). The old order was debit -> place bet -> refund if the
+  // placement failed. The wallet debit is a real network call to the partner
+  // (up to 5s), and the betting window is only ~5s, so the round could close
+  // while the debit was in flight; placement then failed and the refund (same
+  // ref as the debit, which partner ledgers reject as a duplicate) failed too,
+  // leaving the player charged for no bet. Now the slot is reserved the
+  // instant the request arrives (while the round is verifiably still open),
+  // and the debit is the LAST step that can fail. If it fails we just release
+  // the reservation: no money moved, so there is never anything to refund.
   const sessionKey = `partner:${apiKey}:${gameId}:${userId}`;
-  const result = casino.placeBetForSession(gameId, sessionKey, slot, Number(stake));
-  if (!result.success) {
-    // ROLLBACK: the debit succeeded but the bet itself couldn't be placed
-    // (e.g. round closed in the split second between the debit call and
-    // this line, rate limit, etc.) — refund immediately via a credit call
-    // using the SAME reference, so the partner's ledger can treat this as
-    // an idempotent reversal of that exact debit rather than a new,
-    // unrelated credit.
-    const refund = await wallet.credit(apiKey, userId, Number(stake), provisionalRef, gameId);
-    if (!refund.success) {
-      // This is the one truly bad outcome: money left the user's balance
-      // and the automatic refund also failed. Surface this loudly rather
-      // than silently swallowing it — an ops alert/log here is essential
-      // in real production; this comment marks exactly where to hook one.
-      console.error(`[casinoIntegration] CRITICAL: debit for ${userId} ref ${provisionalRef} succeeded, bet placement failed (${result.message}), AND refund failed (${refund.message}). Manual reconciliation required.`);
-      return { success: false, message: 'Bet could not be placed and automatic refund failed — contact support', ref: provisionalRef };
-    }
-    return { success: false, message: result.message };
+  const reserved = casino.placeBetForSession(gameId, sessionKey, slot, Number(stake));
+  if (!reserved.success) {
+    console.warn(`[casinoIntegration] bet rejected game=${gameId} user=${userId} slot=${slot} stake=${stake}: ${reserved.message}`);
+    return { success: false, message: reserved.message };
   }
+
+  const debitRef = 'debit_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+  let debitResult;
+  try {
+    debitResult = await wallet.debit(apiKey, userId, Number(stake), debitRef, gameId);
+  } catch (e) {
+    debitResult = { success: false, message: 'Wallet call failed: ' + e.message };
+  }
+  if (!debitResult || !debitResult.success) {
+    casino.releaseBetForSession(gameId, sessionKey, slot, reserved.roundId, Number(stake));
+    console.warn(`[casinoIntegration] debit failed game=${gameId} user=${userId} ref=${debitRef}: ${debitResult && debitResult.message}`);
+    return { success: false, message: (debitResult && debitResult.message) || 'Debit failed' };
+  }
+  const provisionalRef = debitRef;
+  const result = reserved;
 
   const betId = newBetId();
   bets.set(betId, {

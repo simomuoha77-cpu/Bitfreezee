@@ -399,6 +399,22 @@ function cashOutForSession(gameId, sessionKey, slot) {
   return cashOutCore(gameId, sessionKey, slot);
 }
 
+// releaseBetForSession: undoes a reservation made by placeBetForSession when
+// the wallet debit that was supposed to back it fails. Only removes the bet
+// if it still belongs to the SAME round it was reserved in (a new round
+// clears bets on its own) and hasn't been cashed out. Gives the stake back
+// to the round's exposure counter so the cap isn't eaten by failed bets.
+function releaseBetForSession(gameId, sessionKey, slot, roundId, stake) {
+  const round = rounds.get(gameId);
+  const s = sessions.get(gameId + ':' + sessionKey);
+  if (!s) return false;
+  const bet = s.bets[slot];
+  if (!bet || bet.roundId !== roundId || bet.cashedOut) return false;
+  s.bets[slot] = null;
+  if (round && round.id === roundId) round.totalStaked = Math.max(0, round.totalStaked - stake);
+  return true;
+}
+
 function getPlayersView(gameId) {
   // Aggregate a lightweight, anonymized view across all of THIS GAME's
   // sessions for the "players" list the frontend shows — no real identity
@@ -442,5 +458,5 @@ function getRoundExposure(gameId) {
   };
 }
 
-module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, checkResolution, getRoundExposure, GAME_IDS };
+module.exports = { getPublicState, placeBet, cashOut, getPlayersView, placeBetForSession, cashOutForSession, releaseBetForSession, checkResolution, getRoundExposure, GAME_IDS };
 
